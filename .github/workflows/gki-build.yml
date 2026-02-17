@@ -5,40 +5,6 @@ permissions:
   actions: write
 
 on:
-  workflow_dispatch:
-    inputs:
-      android_version:
-        description: "Android version"
-        type: string
-        default: "android12"
-      kernel_version:
-        description: "Kernel version"
-        type: string
-        default: "5.10"
-      sub_level:
-        description: "Sub level"
-        type: string
-        default: "209"
-      os_patch_level:
-        description: "OS patch level (YYYY-MM)"
-        type: string
-        default: "2024-05"
-      use_susfs:
-        description: "Enable SUSFS"
-        type: boolean
-        default: true
-      use_zeromount:
-        description: "Enable ZeroMount"
-        type: boolean
-        default: true
-      use_zram:
-        description: "Enable ZRAM"
-        type: boolean
-        default: true
-      use_bbg:
-        description: "Enable BBG"
-        type: boolean
-        default: true
   workflow_call:
     inputs:
       android_version:
@@ -53,22 +19,34 @@ on:
       os_patch_level:
         type: string
         required: true
-      use_susfs:
+      add_susfs:
         type: boolean
         default: true
-      use_zeromount:
+      add_zeromount:
         type: boolean
         default: true
-      use_zram:
+      add_zram:
         type: boolean
         default: true
-      use_bbg:
+      add_bbg:
         type: boolean
         default: true
+      ksu_variant:
+        type: string
+        default: "KernelSU-Next"
+      add_enhanced_susfs:
+        type: boolean
+        default: true
+      add_unicode_filter:
+        type: boolean
+        default: true
+      device_codename:
+        type: string
+        default: ""
 
 jobs:
   build:
-    name: "KSU-Next-SUSFS ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
+    name: "${{ inputs.ksu_variant }} ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -150,7 +128,7 @@ jobs:
           [[ -n "$EXTRACTED" ]] && ACTUAL_SUBLEVEL="$EXTRACTED"
         fi
 
-        ARTIFACT_BASE="${{ env.KERNEL_VERSION }}.$ACTUAL_SUBLEVEL-${{ env.ANDROID_VERSION }}-${{ env.OS_PATCH_LEVEL }}-KSU-Next-SUSFS"
+        ARTIFACT_BASE="${{ env.KERNEL_VERSION }}.$ACTUAL_SUBLEVEL-${{ env.ANDROID_VERSION }}-${{ env.OS_PATCH_LEVEL }}-${{ inputs.ksu_variant }}-SUSFS"
         echo "ACTUAL_SUBLEVEL=$ACTUAL_SUBLEVEL" >> $GITHUB_ENV
         echo "ARTIFACT_BASE=$ARTIFACT_BASE" >> $GITHUB_ENV
         echo "FILE_NAME=$ARTIFACT_BASE" >> $GITHUB_ENV
@@ -176,24 +154,46 @@ jobs:
           fi
         fi
 
-    - name: Add KernelSU-Next with SUSFS
+    - name: Setup KernelSU
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        echo "=== Adding KernelSU-Next (dev_susfs branch) ==="
-        curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/dev_susfs/kernel/setup.sh" | bash -s dev_susfs
-        echo "=== KernelSU-Next added ==="
+        KSU_VARIANT="${{ inputs.ksu_variant }}"
 
-    - name: Fix KernelSU-Next API Compatibility
+        if [[ "$KSU_VARIANT" == "SukiSU" ]]; then
+          echo "=== Adding SukiSU ==="
+          BRANCH="main"
+          [[ "${{ inputs.add_susfs }}" == "true" ]] && BRANCH="susfs-dev"
+          curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH"
+        elif [[ "$KSU_VARIANT" == "MKSU" ]]; then
+          echo "=== Adding MKSU ==="
+          BRANCH="main"
+          [[ "${{ inputs.add_susfs }}" == "true" ]] && BRANCH="susfs-dev"
+          curl -LSs "https://raw.githubusercontent.com/5ec1cff/KernelSU/main/kernel/setup.sh" | bash -s "$BRANCH"
+        else
+          echo "=== Adding KernelSU-Next ==="
+          BRANCH="next"
+          [[ "${{ inputs.add_susfs }}" == "true" ]] && BRANCH="dev_susfs"
+          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/${BRANCH}/kernel/setup.sh" | bash -s "$BRANCH"
+        fi
+
+        if [[ "$KSU_VARIANT" == "KernelSU-Next" ]]; then
+          echo "KSU_DIR=KernelSU-Next" >> $GITHUB_ENV
+        else
+          echo "KSU_DIR=KernelSU" >> $GITHUB_ENV
+        fi
+        echo "=== $KSU_VARIANT added ==="
+
+    - name: Fix KernelSU API Compatibility
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        KSUD_FILE="$KERNEL_ROOT/KernelSU-Next/kernel/ksud.c"
+        KSUD_FILE="$KERNEL_ROOT/${{ env.KSU_DIR }}/kernel/ksud.c"
         if [ -f "$KSUD_FILE" ] && ! grep -q "ksu_handle_sys_newfstatat" "$KSUD_FILE"; then
           awk '/void ksu_handle_vfs_fstat/{found=1} found && /^}/{print; print "void ksu_handle_sys_newfstatat(int fd, loff_t *kstat_size_ptr) { }"; found=0; next}1' "$KSUD_FILE" > "$KSUD_FILE.tmp" && mv "$KSUD_FILE.tmp" "$KSUD_FILE"
           echo "[+] ksu_handle_sys_newfstatat stub added to ksud.c"
         fi
 
     - name: Clone Upstream SUSFS and Inject Custom Features
-      if: inputs.use_susfs
+      if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         SUSFS_BRANCH="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-dev"
@@ -204,13 +204,17 @@ jobs:
         INJECT_DIR="$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/susfs"
         chmod +x "$INJECT_DIR"/*.sh
 
-        echo "=== Injecting custom features into upstream SUSFS ==="
-        bash "$INJECT_DIR/fix-susfs-safety.sh" "$SUSFS_PATCHES"
-        bash "$INJECT_DIR/inject-susfs-kstat-redirect.sh" "$SUSFS_PATCHES"
-        bash "$INJECT_DIR/inject-susfs-open-redirect-all.sh" "$SUSFS_PATCHES"
-        bash "$INJECT_DIR/inject-susfs-unicode-filter-func.sh" "$SUSFS_PATCHES"
-        bash "$INJECT_DIR/inject-susfs-supercall-dispatch.sh" "$SUSFS_PATCHES"
-        bash "$INJECT_DIR/inject-susfs-zeromount-coupling.sh" "$SUSFS_PATCHES"
+        if [[ "${{ inputs.add_enhanced_susfs }}" == "true" ]]; then
+          echo "=== Injecting custom features into upstream SUSFS ==="
+          bash "$INJECT_DIR/fix-susfs-safety.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/inject-susfs-kstat-redirect.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/inject-susfs-open-redirect-all.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/inject-susfs-unicode-filter-func.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/inject-susfs-supercall-dispatch.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/inject-susfs-zeromount-coupling.sh" "$SUSFS_PATCHES"
+        else
+          echo "=== Skipping custom SUSFS injection (add_enhanced_susfs=false) ==="
+        fi
 
         echo "=== Applying modified SUSFS to kernel ==="
         cd "$KERNEL_ROOT/common"
@@ -247,19 +251,23 @@ jobs:
           exit 1
         fi
 
-        echo "=== Post-patch: injecting into kernel source ==="
-        bash "$HOOKS_DIR/inject-susfs-vfs-open-redirect-all.sh" "$KERNEL_ROOT/common"
-        bash "$HOOKS_DIR/inject-susfs-mount-display.sh" "$KERNEL_ROOT/common"
+        if [[ "${{ inputs.add_enhanced_susfs }}" == "true" ]]; then
+          echo "=== Post-patch: injecting into kernel source ==="
+          bash "$HOOKS_DIR/inject-susfs-vfs-open-redirect-all.sh" "$KERNEL_ROOT/common"
+          bash "$HOOKS_DIR/inject-susfs-mount-display.sh" "$KERNEL_ROOT/common"
 
-        echo "=== Injecting custom handlers into KernelSU-Next ==="
-        bash "$HOOKS_DIR/inject-susfs-custom-handlers.sh" \
-          "$KERNEL_ROOT/KernelSU-Next/kernel/supercalls.c" \
-          "$KERNEL_ROOT/common/fs/susfs.c" \
-          "$KERNEL_ROOT/KernelSU-Next/kernel/Kconfig" \
-          "${{ env.DEFCONFIG }}"
+          echo "=== Injecting custom handlers into KernelSU-Next ==="
+          bash "$HOOKS_DIR/inject-susfs-custom-handlers.sh" \
+            "$KERNEL_ROOT/${{ env.KSU_DIR }}/kernel/supercalls.c" \
+            "$KERNEL_ROOT/common/fs/susfs.c" \
+            "$KERNEL_ROOT/${{ env.KSU_DIR }}/kernel/Kconfig" \
+            "${{ env.DEFCONFIG }}"
+        fi
 
-        echo "=== Injecting unicode filter VFS hooks ==="
-        bash "$HOOKS_DIR/unicode_filter.sh" "$KERNEL_ROOT/common"
+        if [[ "${{ inputs.add_unicode_filter }}" == "true" ]]; then
+          echo "=== Injecting unicode filter VFS hooks ==="
+          bash "$HOOKS_DIR/unicode_filter.sh" "$KERNEL_ROOT/common"
+        fi
 
         if [[ "${{ env.ANDROID_VERSION }}" == "android12" && "${{ env.KERNEL_VERSION }}" == "5.10" ]]; then
           if [[ "$ACTUAL_SUBLEVEL" -le 209 ]]; then
@@ -270,11 +278,11 @@ jobs:
         echo "=== SUSFS integration complete ==="
 
     - name: Fix sucompat stat hook detection bypass
-      if: inputs.use_susfs
+      if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         echo "=== Fixing sucompat stat hook (missing umounted check) ==="
-        SUCOMPAT="$KERNEL_ROOT/KernelSU-Next/kernel/sucompat.c"
+        SUCOMPAT="$KERNEL_ROOT/${{ env.KSU_DIR }}/kernel/sucompat.c"
         if [ ! -f "$SUCOMPAT" ]; then
           echo "[-] sucompat.c not found, skipping"
           exit 0
@@ -341,7 +349,7 @@ jobs:
         echo "=== sucompat stat hook fix complete ==="
 
     - name: Integrate ZeroMount VFS Path Redirection
-      if: inputs.use_zeromount
+      if: inputs.add_zeromount
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         echo "=== Integrating ZeroMount (SUSFS's Spouse!) ==="
@@ -386,14 +394,14 @@ jobs:
         echo "=== ZeroMount integration complete ==="
 
     - name: Fix ZeroMount SUSFS detection bypass
-      if: inputs.use_zeromount && inputs.use_susfs
+      if: inputs.add_zeromount && inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
         chmod +x "$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/zeromount/fix-zeromount-susfs-bypass.sh"
         bash "$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/zeromount/fix-zeromount-susfs-bypass.sh" fs/zeromount.c
 
     - name: Upgrade LZ4 to v1.10.0 with ARM64 NEON
-      if: inputs.use_zram
+      if: inputs.add_zram
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
         echo "=== Upgrading LZ4 to v1.10.0 ==="
@@ -418,7 +426,7 @@ jobs:
         echo "=== LZ4 upgrade done ==="
 
     - name: Add LZ4K/LZ4KD Compression
-      if: inputs.use_zram
+      if: inputs.add_zram
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
         SUKISU="$GITHUB_WORKSPACE/SukiSU_patch"
@@ -446,12 +454,12 @@ jobs:
         awk '/^# \[base\]/{found=1; next} /^# \[/{found=0} found && NF' "$FRAGMENT" >> "${{ env.DEFCONFIG }}"
 
         # SUSFS config
-        if [[ "${{ inputs.use_susfs }}" == "true" ]]; then
+        if [[ "${{ inputs.add_susfs }}" == "true" ]]; then
           awk '/^# \[susfs\]/{found=1; next} /^# \[/{found=0} found && NF' "$FRAGMENT" >> "${{ env.DEFCONFIG }}"
         fi
 
         # ZRAM config
-        if [[ "${{ inputs.use_zram }}" == "true" ]]; then
+        if [[ "${{ inputs.add_zram }}" == "true" ]]; then
           awk '/^# \[zram\]/{found=1; next} /^# \[/{found=0} found && NF' "$FRAGMENT" >> "${{ env.DEFCONFIG }}"
           sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "${{ env.DEFCONFIG }}"
           sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' "${{ env.DEFCONFIG }}"
@@ -494,7 +502,7 @@ jobs:
         echo "=== Performance Patches Done ==="
 
     - name: Add BBG (Baseband Guard)
-      if: inputs.use_bbg
+      if: inputs.add_bbg
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         echo "=== Adding BBG ==="
@@ -584,12 +592,18 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
         PROFILE_FILE="$GITHUB_WORKSPACE/device-profiles.json"
+        INPUT_CODENAME="${{ inputs.device_codename }}"
 
         if [ -f "$PROFILE_FILE" ] && command -v jq &> /dev/null; then
-          # Auto-discover device by kernel_version + sub_level
-          DEVICE_CODENAME=$(jq -r --arg kv "${{ env.KERNEL_VERSION }}" --arg sl "${{ env.ACTUAL_SUBLEVEL }}" \
-            '[.devices | to_entries[] | select(.value.kernel_version == $kv and .value.sub_level == $sl) | .key] | first // empty' \
-            "$PROFILE_FILE")
+          # Explicit device_codename takes precedence over auto-discovery
+          if [ -n "$INPUT_CODENAME" ] && [ "$INPUT_CODENAME" != "generic" ] && [ "$INPUT_CODENAME" != "" ]; then
+            DEVICE_CODENAME="$INPUT_CODENAME"
+            echo "=== Using explicit device codename: $DEVICE_CODENAME ==="
+          else
+            DEVICE_CODENAME=$(jq -r --arg kv "${{ env.KERNEL_VERSION }}" --arg sl "${{ env.ACTUAL_SUBLEVEL }}" \
+              '[.devices | to_entries[] | select(.value.kernel_version == $kv and .value.sub_level == $sl) | .key] | first // empty' \
+              "$PROFILE_FILE")
+          fi
 
           if [ -z "$DEVICE_CODENAME" ]; then
             echo "No device profile matches ${{ env.KERNEL_VERSION }}.${{ env.ACTUAL_SUBLEVEL }}, using defaults"
@@ -671,7 +685,7 @@ jobs:
         fi
 
     - name: Create ZRAM Module (Full Version)
-      if: inputs.use_zram
+      if: inputs.add_zram
       run: |
         echo "=== Creating KSU ZRAM module ==="
         ZRAM_MOD="$ANYKERNEL3/modules/data/adb/modules/zram_config"
@@ -876,14 +890,20 @@ jobs:
 
     - name: Build Summary
       run: |
-        echo "## KernelSU-Next + SUSFS + ZeroMount Build" >> $GITHUB_STEP_SUMMARY
-        echo "| Config | Value |" >> $GITHUB_STEP_SUMMARY
-        echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Kernel | ${{ env.KERNEL_VERSION }}.${{ env.ACTUAL_SUBLEVEL }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Android | ${{ env.ANDROID_VERSION }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| KSU | KernelSU-Next (next branch) |" >> $GITHUB_STEP_SUMMARY
-        echo "| SUSFS | ${{ inputs.use_susfs }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| ZeroMount | ${{ inputs.use_zeromount }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| ZRAM | ${{ inputs.use_zram }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| BBG | ${{ inputs.use_bbg }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Device Profile | ${{ env.IDENTITY_STATUS }} |" >> $GITHUB_STEP_SUMMARY
+        S() { [[ "$1" == "true" ]] && echo "Enabled" || echo "Disabled"; }
+
+        echo "## ${{ inputs.ksu_variant }} | ${{ env.KERNEL_VERSION }}.${{ env.ACTUAL_SUBLEVEL }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Feature | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| **Kernel** | ${{ env.KERNEL_VERSION }}.${{ env.ACTUAL_SUBLEVEL }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Android** | ${{ env.ANDROID_VERSION }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| **KSU Variant** | ${{ inputs.ksu_variant }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| **OS Patch Level** | ${{ env.OS_PATCH_LEVEL }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| **SUSFS** | $(S ${{ inputs.add_susfs }}) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Enhanced SUSFS** | $(S ${{ inputs.add_enhanced_susfs }}) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Unicode Filter** | $(S ${{ inputs.add_unicode_filter }}) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **ZeroMount** | $(S ${{ inputs.add_zeromount }}) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **ZRAM (LZ4K)** | $(S ${{ inputs.add_zram }}) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Baseband Guard** | $(S ${{ inputs.add_bbg }}) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Device Profile** | ${{ env.IDENTITY_STATUS }} |" >> $GITHUB_STEP_SUMMARY

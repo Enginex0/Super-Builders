@@ -3,16 +3,25 @@ name: "Android 12 - Kernel 5.10"
 on:
   workflow_call:
     inputs:
-      use_susfs:
+      ksu_variant:
+        type: string
+        default: "KernelSU-Next"
+      add_susfs:
         type: boolean
         default: true
-      use_zeromount:
+      add_enhanced_susfs:
         type: boolean
         default: true
-      use_zram:
+      add_unicode_filter:
         type: boolean
         default: true
-      use_bbg:
+      add_zeromount:
+        type: boolean
+        default: true
+      add_zram:
+        type: boolean
+        default: true
+      add_bbg:
         type: boolean
         default: true
 
@@ -70,7 +79,11 @@ jobs:
       kernel_version: "5.10"
       sub_level: ${{ matrix.sub_level }}
       os_patch_level: ${{ matrix.os_patch_level }}
-      use_susfs: ${{ inputs.use_susfs }}
-      use_zeromount: ${{ inputs.use_zeromount }}
-      use_zram: ${{ inputs.use_zram }}
-      use_bbg: ${{ inputs.use_bbg }}
+      ksu_variant: ${{ inputs.ksu_variant }}
+      add_susfs: ${{ inputs.add_susfs }}
+      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
+      add_unicode_filter: ${{ inputs.add_unicode_filter }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      device_codename: "generic"
