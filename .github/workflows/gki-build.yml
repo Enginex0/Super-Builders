@@ -5,6 +5,40 @@ permissions:
   actions: write
 
 on:
+  workflow_dispatch:
+    inputs:
+      android_version:
+        description: "Android version"
+        type: string
+        default: "android12"
+      kernel_version:
+        description: "Kernel version"
+        type: string
+        default: "5.10"
+      sub_level:
+        description: "Sub level"
+        type: string
+        default: "209"
+      os_patch_level:
+        description: "OS patch level (YYYY-MM)"
+        type: string
+        default: "2024-05"
+      use_susfs:
+        description: "Enable SUSFS"
+        type: boolean
+        default: true
+      use_zeromount:
+        description: "Enable ZeroMount"
+        type: boolean
+        default: true
+      use_zram:
+        description: "Enable ZRAM"
+        type: boolean
+        default: true
+      use_bbg:
+        description: "Enable BBG"
+        type: boolean
+        default: true
   workflow_call:
     inputs:
       android_version:
