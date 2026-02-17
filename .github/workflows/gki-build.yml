@@ -206,12 +206,12 @@ jobs:
 
         if [[ "${{ inputs.add_enhanced_susfs }}" == "true" ]]; then
           echo "=== Injecting custom features into upstream SUSFS ==="
-          bash "$INJECT_DIR/fix-susfs-safety.sh" "$SUSFS_PATCHES"
-          bash "$INJECT_DIR/inject-susfs-kstat-redirect.sh" "$SUSFS_PATCHES"
-          bash "$INJECT_DIR/inject-susfs-open-redirect-all.sh" "$SUSFS_PATCHES"
-          bash "$INJECT_DIR/inject-susfs-unicode-filter-func.sh" "$SUSFS_PATCHES"
-          bash "$INJECT_DIR/inject-susfs-supercall-dispatch.sh" "$SUSFS_PATCHES"
-          bash "$INJECT_DIR/inject-susfs-zeromount-coupling.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/fix-safety.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/add-kstat-redirect.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/add-open-redirect-all.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/add-unicode-filter-func.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/add-supercall-dispatch.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/add-susfs-zeromount-coupling.sh" "$SUSFS_PATCHES"
         else
           echo "=== Skipping custom SUSFS injection (add_enhanced_susfs=false) ==="
         fi
@@ -238,8 +238,8 @@ jobs:
         HOOKS_DIR="$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/kernel-hooks"
 
         # fdinfo.c compat — old vs new inotify API across sublevels
-        if [ -x "$HOOKS_DIR/fix-susfs-fdinfo-compat.sh" ]; then
-          bash "$HOOKS_DIR/fix-susfs-fdinfo-compat.sh" "$KERNEL_ROOT/common"
+        if [ -x "$HOOKS_DIR/fix-fdinfo-compat.sh" ]; then
+          bash "$HOOKS_DIR/fix-fdinfo-compat.sh" "$KERNEL_ROOT/common"
         fi
 
         # Hard-fail if unhandled rejects remain
@@ -253,11 +253,11 @@ jobs:
 
         if [[ "${{ inputs.add_enhanced_susfs }}" == "true" ]]; then
           echo "=== Post-patch: injecting into kernel source ==="
-          bash "$HOOKS_DIR/inject-susfs-vfs-open-redirect-all.sh" "$KERNEL_ROOT/common"
-          bash "$HOOKS_DIR/inject-susfs-mount-display.sh" "$KERNEL_ROOT/common"
+          bash "$HOOKS_DIR/add-vfs-open-redirect-all.sh" "$KERNEL_ROOT/common"
+          bash "$HOOKS_DIR/add-mount-display.sh" "$KERNEL_ROOT/common"
 
           echo "=== Injecting custom handlers into KernelSU-Next ==="
-          bash "$HOOKS_DIR/inject-susfs-custom-handlers.sh" \
+          bash "$HOOKS_DIR/add-custom-handlers.sh" \
             "$KERNEL_ROOT/${{ env.KSU_DIR }}/kernel/supercalls.c" \
             "$KERNEL_ROOT/common/fs/susfs.c" \
             "$KERNEL_ROOT/${{ env.KSU_DIR }}/kernel/Kconfig" \
@@ -266,7 +266,7 @@ jobs:
 
         if [[ "${{ inputs.add_unicode_filter }}" == "true" ]]; then
           echo "=== Injecting unicode filter VFS hooks ==="
-          bash "$HOOKS_DIR/unicode_filter.sh" "$KERNEL_ROOT/common"
+          bash "$HOOKS_DIR/add-unicode-filter.sh" "$KERNEL_ROOT/common"
         fi
 
         if [[ "${{ env.ANDROID_VERSION }}" == "android12" && "${{ env.KERNEL_VERSION }}" == "5.10" ]]; then
