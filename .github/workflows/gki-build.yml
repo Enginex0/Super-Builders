@@ -593,6 +593,7 @@ jobs:
 
           if [ -z "$DEVICE_CODENAME" ]; then
             echo "No device profile matches ${{ env.KERNEL_VERSION }}.${{ env.ACTUAL_SUBLEVEL }}, using defaults"
+            echo "IDENTITY_STATUS=Generic" >> $GITHUB_ENV
           else
             DEVICE_EXISTS=$(jq -r ".devices.${DEVICE_CODENAME} // empty" "$PROFILE_FILE")
           fi
@@ -630,11 +631,14 @@ jobs:
 
             echo "KBUILD_BUILD_USER=$STOCK_BUILD_USER" >> $GITHUB_ENV
             echo "KBUILD_BUILD_HOST=$STOCK_BUILD_HOST" >> $GITHUB_ENV
+            echo "IDENTITY_STATUS=Applied ($DEVICE_CODENAME)" >> $GITHUB_ENV
           else
             echo "WARNING: Device $DEVICE_CODENAME not found in profiles, using defaults"
+            echo "IDENTITY_STATUS=Generic" >> $GITHUB_ENV
           fi
         else
           echo "WARNING: device-profiles.json not found or jq not available"
+          echo "IDENTITY_STATUS=Generic" >> $GITHUB_ENV
         fi
 
     - name: Commit Changes
@@ -882,4 +886,4 @@ jobs:
         echo "| ZeroMount | ${{ inputs.use_zeromount }} |" >> $GITHUB_STEP_SUMMARY
         echo "| ZRAM | ${{ inputs.use_zram }} |" >> $GITHUB_STEP_SUMMARY
         echo "| BBG | ${{ inputs.use_bbg }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Device Profile | ${{ env.DEVICE_CODENAME }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Device Profile | ${{ env.IDENTITY_STATUS }} |" >> $GITHUB_STEP_SUMMARY
