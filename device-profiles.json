@@ -1,0 +1,35 @@
+{
+  "devices": {
+    "lake": {
+      "name": "Xiaomi Redmi 14C",
+      "codename": "lake",
+      "android_version": "android12",
+      "kernel_version": "5.10",
+      "sub_level": "209",
+      "os_patch_level": "2024-05",
+      "stock_kernel": {
+        "release": "-android12-9-00016-g7c6bbcca33e1-ab12029497",
+        "version_string": "#1 SMP PREEMPT Fri Jun 28 13:58:53 UTC 2024",
+        "build_user": "build-user",
+        "build_host": "build-host",
+        "compiler_info": "Android (7284624, based on r416183b) clang version 12.0.5"
+      }
+    }
+  },
+  "_template": {
+    "name": "Device Name",
+    "codename": "codename",
+    "android_version": "android15",
+    "kernel_version": "6.6",
+    "sub_level": "30",
+    "os_patch_level": "2025-01",
+    "stock_kernel": {
+      "release": "-android15-6-xxxxx-gabcdef123456-ab12345678",
+      "version_string": "#1 SMP PREEMPT Mon Jan 1 12:00:00 UTC 2025",
+      "build_user": "build-user",
+      "build_host": "build-host",
+      "compiler_info": "Android clang version X.X.X"
+    },
+    "_note": "To add a new device: 1) Get stock boot.img, 2) Run: strings boot.img | grep 'Linux version', 3) Copy values here"
+  }
+}

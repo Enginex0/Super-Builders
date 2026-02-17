@@ -1,0 +1,75 @@
+diff --git a/crypto/lz4.c b/crypto/lz4.c
+index 0606f8862..5dbe4f793 100644
+--- a/crypto/lz4.c
++++ b/crypto/lz4.c
+@@ -81,7 +81,13 @@ static int lz4_compress_crypto(struct crypto_tfm *tfm, const u8 *src,
+ static int __lz4_decompress_crypto(const u8 *src, unsigned int slen,
+ 				   u8 *dst, unsigned int *dlen, void *ctx)
+ {
+-	int out_len = LZ4_decompress_safe(src, dst, slen, *dlen);
++	int out_len;
++
++	#if defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)
++		out_len = LZ4_arm64_decompress_safe(src, dst, slen, *dlen, false);
++	#else
++		out_len = LZ4_decompress_safe(src, dst, slen, *dlen);
++	#endif
+ 
+ 	if (out_len < 0)
+ 		return -EINVAL;
+diff --git a/crypto/lz4hc.c b/crypto/lz4hc.c
+index d7cc94aa2..e562d642f 100644
+--- a/crypto/lz4hc.c
++++ b/crypto/lz4hc.c
+@@ -82,7 +82,13 @@ static int lz4hc_compress_crypto(struct crypto_tfm *tfm, const u8 *src,
+ static int __lz4hc_decompress_crypto(const u8 *src, unsigned int slen,
+ 				     u8 *dst, unsigned int *dlen, void *ctx)
+ {
+-	int out_len = LZ4_decompress_safe(src, dst, slen, *dlen);
++	int out_len;
++
++#if defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)
++	out_len = LZ4_arm64_decompress_safe(src, dst, slen, *dlen, false);
++#else
++	out_len = LZ4_decompress_safe(src, dst, slen, *dlen);
++#endif
+ 
+ 	if (out_len < 0)
+ 		return -EINVAL;
+diff --git a/fs/f2fs/compress.c b/fs/f2fs/compress.c
+index 2ca8cb607..3c54037e0 100644
+--- a/fs/f2fs/compress.c
++++ b/fs/f2fs/compress.c
+@@ -291,8 +291,13 @@ static int lz4_decompress_pages(struct decompress_io_ctx *dic)
+ {
+ 	int ret;
+ 
++#if defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)
++	ret = LZ4_arm64_decompress_safe(dic->cbuf->cdata, dic->rbuf,
++						dic->clen, dic->rlen, false);
++#else
+ 	ret = LZ4_decompress_safe(dic->cbuf->cdata, dic->rbuf,
+-						dic->clen, dic->rlen);
++						dic->clen, dic->rlen, false);
++#endif
+ 	if (ret < 0) {
+ 		printk_ratelimited("%sF2FS-fs (%s): lz4 decompress failed, ret:%d\n",
+ 				KERN_ERR, F2FS_I_SB(dic->inode)->sb->s_id, ret);
+diff --git a/fs/incfs/data_mgmt.c b/fs/incfs/data_mgmt.c
+index 09959fac6..5ecec9c25 100644
+--- a/fs/incfs/data_mgmt.c
++++ b/fs/incfs/data_mgmt.c
+@@ -472,8 +472,11 @@ static ssize_t decompress(struct mount_info *mi,
+ 
+ 	switch (alg) {
+ 	case INCFS_BLOCK_COMPRESSED_LZ4:
+-		result = LZ4_decompress_safe(src.data, dst.data, src.len,
+-					     dst.len);
++#if defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)
++		result = LZ4_arm64_decompress_safe(src.data, dst.data, src.len, dst.len, false);
++#else
++		result = LZ4_decompress_safe(src.data, dst.data, src.len, dst.len);
++#endif
+ 		if (result < 0)
+ 			return -EBADMSG;
+ 		return result;

@@ -1,0 +1,13 @@
+.claude/
+.env
+.env.*
+.mcp.json
+*.key
+*.pem
+*.jks
+*.keystore
+credentials.json
+service-account*.json
+vectors.db*
+logs_llm/
+evidence_*.png
