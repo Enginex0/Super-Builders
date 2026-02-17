@@ -132,7 +132,7 @@ jobs:
       run: |
         FORMATTED_BRANCH="${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-${{ env.OS_PATCH_LEVEL }}"
 
-        repo init -u https://android.googlesource.com/kernel/manifest -b common-${FORMATTED_BRANCH} --repo-rev=v2.16 --depth=1
+        repo init -u https://android.googlesource.com/kernel/manifest -b common-${FORMATTED_BRANCH} --repo-rev=stable --depth=1
 
         REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${FORMATTED_BRANCH})
         DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
@@ -219,14 +219,35 @@ jobs:
         cp "$SUSFS_PATCHES/include/linux/"*.h ./include/linux/
 
         SUSFS_PATCH="$SUSFS_PATCHES/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch"
-        if [ -f "$SUSFS_PATCH" ]; then
-          patch -p1 --no-backup-if-mismatch < "$SUSFS_PATCH"
-        else
+        if [ ! -f "$SUSFS_PATCH" ]; then
           echo "ERROR: SUSFS patch not found: $SUSFS_PATCH" && exit 1
         fi
 
-        echo "=== Post-patch: injecting into kernel source ==="
+        # Older sublevels have API differences in fdinfo.c — allow partial failure
+        PATCH_RC=0
+        patch -p1 --no-backup-if-mismatch < "$SUSFS_PATCH" || PATCH_RC=$?
+        if [ "$PATCH_RC" -ne 0 ]; then
+          echo "  GKI patch had partial hunk failures (exit $PATCH_RC), attempting cross-sublevel fixes..."
+        fi
+
+        echo "=== Post-patch: cross-sublevel compat fixes ==="
         HOOKS_DIR="$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/kernel-hooks"
+
+        # fdinfo.c compat — old vs new inotify API across sublevels
+        if [ -x "$HOOKS_DIR/fix-susfs-fdinfo-compat.sh" ]; then
+          bash "$HOOKS_DIR/fix-susfs-fdinfo-compat.sh" "$KERNEL_ROOT/common"
+        fi
+
+        # Hard-fail if unhandled rejects remain
+        REMAINING=$(find . -name "*.rej" 2>/dev/null || true)
+        if [ -n "$REMAINING" ]; then
+          echo "FATAL: Unhandled patch rejects:"
+          echo "$REMAINING"
+          for f in $REMAINING; do cat "$f"; done
+          exit 1
+        fi
+
+        echo "=== Post-patch: injecting into kernel source ==="
         bash "$HOOKS_DIR/inject-susfs-vfs-open-redirect-all.sh" "$KERNEL_ROOT/common"
         bash "$HOOKS_DIR/inject-susfs-mount-display.sh" "$KERNEL_ROOT/common"
 
@@ -436,6 +457,10 @@ jobs:
           sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' "${{ env.DEFCONFIG }}"
         fi
 
+        # Dedup: injection scripts and base defconfig may already define some symbols
+        tac "${{ env.DEFCONFIG }}" | awk -F= '/^CONFIG_/{if(seen[$1]++)next} {print}' | tac > "${{ env.DEFCONFIG }}.tmp"
+        mv "${{ env.DEFCONFIG }}.tmp" "${{ env.DEFCONFIG }}"
+
         # Disable defconfig check
         if [[ "${{ env.KERNEL_VERSION }}" == "6.12" ]]; then
           sed -i '/name = "kernel_aarch64",/a\    check_defconfig = "disabled",' common/BUILD.bazel
@@ -624,7 +649,7 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         if [ -f "build/build.sh" ]; then
-          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
+          HOSTLD=ld.lld LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
         else
           tools/bazel build --config=fast --config=stamp --lto=thin //common:kernel_aarch64_dist || exit 1
         fi
