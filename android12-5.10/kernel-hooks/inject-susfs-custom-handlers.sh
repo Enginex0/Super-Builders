@@ -25,9 +25,11 @@ HANDLERS=(
     "susfs_add_open_redirect_all|CMD_SUSFS_ADD_OPEN_REDIRECT_ALL|CMD_SUSFS_ADD_OPEN_REDIRECT|CONFIG_KSU_SUSFS_OPEN_REDIRECT|susfs_add_open_redirect_all(arg)"
 )
 
-# Kconfig definitions: function_name|config_name|description|help_text
+# Kconfig definitions: function_name|config_name|description|help_text|depends_on
 KCONFIGS=(
-    "susfs_check_unicode_bypass|KSU_SUSFS_UNICODE_FILTER|Unicode Filter (blocks scoped storage bypass)|Blocks filesystem path attacks using unicode characters."
+    "susfs_add_sus_kstat_redirect|KSU_SUSFS_SUS_KSTAT_REDIRECT|SUSFS kstat redirect|Redirects kstat lookups to real file metadata for spoofed paths.|KSU_SUSFS_SUS_KSTAT"
+    "susfs_add_open_redirect_all|KSU_SUSFS_OPEN_REDIRECT_ALL|SUSFS open redirect for all UIDs|Extends open redirect to all UIDs instead of only root/system.|KSU_SUSFS_OPEN_REDIRECT"
+    "susfs_check_unicode_bypass|KSU_SUSFS_UNICODE_FILTER|Unicode Filter (blocks scoped storage bypass)|Blocks filesystem path attacks using unicode characters.|KSU_SUSFS"
 )
 
 inject_count=0
@@ -59,13 +61,14 @@ done
 # Add Kconfig entries
 if [ -n "$KCONFIG" ] && [ -f "$KCONFIG" ]; then
     for entry in "${KCONFIGS[@]}"; do
-        IFS='|' read -r func config desc help_text <<< "$entry"
+        IFS='|' read -r func config desc help_text depends_on <<< "$entry"
+        [ -z "$depends_on" ] && depends_on="KSU_SUSFS"
 
         if grep -q "$func" "$SUSFS_SOURCE" 2>/dev/null; then
             if ! grep -q "$config" "$KCONFIG"; then
-                echo "[+] Adding $config to Kconfig"
-                printf '\nconfig %s\n    bool "%s"\n    depends on KSU_SUSFS\n    default y\n    help\n      %s\n' \
-                    "$config" "$desc" "$help_text" >> "$KCONFIG"
+                echo "[+] Adding $config to Kconfig (depends on $depends_on)"
+                printf '\nconfig %s\n    bool "%s"\n    depends on %s\n    default y\n    help\n      %s\n' \
+                    "$config" "$desc" "$depends_on" "$help_text" >> "$KCONFIG"
                 ((kconfig_count++)) || true
 
                 # Add to defconfig if provided
