@@ -197,8 +197,17 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         SUSFS_BRANCH="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-dev"
-        echo "=== Cloning upstream SUSFS (branch: $SUSFS_BRANCH) ==="
-        git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" "$SUSFS4KSU"
+        SUSFS_PIN_FILE="$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/susfs-pin.txt"
+
+        if [ -f "$SUSFS_PIN_FILE" ] && [ -s "$SUSFS_PIN_FILE" ]; then
+          SUSFS_PIN=$(tr -d '[:space:]' < "$SUSFS_PIN_FILE")
+          echo "=== Cloning SUSFS (branch: $SUSFS_BRANCH, pinned: ${SUSFS_PIN:0:12}) ==="
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" "$SUSFS4KSU"
+          git -C "$SUSFS4KSU" checkout "$SUSFS_PIN"
+        else
+          echo "=== Cloning SUSFS (branch: $SUSFS_BRANCH, HEAD — no pin file) ==="
+          git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" "$SUSFS4KSU"
+        fi
 
         SUSFS_PATCHES="$SUSFS4KSU/kernel_patches"
         INJECT_DIR="$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/susfs"
@@ -269,10 +278,9 @@ jobs:
           bash "$HOOKS_DIR/add-unicode-filter.sh" "$KERNEL_ROOT/common"
         fi
 
-        if [[ "${{ env.ANDROID_VERSION }}" == "android12" && "${{ env.KERNEL_VERSION }}" == "5.10" ]]; then
-          if [[ "$ACTUAL_SUBLEVEL" -le 209 ]]; then
-            sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
-          fi
+        if grep -q 'goto show_pad;' ./fs/proc/task_mmu.c && ! grep -q '^show_pad:' ./fs/proc/task_mmu.c; then
+          echo "=== Fixing show_pad label (missing in this sublevel) ==="
+          sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
         fi
 
         echo "=== SUSFS integration complete ==="

@@ -35,17 +35,16 @@ echo "[OK] Include injected"
 
 echo "[INFO] Injecting vfs_getxattr hook..."
 
-# awk state machine handles split function signatures (return type on separate line)
+# 5.15: vfs_getxattr has declarations (struct inode, int error) — inject after
+# last declaration with compound statement to avoid C89 mixed-declaration error
 awk '
-BEGIN { in_vfs_getxattr = 0; injected = 0; held_line = "" }
+BEGIN { in_vfs_getxattr = 0; in_body = 0; injected = 0; held_line = "" }
 
-# Hold "ssize_t" alone on a line to check next line
 /^ssize_t$/ && held_line == "" {
     held_line = $0
     next
 }
 
-# Process line after held ssize_t
 held_line != "" {
     if (/^vfs_getxattr\(/) {
         in_vfs_getxattr = 1
@@ -54,20 +53,22 @@ held_line != "" {
     held_line = ""
 }
 
-# Also handle single-line signature: "ssize_t vfs_getxattr("
 /^ssize_t vfs_getxattr\(/ { in_vfs_getxattr = 1 }
 
-# Find opening brace of function body
-in_vfs_getxattr && /^\{$/ && !injected {
+in_vfs_getxattr && /^\{$/ { in_body = 1 }
+
+in_body && /^\tint error;$/ && !injected {
     print
     print "#ifdef CONFIG_ZEROMOUNT"
-    print "\tssize_t zm_ret;"
-    print "\tzm_ret = zeromount_spoof_xattr(dentry, name, value, size);"
-    print "\tif (zm_ret != -EOPNOTSUPP)"
-    print "\t\treturn zm_ret;"
+    print "\t{"
+    print "\t\tssize_t zm_ret = zeromount_spoof_xattr(dentry, name, value, size);"
+    print "\t\tif (zm_ret != -EOPNOTSUPP)"
+    print "\t\t\treturn zm_ret;"
+    print "\t}"
     print "#endif"
     injected = 1
     in_vfs_getxattr = 0
+    in_body = 0
     next
 }
 

@@ -25,7 +25,7 @@ patch_namei() {
 \
 #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
 	if (susfs_check_unicode_bypass(name->uptr)) {\
-		return -EPERM;\
+		return -ENOENT;\
 	}\
 #endif' "$f"
 
@@ -35,7 +35,7 @@ patch_namei() {
 \
 #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
 	if (susfs_check_unicode_bypass(pathname)) {\
-		return -EPERM;\
+		return -ENOENT;\
 	}\
 #endif
     }' "$f"
@@ -46,7 +46,7 @@ patch_namei() {
 \
 #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
 	if (susfs_check_unicode_bypass(to->uptr)) {\
-		return -EPERM;\
+		return -ENOENT;\
 	}\
 #endif
     }' "$f"
@@ -57,18 +57,19 @@ patch_namei() {
 \
 #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
 	if (susfs_check_unicode_bypass(new->uptr)) {\
-		return -EPERM;\
+		return -ENOENT;\
 	}\
 #endif
     }' "$f"
 
-    # renameat2
-    sed -i '/^SYSCALL_DEFINE5(renameat2,/,/^{$/{
-        /^{$/a\
+    # do_renameat2 — internal function, not syscall wrapper
+    sed -i '/^int do_renameat2/,/int error = -EINVAL;/{
+        /int error = -EINVAL;/a\
+\
 #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
-	if (susfs_check_unicode_bypass(oldname) ||\
-	    susfs_check_unicode_bypass(newname)) {\
-		return -EPERM;\
+	if (susfs_check_unicode_bypass(from->uptr) ||\
+	    susfs_check_unicode_bypass(to->uptr)) {\
+		return -ENOENT;\
 	}\
 #endif
     }' "$f"
@@ -88,7 +89,7 @@ patch_open() {
 \
 #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
 	if (susfs_check_unicode_bypass(filename)) {\
-		return -EPERM;\
+		return -ENOENT;\
 	}\
 #endif
     }' "$f"
@@ -108,7 +109,7 @@ patch_stat() {
 \
 #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
 	if (susfs_check_unicode_bypass(filename)) {\
-		return -EPERM;\
+		return -ENOENT;\
 	}\
 #endif
     }' "$f"
@@ -118,7 +119,7 @@ patch_stat() {
 \
 #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
 	if (susfs_check_unicode_bypass(pathname)) {\
-		return -EPERM;\
+		return -ENOENT;\
 	}\
 #endif' "$f"
 }
