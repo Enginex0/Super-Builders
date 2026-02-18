@@ -55,5 +55,20 @@ fix_open() {
     echo "[+] $f fixed"
 }
 
+fix_i_user_ns() {
+    local f="include/linux/fs.h"
+    grep -q 'i_user_ns' "$f" && return 0
+
+    echo "[+] Adding i_user_ns compat shim to $f"
+    sed -i '/^static inline kuid_t i_uid_into_mnt/i\
+static inline struct user_namespace *i_user_ns(const struct inode *inode)\
+{\
+\treturn inode->i_sb->s_user_ns;\
+}\
+' "$f"
+    echo "[+] $f shimmed"
+}
+
 fix_namespace
 fix_open
+fix_i_user_ns

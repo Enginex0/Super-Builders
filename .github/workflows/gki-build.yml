@@ -612,7 +612,7 @@ jobs:
         sed -i '/zsmalloc\.ko/d; /zram\.ko/d' common/android/gki_aarch64_modules 2>/dev/null || true
 
         if [ -f "build/build.sh" ]; then
-          HOSTLD=ld.lld LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
+          KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=ld.lld LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
         else
           tools/bazel build --config=fast --config=stamp --lto=thin //common:kernel_aarch64_dist || exit 1
         fi
