@@ -12,6 +12,7 @@ on:
         type: choice
         options:
           - a12-5.10
+          - a13-5.15
         default: "a12-5.10"
       ksu_variant:
         description: "KernelSU variant"
@@ -50,6 +51,18 @@ jobs:
   a12-5_10:
     if: inputs.kernel_version == 'a12-5.10'
     uses: ./.github/workflows/kernel-a12-5.10.yml
+    with:
+      ksu_variant: ${{ inputs.ksu_variant }}
+      add_susfs: ${{ inputs.add_susfs }}
+      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
+      add_unicode_filter: ${{ inputs.add_unicode_filter }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+
+  a13-5_15:
+    if: inputs.kernel_version == 'a13-5.15'
+    uses: ./.github/workflows/kernel-a13-5.15.yml
     with:
       ksu_variant: ${{ inputs.ksu_variant }}
       add_susfs: ${{ inputs.add_susfs }}
