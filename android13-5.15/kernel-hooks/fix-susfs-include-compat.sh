@@ -20,7 +20,7 @@ fix_namespace() {
 #endif' "$f"
     fi
 
-    if ! grep -q 'susfs_is_current_ksu_domain' "$f"; then
+    if ! grep -q 'extern bool susfs_is_current_ksu_domain' "$f"; then
         sed -i '/#include "internal.h"/a\
 \
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\
