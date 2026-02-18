@@ -311,14 +311,9 @@ jobs:
         fi
 
         echo "=== Running ZeroMount injection scripts ==="
-        chmod +x "$ZEROMOUNT_DIR/inject-zeromount-"*.sh
+        chmod +x "$ZEROMOUNT_DIR/"*.sh
 
-        "$ZEROMOUNT_DIR/inject-zeromount-stat.sh" fs/stat.c
-        "$ZEROMOUNT_DIR/inject-zeromount-namei.sh" fs/namei.c
-        "$ZEROMOUNT_DIR/inject-zeromount-readdir.sh" fs/readdir.c
-        "$ZEROMOUNT_DIR/inject-zeromount-dpath.sh" fs/d_path.c
-        "$ZEROMOUNT_DIR/inject-zeromount-statfs.sh" fs/statfs.c
-        "$ZEROMOUNT_DIR/inject-zeromount-xattr.sh" fs/xattr.c
+        bash "$ZEROMOUNT_DIR/inject-zeromount-vfs-hooks.sh" .
 
         echo "=== All ZeroMount hooks injected ==="
 
