@@ -63,7 +63,7 @@ patch_namei() {
     }' "$f"
 
     # renameat2
-    sed -i '/^SYSCALL_DEFINE5(renameat2,.*flags)$/,/^{$/{
+    sed -i '/^SYSCALL_DEFINE5(renameat2,/,/^{$/{
         /^{$/a\
 #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
 	if (susfs_check_unicode_bypass(oldname) ||\
