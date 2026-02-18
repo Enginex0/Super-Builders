@@ -36,7 +36,7 @@ BYPASS_CHECK='#ifdef CONFIG_KSU_SUSFS
 
 # Fix zeromount_is_uid_blocked - add early return for umounted
 echo "[+] Patching zeromount_is_uid_blocked"
-sed -i '/^static bool zeromount_is_uid_blocked(uid_t uid) {$/,/^}$/{
+sed -i '/^bool zeromount_is_uid_blocked(uid_t uid) {$/,/^}$/{
     /if (ZEROMOUNT_DISABLED()) return false;/a\
 #ifdef CONFIG_KSU_SUSFS\
     if (susfs_is_current_proc_umounted()) return true;\
@@ -46,7 +46,7 @@ sed -i '/^static bool zeromount_is_uid_blocked(uid_t uid) {$/,/^}$/{
 # Fix zeromount_is_traversal_allowed - block umounted processes
 echo "[+] Patching zeromount_is_traversal_allowed"
 sed -i '/^bool zeromount_is_traversal_allowed(struct inode \*inode, int mask) {$/,/^}$/{
-    /if (!inode || ZEROMOUNT_DISABLED() || zeromount_is_uid_blocked(current_uid().val)) return false;/a\
+    /if (!inode || zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return false;/a\
 #ifdef CONFIG_KSU_SUSFS\
     if (susfs_is_current_proc_umounted()) return false;\
 #endif
@@ -55,7 +55,7 @@ sed -i '/^bool zeromount_is_traversal_allowed(struct inode \*inode, int mask) {$
 # Fix zeromount_is_injected_file - hide from umounted
 echo "[+] Patching zeromount_is_injected_file"
 sed -i '/^bool zeromount_is_injected_file(struct inode \*inode) {$/,/^}$/{
-    /if (!inode || !inode->i_sb || ZEROMOUNT_DISABLED())$/,/return false;/{
+    /if (!inode || !inode->i_sb || zeromount_should_skip())$/,/return false;/{
         /return false;/a\
 #ifdef CONFIG_KSU_SUSFS\
     if (susfs_is_current_proc_umounted())\
@@ -79,7 +79,7 @@ sed -i '/^char \*zeromount_resolve_path(const char \*pathname)$/,/^}$/{
 # Fix zeromount_getname_hook - no hook for umounted
 echo "[+] Patching zeromount_getname_hook"
 sed -i '/^struct filename \*zeromount_getname_hook(struct filename \*name)$/,/^}$/{
-    /if (zeromount_is_critical_process())/,/return name;/{
+    /if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val) || !name || name->name\[0\] != '\''\/'\'')/,/return name;/{
         /return name;/a\
 #ifdef CONFIG_KSU_SUSFS\
     if (susfs_is_current_proc_umounted())\
@@ -91,7 +91,7 @@ sed -i '/^struct filename \*zeromount_getname_hook(struct filename \*name)$/,/^}
 # Fix zeromount_inject_dents64 - no injection for umounted
 echo "[+] Patching zeromount_inject_dents64"
 sed -i '/^void zeromount_inject_dents64(struct file \*file/,/^}$/{
-    /if (ZEROMOUNT_DISABLED() || zeromount_is_uid_blocked(current_uid().val)) return;/a\
+    /if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;/a\
 #ifdef CONFIG_KSU_SUSFS\
     if (susfs_is_current_proc_umounted()) return;\
 #endif
@@ -100,7 +100,7 @@ sed -i '/^void zeromount_inject_dents64(struct file \*file/,/^}$/{
 # Fix zeromount_inject_dents - no injection for umounted
 echo "[+] Patching zeromount_inject_dents"
 sed -i '/^void zeromount_inject_dents(struct file \*file/,/^}$/{
-    /if (ZEROMOUNT_DISABLED() || zeromount_is_uid_blocked(current_uid().val)) return;/a\
+    /if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;/a\
 #ifdef CONFIG_KSU_SUSFS\
     if (susfs_is_current_proc_umounted()) return;\
 #endif
@@ -109,7 +109,7 @@ sed -i '/^void zeromount_inject_dents(struct file \*file/,/^}$/{
 # Fix zeromount_spoof_statfs - no spoofing for umounted
 echo "[+] Patching zeromount_spoof_statfs"
 sed -i '/^int zeromount_spoof_statfs(const char __user \*pathname/,/^}$/{
-    /if (ZEROMOUNT_DISABLED() || zeromount_is_uid_blocked(current_uid().val))$/,/return 0;/{
+    /if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val))$/,/return 0;/{
         /return 0;/a\
 #ifdef CONFIG_KSU_SUSFS\
     if (susfs_is_current_proc_umounted())\
@@ -121,7 +121,7 @@ sed -i '/^int zeromount_spoof_statfs(const char __user \*pathname/,/^}$/{
 # Fix zeromount_spoof_xattr - no spoofing for umounted
 echo "[+] Patching zeromount_spoof_xattr"
 sed -i '/^ssize_t zeromount_spoof_xattr(struct dentry \*dentry/,/^}$/{
-    /if (ZEROMOUNT_DISABLED() || zeromount_is_uid_blocked(current_uid().val))$/,/return -EOPNOTSUPP;/{
+    /if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val))$/,/return -EOPNOTSUPP;/{
         /return -EOPNOTSUPP;/a\
 #ifdef CONFIG_KSU_SUSFS\
     if (susfs_is_current_proc_umounted())\
