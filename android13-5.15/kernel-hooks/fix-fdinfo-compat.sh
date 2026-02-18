@@ -47,9 +47,9 @@ else
 fi
 
 if [ "$FORMAT" = "old" ]; then
-    # Old format: inject SUSFS block before the comment+mask block
+    # Old format: anchor on the u32 mask declaration to avoid C89 mixed-declaration error
     awk '
-    /if \(inode\) \{/ && !injected {
+    /u32 mask = mark->mask & IN_ALL_EVENTS;/ && !injected {
         print
         print "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT"
         print "\t\tmnt = real_mount(file->f_path.mnt);"
@@ -59,7 +59,6 @@ if [ "$FORMAT" = "old" ]; then
         print "\t\t\tstruct path path;"
         print "\t\t\tchar *pathname = kmalloc(PAGE_SIZE, GFP_KERNEL);"
         print "\t\t\tchar *dpath;"
-        print "\t\t\tu32 fmask = mark->mask & IN_ALL_EVENTS;"
         print "\t\t\tif (!pathname) {"
         print "\t\t\t\tgoto out_seq_printf;"
         print "\t\t\t}"
@@ -72,7 +71,7 @@ if [ "$FORMAT" = "old" ]; then
         print "\t\t\t}"
         print "\t\t\tseq_printf(m, \"inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:%x \","
         print "\t\t\t\t\tinode_mark->wd, path.dentry->d_inode->i_ino, path.dentry->d_inode->i_sb->s_dev,"
-        print "\t\t\t\t\tfmask, mark->ignored_mask);"
+        print "\t\t\t\t\tmask, mark->ignored_mask);"
         print "\t\t\tshow_mark_fhandle(m, path.dentry->d_inode);"
         print "\t\t\tseq_putc(m, \047\\n\047);"
         print "\t\t\tiput(inode);"
