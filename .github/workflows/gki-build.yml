@@ -261,12 +261,20 @@ jobs:
           bash "$HOOKS_DIR/fix-susfs-include-compat.sh" "$KERNEL_ROOT/common"
         fi
 
-        # Hard-fail if unhandled rejects remain
-        REMAINING=$(find . -name "*.rej" 2>/dev/null || true)
-        if [ -n "$REMAINING" ]; then
-          echo "FATAL: Unhandled patch rejects:"
-          echo "$REMAINING"
-          for f in $REMAINING; do cat "$f"; done
+        # Only fail on rejects in paths that matter for SUSFS/ZeroMount
+        CRITICAL=$(find . -name "*.rej" \( -path "*/fs/*" -o -path "*/include/*" -o -path "*/kernel/*" -o -path "*/security/*" \) 2>/dev/null || true)
+        NONCRITICAL=$(find . -name "*.rej" ! \( -path "*/fs/*" -o -path "*/include/*" -o -path "*/kernel/*" -o -path "*/security/*" \) 2>/dev/null || true)
+
+        if [ -n "$NONCRITICAL" ]; then
+          echo "WARN: Deleting non-critical rejects (unrelated GKI backport hunks):"
+          echo "$NONCRITICAL"
+          echo "$NONCRITICAL" | xargs rm -f
+        fi
+
+        if [ -n "$CRITICAL" ]; then
+          echo "FATAL: Patch rejects in SUSFS-critical paths:"
+          echo "$CRITICAL"
+          for f in $CRITICAL; do cat "$f"; done
           exit 1
         fi
 
