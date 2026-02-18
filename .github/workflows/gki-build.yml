@@ -197,7 +197,14 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         SUSFS_BRANCH="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-dev"
+        SUSFS_BRANCH_FALLBACK="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
         SUSFS_PIN_FILE="$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/susfs-pin.txt"
+
+        # Not all versions have -dev branches in the SUSFS repo
+        if ! git ls-remote --heads https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" | grep -q .; then
+          echo "=== Branch $SUSFS_BRANCH not found, falling back to $SUSFS_BRANCH_FALLBACK ==="
+          SUSFS_BRANCH="$SUSFS_BRANCH_FALLBACK"
+        fi
 
         if [ -f "$SUSFS_PIN_FILE" ] && [ -s "$SUSFS_PIN_FILE" ]; then
           SUSFS_PIN=$(tr -d '[:space:]' < "$SUSFS_PIN_FILE")
