@@ -216,9 +216,7 @@ jobs:
         if [[ "${{ inputs.add_enhanced_susfs }}" == "true" ]]; then
           echo "=== Injecting custom features into upstream SUSFS ==="
           bash "$INJECT_DIR/fix-safety.sh" "$SUSFS_PATCHES"
-          bash "$INJECT_DIR/add-kstat-redirect.sh" "$SUSFS_PATCHES"
-          bash "$INJECT_DIR/add-open-redirect-all.sh" "$SUSFS_PATCHES"
-          bash "$INJECT_DIR/add-unicode-filter-func.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/inject-susfs-features.sh" "$SUSFS_PATCHES"
           bash "$INJECT_DIR/add-supercall-dispatch.sh" "$SUSFS_PATCHES"
           bash "$INJECT_DIR/add-susfs-zeromount-coupling.sh" "$SUSFS_PATCHES"
         else
