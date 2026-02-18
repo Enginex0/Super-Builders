@@ -251,6 +251,11 @@ jobs:
           bash "$HOOKS_DIR/fix-fdinfo-compat.sh" "$KERNEL_ROOT/common"
         fi
 
+        # namespace.c/open.c compat — mnt_idmapping.h missing in old sublevels
+        if [ -x "$HOOKS_DIR/fix-susfs-include-compat.sh" ]; then
+          bash "$HOOKS_DIR/fix-susfs-include-compat.sh" "$KERNEL_ROOT/common"
+        fi
+
         # Hard-fail if unhandled rejects remain
         REMAINING=$(find . -name "*.rej" 2>/dev/null || true)
         if [ -n "$REMAINING" ]; then
