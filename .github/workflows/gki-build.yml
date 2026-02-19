@@ -636,8 +636,10 @@ jobs:
       run: |
         # ZRAM is built-in (=y), remove from expected-modules list
         sed -i '/zsmalloc\.ko/d; /zram\.ko/d' common/android/gki_aarch64_modules 2>/dev/null || true
-        # Bazel builds use modules.bzl instead of gki_aarch64_modules
+        # Bazel builds 6.1+: module list is in modules.bzl (referenced by BUILD.bazel)
         sed -i '/zsmalloc\.ko/d; /zram\.ko/d' common/modules.bzl 2>/dev/null || true
+        # Bazel builds 5.15: module list is inline in BUILD.bazel (module_implicit_outs)
+        sed -i '/zsmalloc\.ko/d; /zram\.ko/d' common/BUILD.bazel 2>/dev/null || true
 
         if [ -f "build/build.sh" ]; then
           KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=ld.lld LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
