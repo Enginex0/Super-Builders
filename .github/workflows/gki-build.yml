@@ -200,20 +200,33 @@ jobs:
         SUSFS_BRANCH_FALLBACK="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
         SUSFS_PIN_FILE="$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/susfs-pin.txt"
 
-        # Not all versions have -dev branches in the SUSFS repo
-        if ! git ls-remote --heads https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" | grep -q .; then
-          echo "=== Branch $SUSFS_BRANCH not found, falling back to $SUSFS_BRANCH_FALLBACK ==="
-          SUSFS_BRANCH="$SUSFS_BRANCH_FALLBACK"
+        # Resolve SUSFS branch: prefer -dev, fall back to base, then branchless clone
+        # Some branches only exist as refs/remotes/origin/ (upstream repo artifact)
+        CLONE_BRANCH=""
+        if git ls-remote --heads https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" | grep -q .; then
+          CLONE_BRANCH="$SUSFS_BRANCH"
+        elif git ls-remote --heads https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH_FALLBACK" | grep -q .; then
+          CLONE_BRANCH="$SUSFS_BRANCH_FALLBACK"
         fi
 
         if [ -f "$SUSFS_PIN_FILE" ] && [ -s "$SUSFS_PIN_FILE" ]; then
           SUSFS_PIN=$(tr -d '[:space:]' < "$SUSFS_PIN_FILE")
-          echo "=== Cloning SUSFS (branch: $SUSFS_BRANCH, pinned: ${SUSFS_PIN:0:12}) ==="
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" "$SUSFS4KSU"
+          if [ -n "$CLONE_BRANCH" ]; then
+            echo "=== Cloning SUSFS (branch: $CLONE_BRANCH, pinned: ${SUSFS_PIN:0:12}) ==="
+            git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$CLONE_BRANCH" "$SUSFS4KSU"
+          else
+            echo "=== Cloning SUSFS (no refs/heads branch, pinned: ${SUSFS_PIN:0:12}) ==="
+            git clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS4KSU"
+          fi
           git -C "$SUSFS4KSU" checkout "$SUSFS_PIN"
         else
-          echo "=== Cloning SUSFS (branch: $SUSFS_BRANCH, HEAD — no pin file) ==="
-          git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" "$SUSFS4KSU"
+          if [ -n "$CLONE_BRANCH" ]; then
+            echo "=== Cloning SUSFS (branch: $CLONE_BRANCH, HEAD — no pin file) ==="
+            git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$CLONE_BRANCH" "$SUSFS4KSU"
+          else
+            echo "::error::No SUSFS refs/heads branch found and no pin file — cannot determine commit"
+            exit 1
+          fi
         fi
 
         SUSFS_PATCHES="$SUSFS4KSU/kernel_patches"
