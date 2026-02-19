@@ -28,7 +28,7 @@ new file mode 100644
 index 000000000..43ca3f0fa
 --- /dev/null
 +++ b/fs/zeromount.c
-@@ -0,0 +1,1225 @@
+@@ -0,0 +1,1163 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -46,7 +46,6 @@ index 000000000..43ca3f0fa
 +#include <linux/vmalloc.h>
 +#include <linux/mm.h>
 +#include <linux/zeromount.h>
-+#include <linux/jhash.h>
 +#include <linux/kobject.h>
 +#include <linux/sysfs.h>
 +#include <linux/statfs.h>
@@ -64,42 +63,9 @@ index 000000000..43ca3f0fa
 +DEFINE_HASHTABLE(zeromount_ino_ht, ZEROMOUNT_HASH_BITS);
 +LIST_HEAD(zeromount_rules_list);
 +DEFINE_SPINLOCK(zeromount_lock);
-+DECLARE_BITMAP(zeromount_bloom, ZEROMOUNT_BLOOM_SIZE);
-+EXPORT_SYMBOL(zeromount_bloom);
 +
 +atomic_t zeromount_enabled = ATOMIC_INIT(0);
 +#define ZEROMOUNT_DISABLED() (atomic_read(&zeromount_enabled) == 0)
-+
-+static void zeromount_bloom_add(const char *name)
-+{
-+    unsigned int len = strlen(name);
-+    unsigned int h1 = jhash(name, len, 0);
-+    unsigned int h2 = jhash(name, len, 1);
-+    set_bit(h1 & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom);
-+    set_bit(h2 & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom);
-+}
-+
-+static bool zeromount_bloom_test(const char *name)
-+{
-+    unsigned int len = strlen(name);
-+    unsigned int h1 = jhash(name, len, 0);
-+    unsigned int h2 = jhash(name, len, 1);
-+    if (!test_bit(h1 & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
-+        return false;
-+    if (!test_bit(h2 & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
-+        return false;
-+    return true;
-+}
-+
-+static void zeromount_bloom_rebuild(void)
-+{
-+    struct zeromount_rule *rule;
-+    bitmap_zero(zeromount_bloom, ZEROMOUNT_BLOOM_SIZE);
-+    list_for_each_entry(rule, &zeromount_rules_list, list) {
-+        zeromount_bloom_add(rule->virtual_path);
-+        zeromount_bloom_add(rule->real_path);
-+    }
-+}
 +
 +struct linux_dirent {
 +    unsigned long   d_ino;
@@ -318,9 +284,6 @@ index 000000000..43ca3f0fa
 +
 +    key = inode->i_ino ^ inode->i_sb->s_dev;
 +
-+    if (!test_bit(inode->i_ino & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
-+        return NULL;
-+
 +    rcu_read_lock();
 +    hash_for_each_possible_rcu(zeromount_ino_ht, rule, ino_node, key) {
 +        if (rule->real_ino == inode->i_ino &&
@@ -363,7 +326,6 @@ index 000000000..43ca3f0fa
 +
 +bool zeromount_is_traversal_allowed(struct inode *inode, int mask) {
 +    if (!inode || zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return false;
-+    if (!test_bit(inode->i_ino & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom)) return false;
 +    if (!(mask & MAY_EXEC)) return false;
 +
 +    if ((READ_ONCE(zm_ino_adb) != 0 && inode->i_ino == READ_ONCE(zm_ino_adb)) ||
@@ -382,9 +344,6 @@ index 000000000..43ca3f0fa
 +        return false;
 +
 +    key = inode->i_ino ^ inode->i_sb->s_dev;
-+
-+    if (!test_bit(inode->i_ino & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
-+        return false;
 +
 +    rcu_read_lock();
 +    hash_for_each_possible_rcu(zeromount_ino_ht, rule, ino_node, key) {
@@ -415,11 +374,6 @@ index 000000000..43ca3f0fa
 +    if (!normalized) return NULL;
 +
 +    hash = full_name_hash(NULL, normalized, strlen(normalized));
-+
-+    if (!zeromount_bloom_test(normalized)) {
-+        kfree(normalized);
-+        return NULL;
-+    }
 +
 +    rcu_read_lock();
 +    hash_for_each_possible_rcu(zeromount_rules_ht, rule, node, hash) {
@@ -511,9 +465,6 @@ index 000000000..43ca3f0fa
 +    if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val) || !name || name->name[0] != '/')
 +        return name;
 +
-+    if (!zeromount_bloom_test(name->name))
-+        return name;
-+
 +    zm_enter();
 +
 +    target_path = zeromount_resolve_path(name->name);
@@ -579,9 +530,6 @@ index 000000000..43ca3f0fa
 +    unsigned long fake_ino;
 +
 +    if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;
-+
-+    if (!test_bit(file_inode(file)->i_ino & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
-+        return;
 +
 +    page_buf = __getname();
 +    if (!page_buf) return;
@@ -650,9 +598,6 @@ index 000000000..43ca3f0fa
 +    unsigned long fake_ino;
 +
 +    if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;
-+
-+    if (!test_bit(file_inode(file)->i_ino & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
-+        return;
 +
 +    page_buf = __getname();
 +    if (!page_buf) return;
@@ -977,9 +922,6 @@ index 000000000..43ca3f0fa
 +    list_add_tail(&rule->list, &zeromount_rules_list);
 +    spin_unlock(&zeromount_lock);
 +
-+    zeromount_bloom_add(v_path);
-+    zeromount_bloom_add(r_path);
-+
 +    type = DT_REG;
 +    if (data.flags & ZM_FLAG_IS_DIR) type = DT_DIR;
 +
@@ -1023,8 +965,6 @@ index 000000000..43ca3f0fa
 +            break;
 +        }
 +    }
-+    if (found)
-+        zeromount_bloom_rebuild();
 +    spin_unlock(&zeromount_lock);
 +
 +    if (found && rule) {
@@ -1056,8 +996,6 @@ index 000000000..43ca3f0fa
 +        hash_del_rcu(&uid_node->node);
 +        kfree_rcu(uid_node, rcu);
 +    }
-+
-+    bitmap_zero(zeromount_bloom, ZEROMOUNT_BLOOM_SIZE);
 +
 +    spin_unlock(&zeromount_lock);
 +    return 0;
@@ -1259,7 +1197,7 @@ new file mode 100644
 index 000000000..9e0fb1b21
 --- /dev/null
 +++ b/include/linux/zeromount.h
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,161 @@
 +#ifndef _LINUX_ZEROMOUNT_H
 +#define _LINUX_ZEROMOUNT_H
 +
@@ -1324,8 +1262,6 @@ index 000000000..9e0fb1b21
 +#define ZEROMOUNT_MAGIC_CODE 0x5A /* 'Z' */
 +#define ZEROMOUNT_VERSION    1
 +#define ZEROMOUNT_HASH_BITS  10
-+#define ZEROMOUNT_BLOOM_BITS 20
-+#define ZEROMOUNT_BLOOM_SIZE (1 << ZEROMOUNT_BLOOM_BITS)
 +#define ZM_FLAG_ACTIVE        (1 << 0)
 +#define ZM_FLAG_IS_DIR        (1 << 7)
 +#define ZEROMOUNT_MAGIC_POS 0x7000000000000000ULL
@@ -1389,7 +1325,6 @@ index 000000000..9e0fb1b21
 +extern DECLARE_HASHTABLE(zeromount_ino_ht, ZEROMOUNT_HASH_BITS);
 +extern struct list_head zeromount_rules_list;
 +extern spinlock_t zeromount_lock;
-+extern unsigned long zeromount_bloom[];
 +
 +#ifdef CONFIG_ZEROMOUNT
 +extern atomic_t zeromount_enabled;
