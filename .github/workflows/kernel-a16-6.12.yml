@@ -1,0 +1,95 @@
+name: "Android 16 - Kernel 6.12"
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_variant:
+        description: "KernelSU variant"
+        type: choice
+        options:
+          - KernelSU-Next
+          - SukiSU
+          - MKSU
+        default: "KernelSU-Next"
+      add_susfs:
+        description: "Add SUSFS (upstream)"
+        type: boolean
+        default: true
+      add_enhanced_susfs:
+        description: "Add enhanced SUSFS (custom injection)"
+        type: boolean
+        default: true
+      add_unicode_filter:
+        description: "Add Unicode filter"
+        type: boolean
+        default: true
+      add_zeromount:
+        description: "Add ZeroMount"
+        type: boolean
+        default: true
+      add_zram:
+        description: "Add ZRAM with LZ4K"
+        type: boolean
+        default: true
+      add_bbg:
+        description: "Add Baseband Guard"
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      ksu_variant:
+        type: string
+        default: "KernelSU-Next"
+      add_susfs:
+        type: boolean
+        default: true
+      add_enhanced_susfs:
+        type: boolean
+        default: true
+      add_unicode_filter:
+        type: boolean
+        default: true
+      add_zeromount:
+        type: boolean
+        default: true
+      add_zram:
+        type: boolean
+        default: true
+      add_bbg:
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sub_level: "23"
+            os_patch_level: "2025-06"
+          - sub_level: "30"
+            os_patch_level: "2025-07"
+          - sub_level: "38"
+            os_patch_level: "2025-08"
+          - sub_level: "38"
+            os_patch_level: "2025-09"
+          - sub_level: "58"
+            os_patch_level: "2025-12"
+    uses: ./.github/workflows/gki-build.yml
+    with:
+      android_version: android16
+      kernel_version: "6.12"
+      sub_level: ${{ matrix.sub_level }}
+      os_patch_level: ${{ matrix.os_patch_level }}
+      ksu_variant: ${{ inputs.ksu_variant }}
+      add_susfs: ${{ inputs.add_susfs }}
+      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
+      add_unicode_filter: ${{ inputs.add_unicode_filter }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      device_codename: "generic"
