@@ -2099,6 +2099,7 @@ int LZ4_compress_fast_continue(LZ4_stream_t *LZ4_stream, const char *source,
 		return result;
 	}
 }
+EXPORT_SYMBOL(LZ4_compress_fast_continue);
 
 /* Hidden debug function, to force-test external dictionary mode */
 int LZ4_compress_forceExtDict(LZ4_stream_t *LZ4_dict, const char *source,

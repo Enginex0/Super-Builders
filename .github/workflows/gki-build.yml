@@ -646,7 +646,7 @@ jobs:
         if [ -f "build/build.sh" ]; then
           KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=ld.lld LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
         else
-          tools/bazel build --config=fast --config=stamp --lto=thin //common:kernel_aarch64_dist || exit 1
+          tools/bazel build --config=fast --config=stamp --lto=thin --nokmi_symbol_list_strict_mode //common:kernel_aarch64_dist || exit 1
         fi
 
     - name: Prepare AnyKernel3 Zip
