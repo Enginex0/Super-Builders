@@ -50,7 +50,7 @@ index 1e76c80a3..715523d57 100644
 +#else
  	ret = LZ4_decompress_safe(dic->cbuf->cdata, dic->rbuf,
 -						dic->clen, dic->rlen);
-+						dic->clen, dic->rlen, false);
++						dic->clen, dic->rlen);
 +#endif
  	if (ret < 0) {
  		printk_ratelimited("%sF2FS-fs (%s): lz4 decompress failed, ret:%d\n",

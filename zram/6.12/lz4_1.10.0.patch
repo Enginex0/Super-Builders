@@ -51,7 +51,7 @@ index 5b854833c..1f911644a 100644
 +#else
  	ret = LZ4_decompress_safe(dic->cbuf->cdata, dic->rbuf,
 -						dic->clen, dic->rlen);
-+						dic->clen, dic->rlen, false);
++						dic->clen, dic->rlen);
 +#endif
  	if (ret < 0) {
  		f2fs_err_ratelimited(F2FS_I_SB(dic->inode),
