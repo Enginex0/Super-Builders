@@ -44,13 +44,20 @@ fix_task_mmu() {
 
     echo "[+] Resolving $rej"
 
-    # Other GKI hunks inject code using vma, but the declaration hunk may reject
-    if ! grep -qP '\tstruct vm_area_struct \*vma;' "$f"; then
-        sed -i '/pagemap_entry_t \*res = NULL;/a\
-#ifdef CONFIG_KSU_SUSFS_SUS_MAP\
-\tstruct vm_area_struct *vma;\
-#endif' "$f"
-    fi
+    # Inject vma declaration inside pagemap_read after the last existing local var
+    # Can't use global grep — vma exists in other functions. Use awk for scope.
+    awk '
+    /^static ssize_t pagemap_read/ { in_func=1 }
+    in_func && /int ret = 0, copied = 0;/ {
+        print
+        print "#ifdef CONFIG_KSU_SUSFS_SUS_MAP"
+        print "\tstruct vm_area_struct *vma;"
+        print "#endif"
+        in_func=0
+        next
+    }
+    { print }
+    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
 
     rm -f "$rej"
     echo "[+] $f fixed"
