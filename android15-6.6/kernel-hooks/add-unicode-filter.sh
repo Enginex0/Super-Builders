@@ -1,0 +1,131 @@
+#!/bin/bash
+# CVE-2024-43093 unicode path traversal mitigation
+# Injects susfs_check_unicode_bypass() at VFS entry points
+
+set -e
+cd "${1:-.}" || exit 1
+
+inject_susfs_include() {
+    sed -i "/$1/a\\
+#ifdef CONFIG_KSU_SUSFS\\
+#include <linux/susfs.h>\\
+#endif" "$2"
+}
+
+patch_namei() {
+    local f="fs/namei.c"
+    [ -f "$f" ] && grep -q "CONFIG_KSU_SUSFS_UNICODE_FILTER" "$f" && return
+
+    echo "[+] $f"
+
+    inject_susfs_include '#include <linux\/uaccess.h>' "$f"
+
+    # do_mkdirat — 5.15: param changed from const char __user *pathname to struct filename *name
+    sed -i '/unsigned int lookup_flags = LOOKUP_DIRECTORY;/a\
+\
+#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
+	if (susfs_check_unicode_bypass(name->uptr)) {\
+		return -ENOENT;\
+	}\
+#endif' "$f"
+
+    # unlinkat
+    sed -i '/if ((flag & ~AT_REMOVEDIR) != 0)/,/return -EINVAL;/{
+        /return -EINVAL;/a\
+\
+#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
+	if (susfs_check_unicode_bypass(pathname)) {\
+		return -ENOENT;\
+	}\
+#endif
+    }' "$f"
+
+    # do_symlinkat — 5.15: no longer static, param newname -> struct filename *to
+    sed -i '/^int do_symlinkat/,/unsigned int lookup_flags = 0;/{
+        /unsigned int lookup_flags = 0;/a\
+\
+#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
+	if (susfs_check_unicode_bypass(to->uptr)) {\
+		return -ENOENT;\
+	}\
+#endif
+    }' "$f"
+
+    # do_linkat — 5.15: no longer static, param newname -> struct filename *new
+    sed -i '/^int do_linkat/,/int error;/{
+        /int error;$/a\
+\
+#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
+	if (susfs_check_unicode_bypass(new->uptr)) {\
+		return -ENOENT;\
+	}\
+#endif
+    }' "$f"
+
+    # do_renameat2 — internal function, not syscall wrapper
+    sed -i '/^int do_renameat2/,/int error = -EINVAL;/{
+        /int error = -EINVAL;/a\
+\
+#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
+	if (susfs_check_unicode_bypass(from->uptr) ||\
+	    susfs_check_unicode_bypass(to->uptr)) {\
+		return -ENOENT;\
+	}\
+#endif
+    }' "$f"
+}
+
+patch_open() {
+    local f="fs/open.c"
+    [ -f "$f" ] && grep -q "CONFIG_KSU_SUSFS_UNICODE_FILTER" "$f" && return
+
+    echo "[+] $f"
+
+    inject_susfs_include '#include <linux\/compat.h>' "$f"
+
+    # do_sys_openat2
+    sed -i '/^static long do_sys_openat2/,/struct filename \*tmp;/{
+        /struct filename \*tmp;/a\
+\
+#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
+	if (susfs_check_unicode_bypass(filename)) {\
+		return -ENOENT;\
+	}\
+#endif
+    }' "$f"
+}
+
+patch_stat() {
+    local f="fs/stat.c"
+    [ -f "$f" ] && grep -q "CONFIG_KSU_SUSFS_UNICODE_FILTER" "$f" && return
+
+    echo "[+] $f"
+
+    inject_susfs_include '#include <linux\/compat.h>' "$f"
+
+    # vfs_statx — in 6.6+, vfs_statx takes struct filename *, use ->uptr for user ptr
+    sed -i '/^static int vfs_statx/,/int error;/{
+        /int error;$/a\
+\
+#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
+	if (susfs_check_unicode_bypass(filename->uptr)) {\
+		return -ENOENT;\
+	}\
+#endif
+    }' "$f"
+
+    # do_readlinkat
+    sed -i '/unsigned int lookup_flags = LOOKUP_EMPTY;/a\
+\
+#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
+	if (susfs_check_unicode_bypass(pathname)) {\
+		return -ENOENT;\
+	}\
+#endif' "$f"
+}
+
+patch_namei
+patch_open
+patch_stat
+
+echo "[+] Unicode filter applied"
