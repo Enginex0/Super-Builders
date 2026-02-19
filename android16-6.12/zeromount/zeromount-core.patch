@@ -453,10 +453,10 @@ index 000000000..43ca3f0fa
 +    }
 +
 +    f = fdget(dfd);
-+    if (!f.file)
++    if (!fd_file(f))
 +        return ERR_PTR(-EBADF);
 +
-+    path = d_path(&f.file->f_path, buf, buflen);
++    path = d_path(&fd_file(f)->f_path, buf, buflen);
 +    fdput(f);
 +    return path;
 +}
