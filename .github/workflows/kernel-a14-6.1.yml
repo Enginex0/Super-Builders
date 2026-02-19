@@ -1,0 +1,127 @@
+name: "Android 14 - Kernel 6.1"
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_variant:
+        description: "KernelSU variant"
+        type: choice
+        options:
+          - KernelSU-Next
+          - SukiSU
+          - MKSU
+        default: "KernelSU-Next"
+      add_susfs:
+        description: "Add SUSFS (upstream)"
+        type: boolean
+        default: true
+      add_enhanced_susfs:
+        description: "Add enhanced SUSFS (custom injection)"
+        type: boolean
+        default: true
+      add_unicode_filter:
+        description: "Add Unicode filter"
+        type: boolean
+        default: true
+      add_zeromount:
+        description: "Add ZeroMount"
+        type: boolean
+        default: true
+      add_zram:
+        description: "Add ZRAM with LZ4K"
+        type: boolean
+        default: true
+      add_bbg:
+        description: "Add Baseband Guard"
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      ksu_variant:
+        type: string
+        default: "KernelSU-Next"
+      add_susfs:
+        type: boolean
+        default: true
+      add_enhanced_susfs:
+        type: boolean
+        default: true
+      add_unicode_filter:
+        type: boolean
+        default: true
+      add_zeromount:
+        type: boolean
+        default: true
+      add_zram:
+        type: boolean
+        default: true
+      add_bbg:
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sub_level: "25"
+            os_patch_level: "2023-10"
+          - sub_level: "43"
+            os_patch_level: "2023-11"
+          - sub_level: "57"
+            os_patch_level: "2024-01"
+          - sub_level: "68"
+            os_patch_level: "2024-03"
+          - sub_level: "75"
+            os_patch_level: "2024-05"
+          - sub_level: "78"
+            os_patch_level: "2024-06"
+          - sub_level: "84"
+            os_patch_level: "2024-07"
+          - sub_level: "90"
+            os_patch_level: "2024-08"
+          - sub_level: "93"
+            os_patch_level: "2024-09"
+          - sub_level: "99"
+            os_patch_level: "2024-10"
+          - sub_level: "112"
+            os_patch_level: "2024-11"
+          - sub_level: "115"
+            os_patch_level: "2024-12"
+          - sub_level: "118"
+            os_patch_level: "2025-01"
+          - sub_level: "124"
+            os_patch_level: "2025-02"
+          - sub_level: "128"
+            os_patch_level: "2025-03"
+          - sub_level: "129"
+            os_patch_level: "2025-04"
+          - sub_level: "134"
+            os_patch_level: "2025-05"
+          - sub_level: "138"
+            os_patch_level: "2025-06"
+          - sub_level: "141"
+            os_patch_level: "2025-07"
+          - sub_level: "145"
+            os_patch_level: "2025-09"
+          - sub_level: "157"
+            os_patch_level: "2025-12"
+    uses: ./.github/workflows/gki-build.yml
+    with:
+      android_version: android14
+      kernel_version: "6.1"
+      sub_level: ${{ matrix.sub_level }}
+      os_patch_level: ${{ matrix.os_patch_level }}
+      ksu_variant: ${{ inputs.ksu_variant }}
+      add_susfs: ${{ inputs.add_susfs }}
+      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
+      add_unicode_filter: ${{ inputs.add_unicode_filter }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      device_codename: "generic"
