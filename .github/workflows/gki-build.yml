@@ -261,6 +261,11 @@ jobs:
           bash "$HOOKS_DIR/fix-susfs-include-compat.sh" "$KERNEL_ROOT/common"
         fi
 
+        # proc/base.c compat — include context shifts across sublevels
+        if [ -x "$HOOKS_DIR/fix-proc-base-compat.sh" ]; then
+          bash "$HOOKS_DIR/fix-proc-base-compat.sh" "$KERNEL_ROOT/common"
+        fi
+
         # Only fail on rejects in paths that matter for SUSFS/ZeroMount
         CRITICAL=$(find . -name "*.rej" \( -path "*/fs/*" -o -path "*/include/*" -o -path "*/kernel/*" -o -path "*/security/*" \) 2>/dev/null || true)
         NONCRITICAL=$(find . -name "*.rej" ! \( -path "*/fs/*" -o -path "*/include/*" -o -path "*/kernel/*" -o -path "*/security/*" \) 2>/dev/null || true)
