@@ -44,8 +44,8 @@ fix_task_mmu() {
 
     echo "[+] Resolving $rej"
 
-    # SUSFS needs a vma declaration inside pagemap_read
-    if ! grep -q 'CONFIG_KSU_SUSFS_SUS_MAP' "$f"; then
+    # Other GKI hunks inject code using vma, but the declaration hunk may reject
+    if ! grep -qP '\tstruct vm_area_struct \*vma;' "$f"; then
         sed -i '/pagemap_entry_t \*res = NULL;/a\
 #ifdef CONFIG_KSU_SUSFS_SUS_MAP\
 \tstruct vm_area_struct *vma;\
