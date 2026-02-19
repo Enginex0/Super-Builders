@@ -640,6 +640,8 @@ jobs:
         sed -i '/zsmalloc\.ko/d; /zram\.ko/d' common/modules.bzl 2>/dev/null || true
         # Bazel builds 5.15: module list is inline in BUILD.bazel (module_implicit_outs)
         sed -i '/zsmalloc\.ko/d; /zram\.ko/d' common/BUILD.bazel 2>/dev/null || true
+        # LZ4 upgrade changes exported symbols — disable KMI strict mode for Bazel too
+        sed -i 's/"kmi_symbol_list_strict_mode": True/"kmi_symbol_list_strict_mode": False/g' common/BUILD.bazel 2>/dev/null || true
 
         if [ -f "build/build.sh" ]; then
           KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=ld.lld LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
