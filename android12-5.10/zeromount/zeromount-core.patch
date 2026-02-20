@@ -28,7 +28,7 @@ new file mode 100644
 index 000000000..43ca3f0fa
 --- /dev/null
 +++ b/fs/zeromount.c
-@@ -0,0 +1,1193 @@
+@@ -0,0 +1,1388 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -54,6 +54,7 @@ index 000000000..43ca3f0fa
 +#ifdef CONFIG_KSU_SUSFS
 +#include <linux/susfs.h>
 +#endif
++#include <linux/reboot.h>
 +
 +int zeromount_debug_level = 0;
 +
@@ -500,48 +501,10 @@ index 000000000..43ca3f0fa
 +    return new_name;
 +}
 +
-+static bool zeromount_find_next_injection(const char *dir_path, unsigned long v_index, char *name_out, unsigned char *type_out)
-+{
-+    struct zeromount_dir_node *node;
-+    struct zeromount_child_name *child;
-+    char *normalized;
-+    bool found = false;
-+    int bkt;
-+
-+    // d_path() returns canonical paths; stored dir_paths are normalized
-+    normalized = zeromount_normalize_path(dir_path);
-+    if (!normalized) return false;
-+
-+    rcu_read_lock();
-+    hash_for_each_rcu(zeromount_dirs_ht, bkt, node, node) {
-+        if (strcmp(normalized, node->dir_path) == 0) {
-+            unsigned long current_idx = 0;
-+            list_for_each_entry_rcu(child, &node->children_names, list) {
-+                if (current_idx == v_index) {
-+                    strscpy(name_out, child->name, 256);
-+                    *type_out = child->d_type;
-+                    found = true;
-+                    break;
-+                }
-+                current_idx++;
-+            }
-+        }
-+        if (found) break;
-+    }
-+    rcu_read_unlock();
-+    kfree(normalized);
-+    return found;
-+}
-+
 +void zeromount_inject_dents64(struct file *file, void __user **dirent, int *count, loff_t *pos)
 +{
-+    char name_buf[256];
-+    unsigned char type_buf;
-+    struct linux_dirent64 __user *curr_dirent;
 +    char *page_buf, *dir_path;
 +    unsigned long v_index;
-+    int name_len, reclen;
-+    unsigned long fake_ino;
 +
 +    if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;
 +
@@ -571,31 +534,56 @@ index 000000000..43ca3f0fa
 +        *pos = ZEROMOUNT_MAGIC_POS;
 +    }
 +
-+    while (1) {
-+        if (!zeromount_find_next_injection(dir_path, v_index, name_buf, &type_buf))
-+            break;
++    {
++        struct zeromount_dir_node *zm_dir;
++        struct zeromount_child_name *zm_child;
++        char *normalized = zeromount_normalize_path(dir_path);
++        u32 zm_hash;
++        unsigned long cur_idx = 0;
 +
-+        name_len = strlen(name_buf);
-+        reclen = ALIGN(offsetof(struct linux_dirent64, d_name) + name_len + 1, sizeof(u64));
++        if (!normalized) goto zm_done64;
++        zm_hash = full_name_hash(NULL, normalized, strlen(normalized));
 +
-+        if (*count < reclen) break;
++        rcu_read_lock();
++        hash_for_each_possible_rcu(zeromount_dirs_ht, zm_dir, node, zm_hash) {
++            if (strcmp(normalized, zm_dir->dir_path) != 0) continue;
++            list_for_each_entry_rcu(zm_child, &zm_dir->children_names, list) {
++                char name_local[256];
++                unsigned char type_local;
++                int name_len, reclen;
++                struct linux_dirent64 __user *curr_dirent;
++                unsigned long fake_ino;
 +
-+        curr_dirent = (struct linux_dirent64 __user *)*dirent;
++                if (cur_idx++ < v_index) continue;
 +
-+        fake_ino = zeromount_generate_ino(dir_path, name_buf);
-+        if (put_user(fake_ino, &curr_dirent->d_ino) ||
-+            put_user(ZEROMOUNT_MAGIC_POS + v_index + 1, &curr_dirent->d_off) ||
-+            put_user(reclen, &curr_dirent->d_reclen) ||
-+            put_user(type_buf, &curr_dirent->d_type) ||
-+            copy_to_user(curr_dirent->d_name, name_buf, name_len) ||
-+            put_user(0, curr_dirent->d_name + name_len)) {
++                strscpy(name_local, zm_child->name, sizeof(name_local));
++                type_local = zm_child->d_type;
++                name_len = strlen(name_local);
++                reclen = ALIGN(offsetof(struct linux_dirent64, d_name) + name_len + 1, sizeof(u64));
++
++                if (*count < reclen) break;
++
++                curr_dirent = (struct linux_dirent64 __user *)*dirent;
++                fake_ino = zeromount_generate_ino(dir_path, name_local);
++                if (put_user(fake_ino, &curr_dirent->d_ino) ||
++                    put_user(ZEROMOUNT_MAGIC_POS + v_index + 1, &curr_dirent->d_off) ||
++                    put_user(reclen, &curr_dirent->d_reclen) ||
++                    put_user(type_local, &curr_dirent->d_type) ||
++                    copy_to_user(curr_dirent->d_name, name_local, name_len) ||
++                    put_user(0, curr_dirent->d_name + name_len)) {
++                    break;
++                }
++
++                *dirent = (void __user *)((char __user *)*dirent + reclen);
++                *count -= reclen;
++                v_index++;
++                *pos = ZEROMOUNT_MAGIC_POS + v_index;
++            }
 +            break;
 +        }
-+
-+        *dirent = (void __user *)((char __user *)*dirent + reclen);
-+        *count -= reclen;
-+        *pos = ZEROMOUNT_MAGIC_POS + v_index + 1;
-+        v_index++;
++        rcu_read_unlock();
++        kfree(normalized);
++zm_done64:;
 +    }
 +
 +    __putname(page_buf);
@@ -603,13 +591,8 @@ index 000000000..43ca3f0fa
 +
 +void zeromount_inject_dents(struct file *file, void __user **dirent, int *count, loff_t *pos)
 +{
-+    char name_buf[256];
-+    unsigned char type_buf;
-+    struct linux_dirent __user * curr_dirent;
 +    char *page_buf, *dir_path;
 +    unsigned long v_index;
-+    int name_len, reclen;
-+    unsigned long fake_ino;
 +
 +    if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;
 +
@@ -639,28 +622,56 @@ index 000000000..43ca3f0fa
 +        *pos = ZEROMOUNT_MAGIC_POS;
 +    }
 +
-+    while (1) {
-+        if (!zeromount_find_next_injection(dir_path, v_index, name_buf, &type_buf))
-+            break;
++    {
++        struct zeromount_dir_node *zm_dir;
++        struct zeromount_child_name *zm_child;
++        char *normalized = zeromount_normalize_path(dir_path);
++        u32 zm_hash;
++        unsigned long cur_idx = 0;
 +
-+        name_len = strlen(name_buf);
-+        reclen = ALIGN(offsetof(struct linux_dirent, d_name) + name_len + 2, 4);
-+        if (*count < reclen) break;
-+        curr_dirent = (struct linux_dirent __user *)*dirent;
-+        fake_ino = zeromount_generate_ino(dir_path, name_buf);
-+        if (put_user(fake_ino, &curr_dirent->d_ino) ||
-+            put_user(ZEROMOUNT_MAGIC_POS + v_index + 1, &curr_dirent->d_off) ||
-+            put_user(reclen, &curr_dirent->d_reclen) ||
-+            copy_to_user(curr_dirent->d_name, name_buf, name_len) ||
-+            put_user(0, curr_dirent->d_name + name_len) ||
-+            put_user(type_buf, ((char __user *)curr_dirent) + reclen - 1)) {
++        if (!normalized) goto zm_done;
++        zm_hash = full_name_hash(NULL, normalized, strlen(normalized));
++
++        rcu_read_lock();
++        hash_for_each_possible_rcu(zeromount_dirs_ht, zm_dir, node, zm_hash) {
++            if (strcmp(normalized, zm_dir->dir_path) != 0) continue;
++            list_for_each_entry_rcu(zm_child, &zm_dir->children_names, list) {
++                char name_local[256];
++                unsigned char type_local;
++                int name_len, reclen;
++                struct linux_dirent __user *curr_dirent;
++                unsigned long fake_ino;
++
++                if (cur_idx++ < v_index) continue;
++
++                strscpy(name_local, zm_child->name, sizeof(name_local));
++                type_local = zm_child->d_type;
++                name_len = strlen(name_local);
++                reclen = ALIGN(offsetof(struct linux_dirent, d_name) + name_len + 2, 4);
++
++                if (*count < reclen) break;
++
++                curr_dirent = (struct linux_dirent __user *)*dirent;
++                fake_ino = zeromount_generate_ino(dir_path, name_local);
++                if (put_user(fake_ino, &curr_dirent->d_ino) ||
++                    put_user(ZEROMOUNT_MAGIC_POS + v_index + 1, &curr_dirent->d_off) ||
++                    put_user(reclen, &curr_dirent->d_reclen) ||
++                    copy_to_user(curr_dirent->d_name, name_local, name_len) ||
++                    put_user(0, curr_dirent->d_name + name_len) ||
++                    put_user(type_local, ((char __user *)curr_dirent) + reclen - 1)) {
++                    break;
++                }
++
++                *dirent = (void __user *)((char __user *)*dirent + reclen);
++                *count -= reclen;
++                v_index++;
++                *pos = ZEROMOUNT_MAGIC_POS + v_index;
++            }
 +            break;
 +        }
-+
-+        *dirent = (void __user *)((char __user *)*dirent + reclen);
-+        *count -= reclen;
-+        *pos = ZEROMOUNT_MAGIC_POS + v_index + 1;
-+        v_index++;
++        rcu_read_unlock();
++        kfree(normalized);
++zm_done:;
 +    }
 +
 +    __putname(page_buf);
@@ -1205,9 +1216,21 @@ index 000000000..43ca3f0fa
 +    .minor = MISC_DYNAMIC_MINOR, .name = "zeromount", .fops = &zeromount_fops, .mode = 0600,
 +};
 +
++static int zeromount_reboot_notify(struct notifier_block *nb, unsigned long action, void *data)
++{
++    atomic_set(&zeromount_enabled, 0);
++    synchronize_rcu();
++    return NOTIFY_OK;
++}
++
++static struct notifier_block zeromount_reboot_nb = {
++    .notifier_call = zeromount_reboot_notify,
++};
++
 +static int __init __used zeromount_init(void) {
 +    int ret;
 +    spin_lock_init(&zeromount_lock);
++    register_reboot_notifier(&zeromount_reboot_nb);
 +    ret = misc_register(&zeromount_device);
 +    if (ret) return ret;
 +
