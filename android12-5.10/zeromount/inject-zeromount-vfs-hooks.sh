@@ -873,8 +873,10 @@ inject_overlay_statfs() {
         print "#if defined(CONFIG_KSU_SUSFS) && defined(CONFIG_ZEROMOUNT)"
         print "\t\tif (zeromount_hide_overlays &&"
         print "\t\t    st->f_type == 0x794c7630 &&"
-        print "\t\t    susfs_is_current_proc_umounted())"
+        print "\t\t    susfs_is_current_proc_umounted()) {"
         print "\t\t\tst->f_type = 0xE0F5E1E2;"
+        print "\t\t\tZM_DBG(\"user_statfs: overlay hidden\\n\");"
+        print "\t\t}"
         print "#endif"
         injected = 1
         next
@@ -915,8 +917,10 @@ inject_fd_statfs() {
         print "#if defined(CONFIG_KSU_SUSFS) && defined(CONFIG_ZEROMOUNT)"
         print "\t\tif (!error && zeromount_hide_overlays &&"
         print "\t\t    st->f_type == 0x794c7630 &&"
-        print "\t\t    susfs_is_current_proc_umounted())"
+        print "\t\t    susfs_is_current_proc_umounted()) {"
         print "\t\t\tst->f_type = 0xE0F5E1E2;"
+        print "\t\t\tZM_DBG(\"fd_statfs: overlay hidden\\n\");"
+        print "\t\t}"
         print "#endif"
         injected = 1
         next
