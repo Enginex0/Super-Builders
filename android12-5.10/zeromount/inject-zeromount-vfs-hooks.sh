@@ -889,6 +889,47 @@ inject_overlay_statfs() {
     echo "  - Spoof: OVERLAYFS_SUPER_MAGIC -> EROFS_SUPER_MAGIC_V1"
 }
 
+# --- fd_statfs overlay spoof (covers fstatfs() syscall path) ---
+# user_statfs only fires for statfs(path) — fstatfs(fd) routes through fd_statfs
+# and bypasses user_statfs entirely, causing mountinfo/statfs inconsistency.
+
+inject_fd_statfs() {
+    local TARGET="$KERNEL_DIR/fs/statfs.c"
+    echo "[INFO] fd_statfs overlay spoof injection"
+    [ -f "$TARGET" ] || { echo "[ERROR] $TARGET not found"; return 1; }
+    [ "$(grep -c '0x794c7630' "$TARGET" 2>/dev/null || echo 0)" -ge 2 ] && {
+        echo "[INFO] Already present - skipping"
+        return 0
+    }
+    grep -q 'int fd_statfs' "$TARGET" || {
+        echo "[ERROR] fd_statfs not found — unsupported kernel?"
+        return 1
+    }
+
+    awk '
+    BEGIN { in_fd_statfs = 0; injected = 0 }
+    /^int fd_statfs\(/ { in_fd_statfs = 1 }
+    in_fd_statfs && /^\}$/ { in_fd_statfs = 0 }
+    in_fd_statfs && /vfs_statfs\(&f\.file->f_path, st\);/ && !injected {
+        print
+        print "#if defined(CONFIG_KSU_SUSFS) && defined(CONFIG_ZEROMOUNT)"
+        print "\t\tif (!error && zeromount_hide_overlays &&"
+        print "\t\t    st->f_type == 0x794c7630 &&"
+        print "\t\t    susfs_is_current_proc_umounted())"
+        print "\t\t\tst->f_type = 0xE0F5E1E2;"
+        print "#endif"
+        injected = 1
+        next
+    }
+    { print }
+    ' "$TARGET" > "${TARGET}.tmp" && mv "${TARGET}.tmp" "$TARGET"
+
+    local count
+    count=$(grep -c '0x794c7630' "$TARGET" || true)
+    [ "$count" -ge 2 ] || { echo "[ERROR] fd_statfs injection failed (count=$count)"; return 1; }
+    echo "[OK] fd_statfs overlay spoof injected"
+}
+
 # --- Execute all injections in order ---
 
 echo "============================================"
@@ -908,6 +949,8 @@ echo ""
 inject_statfs
 echo ""
 inject_overlay_statfs
+echo ""
+inject_fd_statfs
 echo ""
 inject_xattr
 

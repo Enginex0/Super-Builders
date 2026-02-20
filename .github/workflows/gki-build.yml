@@ -359,7 +359,7 @@ jobs:
         grep -q "zeromount_spoof_statfs" fs/statfs.c || { echo "FAIL: statfs.c hook missing"; exit 1; }
         grep -q "zeromount_spoof_xattr" fs/xattr.c || { echo "FAIL: xattr.c hook missing"; exit 1; }
         grep -q "zeromount_hide_overlays" fs/proc_namespace.c || { echo "FAIL: overlay mount filter missing"; exit 1; }
-        grep -q "0x794c7630" fs/statfs.c || { echo "FAIL: overlay statfs spoof missing"; exit 1; }
+        [ "$(grep -c '0x794c7630' fs/statfs.c || echo 0)" -ge 2 ] || { echo "FAIL: overlay statfs spoof incomplete (need user_statfs + fd_statfs)"; exit 1; }
         echo "SUCCESS: All ZeroMount hooks validated"
 
         echo "=== ZeroMount integration complete ==="
