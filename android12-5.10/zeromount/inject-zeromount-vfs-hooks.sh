@@ -840,6 +840,55 @@ END {
     echo "  - Hook: vfs_getxattr() -> zeromount_spoof_xattr(dentry, name, value, size)"
 }
 
+# --- overlay statfs spoof (umounted processes only) ---
+
+inject_overlay_statfs() {
+    local TARGET="$KERNEL_DIR/fs/statfs.c"
+    echo "[INFO] Overlay statfs spoof injection"
+    [ -f "$TARGET" ] || { echo "[ERROR] $TARGET not found"; return 1; }
+    grep -q '0x794c7630' "$TARGET" && { echo "[INFO] Already present - skipping"; return 0; }
+    grep -q 'zeromount_spoof_statfs' "$TARGET" || {
+        echo "[ERROR] zeromount_spoof_statfs not found — inject_statfs() must run first"
+        return 1
+    }
+
+    # Add susfs_def.h include alongside the existing zeromount.h block
+    if ! grep -q 'susfs_def.h' "$TARGET"; then
+        sed -i '/#ifdef CONFIG_ZEROMOUNT/{N;/linux\/zeromount\.h/a\
+#ifdef CONFIG_KSU_SUSFS\
+#include <linux/susfs_def.h>\
+#endif
+}' "$TARGET"
+    fi
+
+    # Inject overlay spoof after (void)spoofed; — consumes its closing #endif first
+    awk '
+    BEGIN { in_user_statfs = 0; injected = 0 }
+    /^int user_statfs\(/ { in_user_statfs = 1 }
+    in_user_statfs && /^\}$/ { in_user_statfs = 0 }
+    in_user_statfs && /\(void\)spoofed;/ && !injected {
+        print
+        getline
+        print
+        print "#if defined(CONFIG_KSU_SUSFS) && defined(CONFIG_ZEROMOUNT)"
+        print "\t\tif (zeromount_hide_overlays &&"
+        print "\t\t    st->f_type == 0x794c7630 &&"
+        print "\t\t    susfs_is_current_proc_umounted())"
+        print "\t\t\tst->f_type = 0xE0F5E1E2;"
+        print "#endif"
+        injected = 1
+        next
+    }
+    { print }
+    ' "$TARGET" > "${TARGET}.tmp" && mv "${TARGET}.tmp" "$TARGET"
+
+    grep -q '0x794c7630' "$TARGET" || { echo "[ERROR] Injection failed"; return 1; }
+    echo "[OK] Overlay statfs spoof injected"
+    echo "[SUCCESS] Overlay statfs hooks injected"
+    echo "  - Guard: susfs_is_current_proc_umounted() && zeromount_hide_overlays"
+    echo "  - Spoof: OVERLAYFS_SUPER_MAGIC -> EROFS_SUPER_MAGIC_V1"
+}
+
 # --- Execute all injections in order ---
 
 echo "============================================"
@@ -857,6 +906,8 @@ echo ""
 inject_dpath
 echo ""
 inject_statfs
+echo ""
+inject_overlay_statfs
 echo ""
 inject_xattr
 

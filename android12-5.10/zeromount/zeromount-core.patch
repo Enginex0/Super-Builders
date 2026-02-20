@@ -28,7 +28,7 @@ new file mode 100644
 index 000000000..43ca3f0fa
 --- /dev/null
 +++ b/fs/zeromount.c
-@@ -0,0 +1,1216 @@
+@@ -0,0 +1,1237 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -57,6 +57,8 @@ index 000000000..43ca3f0fa
 +#include <linux/reboot.h>
 +
 +int zeromount_debug_level = 0;
++bool zeromount_hide_overlays __read_mostly = false;
++EXPORT_SYMBOL(zeromount_hide_overlays);
 +
 +DEFINE_HASHTABLE(zeromount_rules_ht, ZEROMOUNT_HASH_BITS);
 +DEFINE_HASHTABLE(zeromount_dirs_ht, ZEROMOUNT_HASH_BITS);
@@ -1187,8 +1189,28 @@ index 000000000..43ca3f0fa
 +
 +static struct kobj_attribute debug_attr = __ATTR(debug, 0600, debug_show, debug_store);
 +
++static ssize_t hide_overlays_show(struct kobject *kobj,
++        struct kobj_attribute *attr, char *buf)
++{
++    return sysfs_emit(buf, "%d\n", zeromount_hide_overlays ? 1 : 0);
++}
++
++static ssize_t hide_overlays_store(struct kobject *kobj,
++        struct kobj_attribute *attr, const char *buf, size_t count)
++{
++    bool val;
++    if (kstrtobool(buf, &val))
++        return -EINVAL;
++    zeromount_hide_overlays = val;
++    return count;
++}
++
++static struct kobj_attribute hide_overlays_attr =
++    __ATTR(hide_overlays, 0600, hide_overlays_show, hide_overlays_store);
++
 +static struct attribute *zeromount_attrs[] = {
 +    &debug_attr.attr,
++    &hide_overlays_attr.attr,
 +    NULL,
 +};
 +
@@ -1250,7 +1272,7 @@ new file mode 100644
 index 000000000..9e0fb1b21
 --- /dev/null
 +++ b/include/linux/zeromount.h
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,162 @@
 +#ifndef _LINUX_ZEROMOUNT_H
 +#define _LINUX_ZEROMOUNT_H
 +
@@ -1302,6 +1324,7 @@ index 000000000..9e0fb1b21
 +#endif
 +
 +extern int zeromount_debug_level;
++extern bool zeromount_hide_overlays;
 +
 +#define ZM_LOG(level, fmt, ...) \
 +    do { \

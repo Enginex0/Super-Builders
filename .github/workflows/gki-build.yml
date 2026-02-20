@@ -299,6 +299,7 @@ jobs:
         if [[ "${{ inputs.add_enhanced_susfs }}" == "true" ]]; then
           echo "=== Post-patch: injecting into kernel source ==="
           bash "$HOOKS_DIR/add-vfs-open-redirect-all.sh" "$KERNEL_ROOT/common"
+          bash "$HOOKS_DIR/add-overlay-mount-filter.sh" "$KERNEL_ROOT/common"
           bash "$HOOKS_DIR/add-mount-display.sh" "$KERNEL_ROOT/common"
 
           echo "=== Injecting custom handlers into KernelSU-Next ==="
@@ -357,6 +358,8 @@ jobs:
         grep -q "zeromount_get_virtual_path_for_inode" fs/d_path.c || { echo "FAIL: d_path.c hook missing"; exit 1; }
         grep -q "zeromount_spoof_statfs" fs/statfs.c || { echo "FAIL: statfs.c hook missing"; exit 1; }
         grep -q "zeromount_spoof_xattr" fs/xattr.c || { echo "FAIL: xattr.c hook missing"; exit 1; }
+        grep -q "zeromount_hide_overlays" fs/proc_namespace.c || { echo "FAIL: overlay mount filter missing"; exit 1; }
+        grep -q "0x794c7630" fs/statfs.c || { echo "FAIL: overlay statfs spoof missing"; exit 1; }
         echo "SUCCESS: All ZeroMount hooks validated"
 
         echo "=== ZeroMount integration complete ==="
