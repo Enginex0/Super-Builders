@@ -245,38 +245,66 @@ if ! grep -A3 'void susfs_sus_ino_for_show_map_vma' "$SUSFS_C" | grep -q 'unsign
     ((fix_count++)) || true
 fi
 
-# 4d. susfs_get_redirected_path: rewrite with result variable + RCU read lock
-# Uses rcu_read_lock/hash_for_each_possible_rcu for wait-free reads;
-# writer path keeps spin_lock for serialization with hash_add_rcu.
-if ! grep -A3 'susfs_get_redirected_path(unsigned long ino)' "$SUSFS_C" | grep -q 'result.*ERR_PTR'; then
-    echo "[+] Fixing spin lock race in susfs_get_redirected_path"
+# 4d. susfs_get_redirected_path: rewrite with RCU read lock
+# Upstream may have: bare hash_for_each_possible (no lock), or spin_lock.
+# Both need conversion to rcu_read_lock + hash_for_each_possible_rcu
+# with copy-out pattern (strncpy to stack buffer under lock, getname_kernel after).
+if grep -q 'susfs_get_redirected_path(unsigned long ino)' "$SUSFS_C" && \
+   ! grep -A15 'susfs_get_redirected_path(unsigned long ino)' "$SUSFS_C" | grep -q 'rcu_read_lock'; then
+    echo "[+] Converting susfs_get_redirected_path to RCU"
     awk '
     /^struct filename\* susfs_get_redirected_path\(unsigned long ino\)/ {
         print
         in_func = 1
+        rcu_added = 0
         next
     }
     in_func && /struct st_susfs_open_redirect_hlist \*entry;/ {
         print
         print "\tchar tmp_path[SUSFS_MAX_LEN_PATHNAME];"
         print "\tbool found = false;"
-        print ""
+        next
+    }
+    in_func && /struct filename \*result/ { next }
+    in_func && /spin_lock\(&susfs_spin_lock_open_redirect\)/ {
         print "\trcu_read_lock();"
+        rcu_added = 1
         next
     }
     in_func && /hash_for_each_possible\(OPEN_REDIRECT_HLIST/ {
+        if (!rcu_added) {
+            print "\trcu_read_lock();"
+            rcu_added = 1
+        }
         gsub(/hash_for_each_possible\(/, "hash_for_each_possible_rcu(")
         print
         next
     }
-    in_func && /return getname_kernel\(entry->redirected_pathname\);/ {
+    in_func && /return getname_kernel\(entry->redirected_pathname\)/ {
         print "\t\t\tstrncpy(tmp_path, entry->redirected_pathname, SUSFS_MAX_LEN_PATHNAME - 1);"
         print "\t\t\ttmp_path[SUSFS_MAX_LEN_PATHNAME - 1] = 0;"
         print "\t\t\tfound = true;"
         print "\t\t\tbreak;"
         next
     }
-    in_func && /return ERR_PTR\(-ENOENT\);/ {
+    in_func && /result = getname_kernel\(entry->redirected_pathname\)/ {
+        print "\t\t\tstrncpy(tmp_path, entry->redirected_pathname, SUSFS_MAX_LEN_PATHNAME - 1);"
+        print "\t\t\ttmp_path[SUSFS_MAX_LEN_PATHNAME - 1] = 0;"
+        print "\t\t\tfound = true;"
+        print "\t\t\tbreak;"
+        next
+    }
+    in_func && /spin_unlock\(&susfs_spin_lock_open_redirect\)/ {
+        print "\trcu_read_unlock();"
+        next
+    }
+    in_func && /return ERR_PTR\(-ENOENT\)/ {
+        print "\trcu_read_unlock();"
+        print "\treturn found ? getname_kernel(tmp_path) : ERR_PTR(-ENOENT);"
+        in_func = 0
+        next
+    }
+    in_func && /return result;/ {
         print "\trcu_read_unlock();"
         print "\treturn found ? getname_kernel(tmp_path) : ERR_PTR(-ENOENT);"
         in_func = 0

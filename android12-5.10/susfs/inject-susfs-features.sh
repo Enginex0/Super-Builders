@@ -457,6 +457,59 @@ if ! grep -q 'susfs_update_open_redirect_all_inode' "$SUSFS_C"; then
     echo "FATAL: susfs_update_open_redirect_all_inode function injection failed"
     exit 1
 fi
+
+# Upgrade: convert get_redirected_path_all from spin_lock to RCU if needed
+if grep -A5 'susfs_get_redirected_path_all(unsigned long ino)' "$SUSFS_C" | grep -q 'spin_lock'; then
+    echo "[+] Upgrading susfs_get_redirected_path_all to RCU"
+    awk '
+    /^struct filename\* susfs_get_redirected_path_all\(unsigned long ino\)/ {
+        print
+        in_func = 1
+        next
+    }
+    in_func && /struct st_susfs_open_redirect_all_hlist \*entry;/ {
+        print
+        print "\tchar tmp_path[SUSFS_MAX_LEN_PATHNAME];"
+        print "\tbool found = false;"
+        next
+    }
+    in_func && /struct filename \*result/ { next }
+    in_func && /spin_lock\(&susfs_spin_lock_open_redirect_all\)/ {
+        print "\trcu_read_lock();"
+        next
+    }
+    in_func && /hash_for_each_possible\(OPEN_REDIRECT_ALL_HLIST/ {
+        gsub(/hash_for_each_possible\(/, "hash_for_each_possible_rcu(")
+        print
+        next
+    }
+    in_func && /result = getname_kernel\(entry->redirected_pathname\)/ {
+        print "\t\t\tstrncpy(tmp_path, entry->redirected_pathname, SUSFS_MAX_LEN_PATHNAME - 1);"
+        print "\t\t\ttmp_path[SUSFS_MAX_LEN_PATHNAME - 1] = 0;"
+        print "\t\t\tfound = true;"
+        print "\t\t\tbreak;"
+        next
+    }
+    in_func && /spin_unlock\(&susfs_spin_lock_open_redirect_all\)/ {
+        print "\trcu_read_unlock();"
+        next
+    }
+    in_func && /return result;/ {
+        print "\treturn found ? getname_kernel(tmp_path) : ERR_PTR(-ENOENT);"
+        in_func = 0
+        next
+    }
+    { print }
+    ' "$SUSFS_C" > "$SUSFS_C.tmp" && mv "$SUSFS_C.tmp" "$SUSFS_C"
+    ((inject_count++)) || true
+fi
+
+# Upgrade: convert hash_add to hash_add_rcu in susfs_add_open_redirect_all writer
+if grep -q 'hash_add(OPEN_REDIRECT_ALL_HLIST' "$SUSFS_C"; then
+    echo "[+] Converting hash_add to hash_add_rcu in open_redirect_all writer"
+    sed -i 's/hash_add(OPEN_REDIRECT_ALL_HLIST,/hash_add_rcu(OPEN_REDIRECT_ALL_HLIST,/g' "$SUSFS_C"
+    ((inject_count++)) || true
+fi
 }
 
 inject_unicode_filter_func() {
@@ -592,6 +645,16 @@ fi
 if ! grep -q 'susfs_check_unicode_bypass' "$SUSFS_H"; then
     echo "FATAL: susfs_check_unicode_bypass declaration injection failed"
     exit 1
+fi
+
+# Upgrade: convert kmalloc/kfree to __getname/__putname in unicode filter
+if grep -A30 'susfs_check_unicode_bypass' "$SUSFS_C" | grep -q 'kmalloc(PATH_MAX'; then
+    echo "[+] Upgrading unicode filter: kmalloc -> __getname"
+    sed -i '/susfs_check_unicode_bypass/,/^#endif/ {
+        s/buf = kmalloc(PATH_MAX, GFP_KERNEL);/buf = __getname();/
+        s/kfree(buf);/__putname(buf);/
+    }' "$SUSFS_C"
+    ((inject_count++)) || true
 fi
 }
 
