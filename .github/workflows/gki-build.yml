@@ -40,6 +40,9 @@ on:
       add_unicode_filter:
         type: boolean
         default: true
+      add_overlayfs_support:
+        type: boolean
+        default: true
       device_codename:
         type: string
         default: ""
@@ -314,6 +317,11 @@ jobs:
           bash "$HOOKS_DIR/add-unicode-filter.sh" "$KERNEL_ROOT/common"
         fi
 
+        if [[ "${{ inputs.add_overlayfs_support }}" == "true" ]]; then
+          echo "=== Validating overlayfs support ==="
+          bash "$HOOKS_DIR/add-overlayfs-support.sh" "$KERNEL_ROOT/common"
+        fi
+
         if grep -q 'goto show_pad;' ./fs/proc/task_mmu.c && ! grep -q '^show_pad:' ./fs/proc/task_mmu.c; then
           echo "=== Fixing show_pad label (missing in this sublevel) ==="
           sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
@@ -424,6 +432,11 @@ jobs:
         # SUSFS config
         if [[ "${{ inputs.add_susfs }}" == "true" ]]; then
           awk '/^# \[susfs\]/{found=1; next} /^# \[/{found=0} found && NF' "$FRAGMENT" >> "${{ env.DEFCONFIG }}"
+        fi
+
+        # Overlayfs support (tmpfs xattr + POSIX ACL for overlay whiteouts)
+        if [[ "${{ inputs.add_overlayfs_support }}" == "true" ]]; then
+          awk '/^# \[overlayfs\]/{found=1; next} /^# \[/{found=0} found && NF' "$FRAGMENT" >> "${{ env.DEFCONFIG }}"
         fi
 
         # ZRAM config
@@ -882,5 +895,6 @@ jobs:
         echo "| **Unicode Filter** | $(S ${{ inputs.add_unicode_filter }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **ZeroMount** | $(S ${{ inputs.add_zeromount }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **ZRAM (LZ4K)** | $(S ${{ inputs.add_zram }}) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Overlayfs Support** | $(S ${{ inputs.add_overlayfs_support }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **Baseband Guard** | $(S ${{ inputs.add_bbg }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **Device Profile** | ${{ env.IDENTITY_STATUS }} |" >> $GITHUB_STEP_SUMMARY

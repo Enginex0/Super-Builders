@@ -39,6 +39,10 @@ on:
         description: "Add Baseband Guard"
         type: boolean
         default: true
+      add_overlayfs_support:
+        description: "Add overlayfs support (CONFIG_TMPFS_XATTR + POSIX ACL)"
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -65,4 +69,5 @@ jobs:
       add_zeromount: ${{ inputs.add_zeromount }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
       device_codename: ${{ matrix.device_codename }}
