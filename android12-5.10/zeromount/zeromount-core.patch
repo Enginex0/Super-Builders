@@ -28,7 +28,7 @@ new file mode 100644
 index 000000000..43ca3f0fa
 --- /dev/null
 +++ b/fs/zeromount.c
-@@ -0,0 +1,1237 @@
+@@ -0,0 +1,1238 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -1202,6 +1202,7 @@ index 000000000..43ca3f0fa
 +    if (kstrtobool(buf, &val))
 +        return -EINVAL;
 +    zeromount_hide_overlays = val;
++    ZM_INFO("hide_overlays: %s\n", val ? "enabled" : "disabled");
 +    return count;
 +}
 +
