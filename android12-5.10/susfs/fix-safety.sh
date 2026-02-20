@@ -25,6 +25,18 @@ if [ ! -f "$SUSFS_C" ]; then
     exit 1
 fi
 
+# Upstream SUSFS has been observed with a literal \x00 in susfs_get_redirected_path.
+# Strip before any awk processing touches the file, otherwise awk may mishandle
+# the null-containing line and carry the byte into the output.
+python3 - "$SUSFS_C" <<'PYEOF'
+import sys
+p = sys.argv[1]
+data = open(p, 'rb').read()
+if b'\x00' in data:
+    print('[+] Scrubbing null bytes from susfs.c (upstream source corruption)')
+    open(p, 'wb').write(data.replace(b'\x00', b'0'))
+PYEOF
+
 echo "=== fix-susfs-safety ==="
 fix_count=0
 
@@ -49,13 +61,13 @@ echo "[+] Applying strncpy null-termination fixes"
 
 # 3a. android_data_path.target_pathname
 if ! grep -A1 'android_data_path.target_pathname' "$SUSFS_C" | grep -q '\[SUSFS_MAX_LEN_PATHNAME-1\].*\\0'; then
-    sed -i '/strncpy(android_data_path.target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME-1);/a \\t\tandroid_data_path.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '"'"'\\0'"'"';' "$SUSFS_C"
+    sed -i '/strncpy(android_data_path.target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME-1);/a \\t\tandroid_data_path.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = 0;' "$SUSFS_C"
     ((fix_count++)) || true
 fi
 
 # 3b. sdcard_path.target_pathname
 if ! grep -A1 'sdcard_path.target_pathname' "$SUSFS_C" | grep -q '\[SUSFS_MAX_LEN_PATHNAME-1\].*\\0'; then
-    sed -i '/strncpy(sdcard_path.target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME-1);/a \\t\tsdcard_path.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '"'"'\\0'"'"';' "$SUSFS_C"
+    sed -i '/strncpy(sdcard_path.target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME-1);/a \\t\tsdcard_path.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = 0;' "$SUSFS_C"
     ((fix_count++)) || true
 fi
 
@@ -66,7 +78,7 @@ awk '
 {
     if (pending_field != "") {
         if ($0 !~ /target_pathname\[SUSFS_MAX_LEN_PATHNAME *- *1\]/) {
-            print pending_indent "new_list->" pending_field "[SUSFS_MAX_LEN_PATHNAME-1] = '"'"'\\0'"'"';"
+            print pending_indent "new_list->" pending_field "[SUSFS_MAX_LEN_PATHNAME-1] = 0;"
         }
         pending_field = ""
     }
@@ -79,7 +91,7 @@ awk '
 }
 END {
     if (pending_field != "") {
-        print pending_indent "new_list->" pending_field "[SUSFS_MAX_LEN_PATHNAME-1] = '"'"'\\0'"'"';"
+        print pending_indent "new_list->" pending_field "[SUSFS_MAX_LEN_PATHNAME-1] = 0;"
     }
 }
 ' "$SUSFS_C" > "$SUSFS_C.tmp" && mv "$SUSFS_C.tmp" "$SUSFS_C"
@@ -90,7 +102,7 @@ if ! grep -A1 'strncpy(my_uname.release' "$SUSFS_C" | grep -q 'my_uname.release\
     # After the closing brace of the release if-else, add null term
     sed -i '/strncpy(my_uname.release, info.release, __NEW_UTS_LEN);/{
         n
-        /}/a \\tmy_uname.release[__NEW_UTS_LEN] = '"'"'\\0'"'"';
+        /}/a \\tmy_uname.release[__NEW_UTS_LEN] = 0;
     }' "$SUSFS_C"
     ((fix_count++)) || true
 fi
@@ -98,31 +110,31 @@ fi
 if ! grep -A1 'strncpy(my_uname.version' "$SUSFS_C" | grep -q 'my_uname.version\[__NEW_UTS_LEN\]'; then
     sed -i '/strncpy(my_uname.version, info.version, __NEW_UTS_LEN);/{
         n
-        /}/a \\tmy_uname.version[__NEW_UTS_LEN] = '"'"'\\0'"'"';
+        /}/a \\tmy_uname.version[__NEW_UTS_LEN] = 0;
     }' "$SUSFS_C"
     ((fix_count++)) || true
 fi
 
 # 3f. spoof_uname tmp->release/version null-termination
 if ! grep -A1 'strncpy(tmp->release' "$SUSFS_C" | grep -q 'tmp->release\[__NEW_UTS_LEN\]'; then
-    sed -i '/strncpy(tmp->release, my_uname.release, __NEW_UTS_LEN);/a \\ttmp->release[__NEW_UTS_LEN] = '"'"'\\0'"'"';' "$SUSFS_C"
+    sed -i '/strncpy(tmp->release, my_uname.release, __NEW_UTS_LEN);/a \\ttmp->release[__NEW_UTS_LEN] = 0;' "$SUSFS_C"
     ((fix_count++)) || true
 fi
 
 if ! grep -A1 'strncpy(tmp->version' "$SUSFS_C" | grep -q 'tmp->version\[__NEW_UTS_LEN\]'; then
-    sed -i '/strncpy(tmp->version, my_uname.version, __NEW_UTS_LEN);/a \\ttmp->version[__NEW_UTS_LEN] = '"'"'\\0'"'"';' "$SUSFS_C"
+    sed -i '/strncpy(tmp->version, my_uname.version, __NEW_UTS_LEN);/a \\ttmp->version[__NEW_UTS_LEN] = 0;' "$SUSFS_C"
     ((fix_count++)) || true
 fi
 
 # 3g. susfs_show_variant null-termination
 if ! grep -A1 'strncpy(info.susfs_variant' "$SUSFS_C" | grep -q 'susfs_variant\[SUSFS_MAX_VARIANT_BUFSIZE-1\]'; then
-    sed -i '/strncpy(info.susfs_variant, SUSFS_VARIANT, SUSFS_MAX_VARIANT_BUFSIZE-1);/a \\tinfo.susfs_variant[SUSFS_MAX_VARIANT_BUFSIZE-1] = '"'"'\\0'"'"';' "$SUSFS_C"
+    sed -i '/strncpy(info.susfs_variant, SUSFS_VARIANT, SUSFS_MAX_VARIANT_BUFSIZE-1);/a \\tinfo.susfs_variant[SUSFS_MAX_VARIANT_BUFSIZE-1] = 0;' "$SUSFS_C"
     ((fix_count++)) || true
 fi
 
 # 3h. susfs_show_version null-termination
 if ! grep -A1 'strncpy(info.susfs_version' "$SUSFS_C" | grep -q 'susfs_version\[SUSFS_MAX_VERSION_BUFSIZE-1\]'; then
-    sed -i '/strncpy(info.susfs_version, SUSFS_VERSION, SUSFS_MAX_VERSION_BUFSIZE-1);/a \\tinfo.susfs_version[SUSFS_MAX_VERSION_BUFSIZE-1] = '"'"'\\0'"'"';' "$SUSFS_C"
+    sed -i '/strncpy(info.susfs_version, SUSFS_VERSION, SUSFS_MAX_VERSION_BUFSIZE-1);/a \\tinfo.susfs_version[SUSFS_MAX_VERSION_BUFSIZE-1] = 0;' "$SUSFS_C"
     ((fix_count++)) || true
 fi
 
@@ -133,7 +145,7 @@ awk '
 {
     if (pending_field != "") {
         if ($0 !~ /\[SUSFS_MAX_LEN_PATHNAME-1\]/) {
-            print pending_indent "new_entry->" pending_field "[SUSFS_MAX_LEN_PATHNAME-1] = '"'"'\\0'"'"';"
+            print pending_indent "new_entry->" pending_field "[SUSFS_MAX_LEN_PATHNAME-1] = 0;"
         }
         pending_field = ""
     }
@@ -150,7 +162,7 @@ awk '
 }
 END {
     if (pending_field != "") {
-        print pending_indent "new_entry->" pending_field "[SUSFS_MAX_LEN_PATHNAME-1] = '"'"'\\0'"'"';"
+        print pending_indent "new_entry->" pending_field "[SUSFS_MAX_LEN_PATHNAME-1] = 0;"
     }
 }
 ' "$SUSFS_C" > "$SUSFS_C.tmp" && mv "$SUSFS_C.tmp" "$SUSFS_C"
@@ -252,7 +264,7 @@ if ! grep -A3 'susfs_get_redirected_path(unsigned long ino)' "$SUSFS_C" | grep -
     }
     in_func && /return getname_kernel\(entry->redirected_pathname\);/ {
         print "\t\t\tstrncpy(tmp_path, entry->redirected_pathname, SUSFS_MAX_LEN_PATHNAME - 1);"
-        print "\t\t\ttmp_path[SUSFS_MAX_LEN_PATHNAME - 1] = '\\0';"
+        print "\t\t\ttmp_path[SUSFS_MAX_LEN_PATHNAME - 1] = 0;"
         print "\t\t\tfound = true;"
         print "\t\t\tbreak;"
         next

@@ -28,7 +28,7 @@ new file mode 100644
 index 000000000..43ca3f0fa
 --- /dev/null
 +++ b/fs/zeromount.c
-@@ -0,0 +1,1163 @@
+@@ -0,0 +1,1193 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -173,6 +173,20 @@ index 000000000..43ca3f0fa
 +    kfree(rule->virtual_path);
 +    kfree(rule->real_path);
 +    kfree(rule);
++}
++
++static void zeromount_free_child_rcu(struct rcu_head *head)
++{
++    struct zeromount_child_name *child = container_of(head, struct zeromount_child_name, rcu);
++    kfree(child->name);
++    kfree(child);
++}
++
++static void zeromount_free_dir_node_rcu(struct rcu_head *head)
++{
++    struct zeromount_dir_node *node = container_of(head, struct zeromount_dir_node, rcu);
++    kfree(node->dir_path);
++    kfree(node);
 +}
 +
 +static void zeromount_flush_parent(const char *full_path) {
@@ -995,6 +1009,22 @@ index 000000000..43ca3f0fa
 +    hash_for_each_safe(zeromount_uid_ht, bkt, tmp, uid_node, node) {
 +        hash_del_rcu(&uid_node->node);
 +        kfree_rcu(uid_node, rcu);
++    }
++
++    {
++        struct zeromount_dir_node *dir_node;
++        struct zeromount_child_name *child, *tmp_child;
++        int bkt2;
++        struct hlist_node *tmp2;
++
++        hash_for_each_safe(zeromount_dirs_ht, bkt2, tmp2, dir_node, node) {
++            hash_del_rcu(&dir_node->node);
++            list_for_each_entry_safe(child, tmp_child, &dir_node->children_names, list) {
++                list_del_rcu(&child->list);
++                call_rcu(&child->rcu, zeromount_free_child_rcu);
++            }
++            call_rcu(&dir_node->rcu, zeromount_free_dir_node_rcu);
++        }
 +    }
 +
 +    spin_unlock(&zeromount_lock);

@@ -180,7 +180,7 @@ void susfs_add_sus_kstat_redirect(void __user **user_info) {\
 \tnew_entry->info.is_statically = 0;\
 \tnew_entry->info.target_ino = inode_real->i_ino;\
 \tstrncpy(new_entry->info.target_pathname, info.virtual_pathname, SUSFS_MAX_LEN_PATHNAME - 1);\
-\tnew_entry->info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '"'"'\\0'"'"';\
+\tnew_entry->info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = 0;\
 \tnew_entry->info.spoofed_ino = info.spoofed_ino;\
 \tnew_entry->info.spoofed_dev = info.spoofed_dev;\
 \tnew_entry->info.spoofed_nlink = info.spoofed_nlink;\
@@ -401,9 +401,9 @@ void susfs_add_open_redirect_all(void __user **user_info) {\
 \t}\
 \n\tnew_entry->target_ino = info.target_ino;\
 \tstrncpy(new_entry->target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME-1);\
-\tnew_entry->target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '"'"'\\0'"'"';\
+\tnew_entry->target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = 0;\
 \tstrncpy(new_entry->redirected_pathname, info.redirected_pathname, SUSFS_MAX_LEN_PATHNAME-1);\
-\tnew_entry->redirected_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '"'"'\\0'"'"';\
+\tnew_entry->redirected_pathname[SUSFS_MAX_LEN_PATHNAME-1] = 0;\
 \tif (susfs_update_open_redirect_all_inode(new_entry)) {\
 \t\tSUSFS_LOGE("failed adding path '"'"'%s'"'"' to OPEN_REDIRECT_ALL_HLIST\\n", new_entry->target_pathname);\
 \t\tkfree(new_entry);\
@@ -432,7 +432,7 @@ struct filename* susfs_get_redirected_path_all(unsigned long ino) {\
 \t\tif (entry->target_ino == ino) {\
 \t\t\tSUSFS_LOGI("Redirect_all for ino: %lu\\n", ino);\
 \t\t\tstrncpy(tmp_path, entry->redirected_pathname, SUSFS_MAX_LEN_PATHNAME - 1);\
-\t\t\ttmp_path[SUSFS_MAX_LEN_PATHNAME - 1] = '"'"'\\0'"'"';\
+\t\t\ttmp_path[SUSFS_MAX_LEN_PATHNAME - 1] = 0;\
 \t\t\tfound = true;\
 \t\t\tbreak;\
 \t\t}\
@@ -522,7 +522,7 @@ bool susfs_check_unicode_bypass(const char __user *filename)\
 \t\tkfree(buf);\
 \t\treturn false;\
 \t}\
-\tbuf[len] = '"'"'\\0'"'"';\
+\tbuf[len] = 0;\
 \
 \tfor (i = 0; i < len; i++) {\
 \t\tunsigned char c = (unsigned char)buf[i];\
