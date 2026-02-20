@@ -425,17 +425,20 @@ out_copy_to_user:\
 \
 struct filename* susfs_get_redirected_path_all(unsigned long ino) {\
 \tstruct st_susfs_open_redirect_all_hlist *entry;\
-\tstruct filename *result = ERR_PTR(-ENOENT);\
+\tchar tmp_path[SUSFS_MAX_LEN_PATHNAME];\
+\tbool found = false;\
 \n\tspin_lock(&susfs_spin_lock_open_redirect_all);\
 \thash_for_each_possible(OPEN_REDIRECT_ALL_HLIST, entry, node, ino) {\
 \t\tif (entry->target_ino == ino) {\
 \t\t\tSUSFS_LOGI("Redirect_all for ino: %lu\\n", ino);\
-\t\t\tresult = getname_kernel(entry->redirected_pathname);\
+\t\t\tstrncpy(tmp_path, entry->redirected_pathname, SUSFS_MAX_LEN_PATHNAME - 1);\
+\t\t\ttmp_path[SUSFS_MAX_LEN_PATHNAME - 1] = '"'"'\\0'"'"';\
+\t\t\tfound = true;\
 \t\t\tbreak;\
 \t\t}\
 \t}\
 \tspin_unlock(&susfs_spin_lock_open_redirect_all);\
-\treturn result;\
+\treturn found ? getname_kernel(tmp_path) : ERR_PTR(-ENOENT);\
 }
     }' "$SUSFS_C"
     ((inject_count++)) || true

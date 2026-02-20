@@ -244,19 +244,22 @@ if ! grep -A3 'susfs_get_redirected_path(unsigned long ino)' "$SUSFS_C" | grep -
     }
     in_func && /struct st_susfs_open_redirect_hlist \*entry;/ {
         print
-        print "\tstruct filename *result = ERR_PTR(-ENOENT);"
+        print "\tchar tmp_path[SUSFS_MAX_LEN_PATHNAME];"
+        print "\tbool found = false;"
         print ""
         print "\tspin_lock(&susfs_spin_lock_open_redirect);"
         next
     }
     in_func && /return getname_kernel\(entry->redirected_pathname\);/ {
-        print "\t\t\tresult = getname_kernel(entry->redirected_pathname);"
+        print "\t\t\tstrncpy(tmp_path, entry->redirected_pathname, SUSFS_MAX_LEN_PATHNAME - 1);"
+        print "\t\t\ttmp_path[SUSFS_MAX_LEN_PATHNAME - 1] = '\\0';"
+        print "\t\t\tfound = true;"
         print "\t\t\tbreak;"
         next
     }
     in_func && /return ERR_PTR\(-ENOENT\);/ {
         print "\tspin_unlock(&susfs_spin_lock_open_redirect);"
-        print "\treturn result;"
+        print "\treturn found ? getname_kernel(tmp_path) : ERR_PTR(-ENOENT);"
         in_func = 0
         next
     }
