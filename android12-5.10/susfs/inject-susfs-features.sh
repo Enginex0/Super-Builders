@@ -411,7 +411,7 @@ void susfs_add_open_redirect_all(void __user **user_info) {\
 \t\tgoto out_copy_to_user;\
 \t}\
 \n\tspin_lock(&susfs_spin_lock_open_redirect_all);\
-\thash_add(OPEN_REDIRECT_ALL_HLIST, &new_entry->node, info.target_ino);\
+\thash_add_rcu(OPEN_REDIRECT_ALL_HLIST, &new_entry->node, info.target_ino);\
 \tspin_unlock(&susfs_spin_lock_open_redirect_all);\
 \tSUSFS_LOGI("target_ino: '"'"'%lu'"'"', target_pathname: '"'"'%s'"'"' redirected_pathname: '"'"'%s'"'"', is successfully added to OPEN_REDIRECT_ALL_HLIST\\n",\
 \t\t\tnew_entry->target_ino, new_entry->target_pathname, new_entry->redirected_pathname);\
@@ -427,8 +427,8 @@ struct filename* susfs_get_redirected_path_all(unsigned long ino) {\
 \tstruct st_susfs_open_redirect_all_hlist *entry;\
 \tchar tmp_path[SUSFS_MAX_LEN_PATHNAME];\
 \tbool found = false;\
-\n\tspin_lock(&susfs_spin_lock_open_redirect_all);\
-\thash_for_each_possible(OPEN_REDIRECT_ALL_HLIST, entry, node, ino) {\
+\n\trcu_read_lock();\
+\thash_for_each_possible_rcu(OPEN_REDIRECT_ALL_HLIST, entry, node, ino) {\
 \t\tif (entry->target_ino == ino) {\
 \t\t\tSUSFS_LOGI("Redirect_all for ino: %lu\\n", ino);\
 \t\t\tstrncpy(tmp_path, entry->redirected_pathname, SUSFS_MAX_LEN_PATHNAME - 1);\
@@ -437,7 +437,7 @@ struct filename* susfs_get_redirected_path_all(unsigned long ino) {\
 \t\t\tbreak;\
 \t\t}\
 \t}\
-\tspin_unlock(&susfs_spin_lock_open_redirect_all);\
+\trcu_read_unlock();\
 \treturn found ? getname_kernel(tmp_path) : ERR_PTR(-ENOENT);\
 }
     }' "$SUSFS_C"
@@ -513,13 +513,13 @@ bool susfs_check_unicode_bypass(const char __user *filename)\
 \tif (uid == 0 || uid == 1000)\
 \t\treturn false;\
 \
-\tbuf = kmalloc(PATH_MAX, GFP_KERNEL);\
+\tbuf = __getname();\
 \tif (!buf)\
 \t\treturn false;\
 \
 \tlen = strncpy_from_user(buf, filename, PATH_MAX - 1);\
 \tif (len <= 0) {\
-\t\tkfree(buf);\
+\t\t__putname(buf);\
 \t\treturn false;\
 \t}\
 \tbuf[len] = 0;\
@@ -561,7 +561,7 @@ bool susfs_check_unicode_bypass(const char __user *filename)\
 \t\tblocked = true;\
 \t\tbreak;\
 \t}\
-\tkfree(buf);\
+\t__putname(buf);\
 \treturn blocked;\
 }\
 #endif

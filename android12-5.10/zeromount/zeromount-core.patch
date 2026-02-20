@@ -28,7 +28,7 @@ new file mode 100644
 index 000000000..43ca3f0fa
 --- /dev/null
 +++ b/fs/zeromount.c
-@@ -0,0 +1,1216 @@
+@@ -0,0 +1,1282 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -66,6 +66,7 @@ index 000000000..43ca3f0fa
 +DEFINE_SPINLOCK(zeromount_lock);
 +
 +atomic_t zeromount_enabled = ATOMIC_INIT(0);
++static atomic_t zeromount_dirs_count = ATOMIC_INIT(0);
 +#define ZEROMOUNT_DISABLED() (atomic_read(&zeromount_enabled) == 0)
 +
 +struct linux_dirent {
@@ -140,16 +141,16 @@ index 000000000..43ca3f0fa
 +    return false;
 +}
 +
-+static char *zeromount_normalize_path(const char *path)
++/* Zero-alloc normalize: compute normalized pointer + length in-place.
++ * Caller passes pointers to receive the adjusted base and length.
++ * No allocation, no free needed. */
++static inline void zeromount_normalize_inline(const char *path,
++                                              const char **out_p,
++                                              size_t *out_len)
 +{
-+    char *normalized;
-+    size_t len;
 +    const char *p = path;
++    size_t len;
 +
-+    if (!path)
-+        return NULL;
-+
-+    // Android mounts system at both / and /system
 +    if (strncmp(path, "/system/", 8) == 0)
 +        p = path + 7;
 +
@@ -158,13 +159,28 @@ index 000000000..43ca3f0fa
 +    while (len > 1 && p[len - 1] == '/')
 +        len--;
 +
++    *out_p = p;
++    *out_len = len;
++}
++
++/* Alloc variant only for callers that need a persistent copy (ioctl paths) */
++static char *zeromount_normalize_path(const char *path)
++{
++    const char *p;
++    size_t len;
++    char *normalized;
++
++    if (!path)
++        return NULL;
++
++    zeromount_normalize_inline(path, &p, &len);
++
 +    normalized = kmalloc(len + 1, GFP_KERNEL);
 +    if (!normalized)
 +        return NULL;
 +
 +    memcpy(normalized, p, len);
 +    normalized[len] = '\0';
-+
 +    return normalized;
 +}
 +
@@ -377,22 +393,21 @@ index 000000000..43ca3f0fa
 +{
 +    struct zeromount_rule *rule;
 +    char *target = NULL;
-+    char *normalized;
++    const char *normalized;
++    size_t norm_len;
 +    u32 hash;
 +
 +    if (zeromount_is_critical_process())
 +        return NULL;
 +    if (ZEROMOUNT_DISABLED() || zeromount_is_uid_blocked(current_uid().val) || !pathname) return NULL;
 +
-+    // Must normalize before hashing — rules are stored under normalized keys
-+    normalized = zeromount_normalize_path(pathname);
-+    if (!normalized) return NULL;
-+
-+    hash = full_name_hash(NULL, normalized, strlen(normalized));
++    zeromount_normalize_inline(pathname, &normalized, &norm_len);
++    hash = full_name_hash(NULL, normalized, norm_len);
 +
 +    rcu_read_lock();
 +    hash_for_each_possible_rcu(zeromount_rules_ht, rule, node, hash) {
-+        if (zeromount_match_path(normalized, rule->virtual_path)) {
++        if (rule->vp_len == norm_len &&
++            memcmp(normalized, rule->virtual_path, norm_len) == 0) {
 +            if (rule->flags & ZM_FLAG_ACTIVE) {
 +                target = kstrdup(rule->real_path, GFP_ATOMIC);
 +                break;
@@ -400,7 +415,6 @@ index 000000000..43ca3f0fa
 +        }
 +    }
 +    rcu_read_unlock();
-+    kfree(normalized);
 +    return target;
 +}
 +EXPORT_SYMBOL(zeromount_resolve_path);
@@ -508,6 +522,10 @@ index 000000000..43ca3f0fa
 +
 +    if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;
 +
++    /* Fast path: no dir injection rules and not mid-iteration */
++    if (atomic_read(&zeromount_dirs_count) == 0 && *pos < ZEROMOUNT_MAGIC_POS)
++        return;
++
 +    page_buf = __getname();
 +    if (!page_buf) return;
 +
@@ -517,11 +535,32 @@ index 000000000..43ca3f0fa
 +        return;
 +    }
 +
-+    // Skip injection if this directory is itself redirected (real readdir has all files)
++    /* Skip injection if this directory is itself redirected.
++     * Use inline normalize to avoid allocation. */
 +    {
-+        char *resolved = zeromount_resolve_path(dir_path);
-+        if (resolved) {
-+            kfree(resolved);
++        const char *norm_p;
++        size_t norm_len;
++        u32 dir_hash;
++        bool is_redirected = false;
++
++        zeromount_normalize_inline(dir_path, &norm_p, &norm_len);
++        dir_hash = full_name_hash(NULL, norm_p, norm_len);
++
++        rcu_read_lock();
++        {
++            struct zeromount_rule *rule;
++            hash_for_each_possible_rcu(zeromount_rules_ht, rule, node, dir_hash) {
++                if (rule->vp_len == norm_len &&
++                    memcmp(norm_p, rule->virtual_path, norm_len) == 0 &&
++                    (rule->flags & ZM_FLAG_ACTIVE)) {
++                    is_redirected = true;
++                    break;
++                }
++            }
++        }
++        rcu_read_unlock();
++
++        if (is_redirected) {
 +            __putname(page_buf);
 +            return;
 +        }
@@ -537,16 +576,18 @@ index 000000000..43ca3f0fa
 +    {
 +        struct zeromount_dir_node *zm_dir;
 +        struct zeromount_child_name *zm_child;
-+        char *normalized = zeromount_normalize_path(dir_path);
++        const char *normalized;
++        size_t normalized_len;
 +        u32 zm_hash;
 +        unsigned long cur_idx = 0;
 +
-+        if (!normalized) goto zm_done64;
-+        zm_hash = full_name_hash(NULL, normalized, strlen(normalized));
++        zeromount_normalize_inline(dir_path, &normalized, &normalized_len);
++        zm_hash = full_name_hash(NULL, normalized, normalized_len);
 +
 +        rcu_read_lock();
 +        hash_for_each_possible_rcu(zeromount_dirs_ht, zm_dir, node, zm_hash) {
-+            if (strcmp(normalized, zm_dir->dir_path) != 0) continue;
++            if (strlen(zm_dir->dir_path) != normalized_len ||
++                memcmp(normalized, zm_dir->dir_path, normalized_len) != 0) continue;
 +            list_for_each_entry_rcu(zm_child, &zm_dir->children_names, list) {
 +                char name_local[256];
 +                unsigned char type_local;
@@ -582,8 +623,6 @@ index 000000000..43ca3f0fa
 +            break;
 +        }
 +        rcu_read_unlock();
-+        kfree(normalized);
-+zm_done64:;
 +    }
 +
 +    __putname(page_buf);
@@ -596,6 +635,10 @@ index 000000000..43ca3f0fa
 +
 +    if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;
 +
++    /* Fast path: no dir injection rules and not mid-iteration */
++    if (atomic_read(&zeromount_dirs_count) == 0 && *pos < ZEROMOUNT_MAGIC_POS)
++        return;
++
 +    page_buf = __getname();
 +    if (!page_buf) return;
 +
@@ -605,11 +648,32 @@ index 000000000..43ca3f0fa
 +        return;
 +    }
 +
-+    // Skip injection if this directory is itself redirected (real readdir has all files)
++    /* Skip injection if this directory is itself redirected.
++     * Use inline normalize to avoid allocation. */
 +    {
-+        char *resolved = zeromount_resolve_path(dir_path);
-+        if (resolved) {
-+            kfree(resolved);
++        const char *norm_p;
++        size_t norm_len;
++        u32 dir_hash;
++        bool is_redirected = false;
++
++        zeromount_normalize_inline(dir_path, &norm_p, &norm_len);
++        dir_hash = full_name_hash(NULL, norm_p, norm_len);
++
++        rcu_read_lock();
++        {
++            struct zeromount_rule *rule;
++            hash_for_each_possible_rcu(zeromount_rules_ht, rule, node, dir_hash) {
++                if (rule->vp_len == norm_len &&
++                    memcmp(norm_p, rule->virtual_path, norm_len) == 0 &&
++                    (rule->flags & ZM_FLAG_ACTIVE)) {
++                    is_redirected = true;
++                    break;
++                }
++            }
++        }
++        rcu_read_unlock();
++
++        if (is_redirected) {
 +            __putname(page_buf);
 +            return;
 +        }
@@ -625,16 +689,18 @@ index 000000000..43ca3f0fa
 +    {
 +        struct zeromount_dir_node *zm_dir;
 +        struct zeromount_child_name *zm_child;
-+        char *normalized = zeromount_normalize_path(dir_path);
++        const char *normalized;
++        size_t normalized_len;
 +        u32 zm_hash;
 +        unsigned long cur_idx = 0;
 +
-+        if (!normalized) goto zm_done;
-+        zm_hash = full_name_hash(NULL, normalized, strlen(normalized));
++        zeromount_normalize_inline(dir_path, &normalized, &normalized_len);
++        zm_hash = full_name_hash(NULL, normalized, normalized_len);
 +
 +        rcu_read_lock();
 +        hash_for_each_possible_rcu(zeromount_dirs_ht, zm_dir, node, zm_hash) {
-+            if (strcmp(normalized, zm_dir->dir_path) != 0) continue;
++            if (strlen(zm_dir->dir_path) != normalized_len ||
++                memcmp(normalized, zm_dir->dir_path, normalized_len) != 0) continue;
 +            list_for_each_entry_rcu(zm_child, &zm_dir->children_names, list) {
 +                char name_local[256];
 +                unsigned char type_local;
@@ -670,8 +736,6 @@ index 000000000..43ca3f0fa
 +            break;
 +        }
 +        rcu_read_unlock();
-+        kfree(normalized);
-+zm_done:;
 +    }
 +
 +    __putname(page_buf);
@@ -861,6 +925,7 @@ index 000000000..43ca3f0fa
 +        dir_node->dir_path = kstrdup(parent_path, GFP_ATOMIC);
 +        INIT_LIST_HEAD(&dir_node->children_names);
 +        hash_add_rcu(zeromount_dirs_ht, &dir_node->node, hash);
++        atomic_inc(&zeromount_dirs_count);
 +    }
 +
 +    list_for_each_entry(child, &dir_node->children_names, list) {
@@ -1030,6 +1095,7 @@ index 000000000..43ca3f0fa
 +
 +        hash_for_each_safe(zeromount_dirs_ht, bkt2, tmp2, dir_node, node) {
 +            hash_del_rcu(&dir_node->node);
++            atomic_dec(&zeromount_dirs_count);
 +            list_for_each_entry_safe(child, tmp_child, &dir_node->children_names, list) {
 +                list_del_rcu(&child->list);
 +                call_rcu(&child->rcu, zeromount_free_child_rcu);

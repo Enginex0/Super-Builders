@@ -245,7 +245,9 @@ if ! grep -A3 'void susfs_sus_ino_for_show_map_vma' "$SUSFS_C" | grep -q 'unsign
     ((fix_count++)) || true
 fi
 
-# 4d. susfs_get_redirected_path: rewrite with result variable + spin lock
+# 4d. susfs_get_redirected_path: rewrite with result variable + RCU read lock
+# Uses rcu_read_lock/hash_for_each_possible_rcu for wait-free reads;
+# writer path keeps spin_lock for serialization with hash_add_rcu.
 if ! grep -A3 'susfs_get_redirected_path(unsigned long ino)' "$SUSFS_C" | grep -q 'result.*ERR_PTR'; then
     echo "[+] Fixing spin lock race in susfs_get_redirected_path"
     awk '
@@ -259,7 +261,12 @@ if ! grep -A3 'susfs_get_redirected_path(unsigned long ino)' "$SUSFS_C" | grep -
         print "\tchar tmp_path[SUSFS_MAX_LEN_PATHNAME];"
         print "\tbool found = false;"
         print ""
-        print "\tspin_lock(&susfs_spin_lock_open_redirect);"
+        print "\trcu_read_lock();"
+        next
+    }
+    in_func && /hash_for_each_possible\(OPEN_REDIRECT_HLIST/ {
+        gsub(/hash_for_each_possible\(/, "hash_for_each_possible_rcu(")
+        print
         next
     }
     in_func && /return getname_kernel\(entry->redirected_pathname\);/ {
@@ -270,13 +277,22 @@ if ! grep -A3 'susfs_get_redirected_path(unsigned long ino)' "$SUSFS_C" | grep -
         next
     }
     in_func && /return ERR_PTR\(-ENOENT\);/ {
-        print "\tspin_unlock(&susfs_spin_lock_open_redirect);"
+        print "\trcu_read_unlock();"
         print "\treturn found ? getname_kernel(tmp_path) : ERR_PTR(-ENOENT);"
         in_func = 0
         next
     }
     { print }
     ' "$SUSFS_C" > "$SUSFS_C.tmp" && mv "$SUSFS_C.tmp" "$SUSFS_C"
+    ((fix_count++)) || true
+fi
+
+# 4e. RCU-safe hash_add in susfs_add_open_redirect (writer path)
+# The spin_lock serialization remains; only hash_add -> hash_add_rcu
+# so concurrent RCU readers see consistent bucket chains.
+if grep -q 'hash_add(OPEN_REDIRECT_HLIST' "$SUSFS_C"; then
+    echo "[+] Converting hash_add to hash_add_rcu in open_redirect writer"
+    sed -i 's/hash_add(OPEN_REDIRECT_HLIST,/hash_add_rcu(OPEN_REDIRECT_HLIST,/g' "$SUSFS_C"
     ((fix_count++)) || true
 fi
 
