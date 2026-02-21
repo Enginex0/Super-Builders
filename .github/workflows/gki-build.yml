@@ -362,7 +362,7 @@ jobs:
         grep -q "zeromount_stat_hook" fs/stat.c || { echo "FAIL: stat.c hook missing"; exit 1; }
         grep -q "zeromount_getname_hook" fs/namei.c || { echo "FAIL: namei.c hook missing"; exit 1; }
         grep -q "zeromount_inject_dents64" fs/readdir.c || { echo "FAIL: readdir.c hook missing"; exit 1; }
-        grep -q "zeromount_get_virtual_path_for_inode" fs/d_path.c || { echo "FAIL: d_path.c hook missing"; exit 1; }
+        grep -qE "zeromount_get_virtual_path_for_inode|zeromount_get_static_vpath" fs/d_path.c || { echo "FAIL: d_path.c hook missing"; exit 1; }
         grep -q "zeromount_spoof_statfs" fs/statfs.c || { echo "FAIL: statfs.c hook missing"; exit 1; }
         grep -q "zeromount_spoof_xattr" fs/xattr.c || { echo "FAIL: xattr.c hook missing"; exit 1; }
         echo "SUCCESS: All ZeroMount hooks validated"
