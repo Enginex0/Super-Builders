@@ -207,9 +207,9 @@ void susfs_add_sus_kstat_redirect(void __user **user_info) {\
 \t\tvirtual_entry->info.target_ino = virtual_ino;\
 \t}\
 \n\tspin_lock(&susfs_spin_lock_sus_kstat);\
-\thash_add(SUS_KSTAT_HLIST, &new_entry->node, new_entry->target_ino);\
+\thash_add_rcu(SUS_KSTAT_HLIST, &new_entry->node, new_entry->target_ino);\
 \tif (virtual_entry) {\
-\t\thash_add(SUS_KSTAT_HLIST, &virtual_entry->node, virtual_ino);\
+\t\thash_add_rcu(SUS_KSTAT_HLIST, &virtual_entry->node, virtual_ino);\
 \t}\
 \tspin_unlock(&susfs_spin_lock_sus_kstat);\
 \n\tSUSFS_LOGI("kstat_redirect: RPATH_OK ino=%lu dev=%lu '"'"'%s'"'"'\\n",\
@@ -425,17 +425,22 @@ out_copy_to_user:\
 \
 struct filename* susfs_get_redirected_path_all(unsigned long ino) {\
 \tstruct st_susfs_open_redirect_all_hlist *entry;\
-\tstruct filename *result = ERR_PTR(-ENOENT);\
+\tchar tmp_path[SUSFS_MAX_LEN_PATHNAME];\
+\tbool found = false;\
 \n\tspin_lock(&susfs_spin_lock_open_redirect_all);\
 \thash_for_each_possible(OPEN_REDIRECT_ALL_HLIST, entry, node, ino) {\
 \t\tif (entry->target_ino == ino) {\
 \t\t\tSUSFS_LOGI("Redirect_all for ino: %lu\\n", ino);\
-\t\t\tresult = getname_kernel(entry->redirected_pathname);\
+\t\t\tstrncpy(tmp_path, entry->redirected_pathname, SUSFS_MAX_LEN_PATHNAME - 1);\
+\t\t\ttmp_path[SUSFS_MAX_LEN_PATHNAME - 1] = '"'"'\\0'"'"';\
+\t\t\tfound = true;\
 \t\t\tbreak;\
 \t\t}\
 \t}\
 \tspin_unlock(&susfs_spin_lock_open_redirect_all);\
-\treturn result;\
+\n\tif (found)\
+\t\treturn getname_kernel(tmp_path);\
+\treturn ERR_PTR(-ENOENT);\
 }
     }' "$SUSFS_C"
     ((inject_count++)) || true
@@ -497,7 +502,7 @@ static const unsigned char PAT_BOM[]            = {0xEF, 0xBB, 0xBF};\
 \
 bool susfs_check_unicode_bypass(const char __user *filename)\
 {\
-\tchar *buf;\
+\tchar buf[NAME_MAX + 1];\
 \tunsigned int uid;\
 \tbool blocked = false;\
 \tlong len;\
@@ -510,15 +515,9 @@ bool susfs_check_unicode_bypass(const char __user *filename)\
 \tif (uid == 0 || uid == 1000)\
 \t\treturn false;\
 \
-\tbuf = kmalloc(PATH_MAX, GFP_KERNEL);\
-\tif (!buf)\
+\tlen = strncpy_from_user(buf, filename, NAME_MAX);\
+\tif (len <= 0)\
 \t\treturn false;\
-\
-\tlen = strncpy_from_user(buf, filename, PATH_MAX - 1);\
-\tif (len <= 0) {\
-\t\tkfree(buf);\
-\t\treturn false;\
-\t}\
 \tbuf[len] = '"'"'\\0'"'"';\
 \
 \tfor (i = 0; i < len; i++) {\
@@ -558,7 +557,6 @@ bool susfs_check_unicode_bypass(const char __user *filename)\
 \t\tblocked = true;\
 \t\tbreak;\
 \t}\
-\tkfree(buf);\
 \treturn blocked;\
 }\
 #endif
@@ -592,9 +590,46 @@ if ! grep -q 'susfs_check_unicode_bypass' "$SUSFS_H"; then
 fi
 }
 
+inject_build_bug_on_guards() {
+echo "=== inject-susfs-build-bug-on-guards ==="
+
+# --- 1. Ensure pagemap.h is included (provides AS_THP_SUPPORT) ---
+if grep -q '#include <linux/pagemap.h>' "$SUSFS_C"; then
+    echo "[=] #include <linux/pagemap.h> already present in susfs.c"
+else
+    echo "[+] Injecting #include <linux/pagemap.h> into susfs.c"
+    sed -i '/#include <linux\/susfs.h>/a #include <linux/pagemap.h>' "$SUSFS_C"
+    ((inject_count++)) || true
+fi
+
+# --- 2. BUILD_BUG_ON checks at top of susfs_init() ---
+if grep -q 'BUILD_BUG_ON.*AS_FLAGS_SUS_PATH' "$SUSFS_C"; then
+    echo "[=] BUILD_BUG_ON guards already present in susfs.c"
+else
+    echo "[+] Injecting BUILD_BUG_ON guards into susfs_init()"
+    local bug_on_lines='\tBUILD_BUG_ON(AS_FLAGS_SUS_PATH <= AS_THP_SUPPORT);\
+\tBUILD_BUG_ON(AS_FLAGS_SUS_MAP >= BITS_PER_LONG);\
+\tBUILD_BUG_ON(AS_FLAGS_OPEN_REDIRECT_ALL >= BITS_PER_LONG);'
+    # P2 adds AS_FLAGS_SUS_PATH_PARENT — validate if present
+    if grep -q 'AS_FLAGS_SUS_PATH_PARENT' "$SUSFS_DEF_H"; then
+        bug_on_lines="${bug_on_lines}"'\
+\tBUILD_BUG_ON(AS_FLAGS_SUS_PATH_PARENT >= BITS_PER_LONG);'
+    fi
+    sed -i "/^void susfs_init(void) {/a \\
+${bug_on_lines}" "$SUSFS_C"
+    ((inject_count++)) || true
+fi
+
+if ! grep -q 'BUILD_BUG_ON.*AS_FLAGS_SUS_PATH' "$SUSFS_C"; then
+    echo "FATAL: BUILD_BUG_ON injection failed"
+    exit 1
+fi
+}
+
 # Execution order matches gki-build.yml
 inject_kstat_redirect
 inject_open_redirect_all
 inject_unicode_filter_func
+inject_build_bug_on_guards
 
 echo "=== Done: $inject_count injections applied ==="

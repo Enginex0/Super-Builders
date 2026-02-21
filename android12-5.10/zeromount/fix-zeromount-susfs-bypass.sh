@@ -88,18 +88,10 @@ sed -i '/^struct filename \*zeromount_getname_hook(struct filename \*name)$/,/^}
     }
 }' "$ZEROMOUNT_C"
 
-# Fix zeromount_inject_dents64 - no injection for umounted
-echo "[+] Patching zeromount_inject_dents64"
-sed -i '/^void zeromount_inject_dents64(struct file \*file/,/^}$/{
-    /if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;/a\
-#ifdef CONFIG_KSU_SUSFS\
-    if (susfs_is_current_proc_umounted()) return;\
-#endif
-}' "$ZEROMOUNT_C"
-
-# Fix zeromount_inject_dents - no injection for umounted
-echo "[+] Patching zeromount_inject_dents"
-sed -i '/^void zeromount_inject_dents(struct file \*file/,/^}$/{
+# Fix zeromount_inject_dents_common - no injection for umounted
+# (F4 merged inject_dents64 + inject_dents into inject_dents_common)
+echo "[+] Patching zeromount_inject_dents_common"
+sed -i '/^void zeromount_inject_dents_common(struct file \*file/,/^}$/{
     /if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;/a\
 #ifdef CONFIG_KSU_SUSFS\
     if (susfs_is_current_proc_umounted()) return;\
@@ -145,10 +137,10 @@ sed -i '/^char \*zeromount_get_virtual_path_for_inode(struct inode \*inode) {$/,
 # Verify
 echo "[*] Verifying patches..."
 COUNT=$(grep -c "susfs_is_current_proc_umounted" "$ZEROMOUNT_C" || echo "0")
-if [[ "$COUNT" -ge 8 ]]; then
+if [[ "$COUNT" -ge 7 ]]; then
     echo "[+] SUCCESS: $COUNT SUSFS bypass checks added"
 else
-    echo "[-] WARNING: Only $COUNT checks found (expected 8+)"
+    echo "[-] WARNING: Only $COUNT checks found (expected 7+)"
     echo "[*] Manual verification recommended"
 fi
 
