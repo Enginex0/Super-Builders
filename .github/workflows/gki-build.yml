@@ -871,12 +871,17 @@ jobs:
         if-no-files-found: ignore
         compression-level: 9
 
+    - name: Create Flashable Zip
+      run: |
+        cd "$ANYKERNEL3"
+        zip -r9 "$GITHUB_WORKSPACE/${{ env.FILE_NAME }}-AnyKernel3.zip" * -x '*.git*'
+
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.FILE_NAME }}-AnyKernel3
-        path: ./AnyKernel3/**
-        compression-level: 9
+        path: ${{ env.FILE_NAME }}-AnyKernel3.zip
+        compression-level: 0
 
     - name: Build Summary
       run: |
