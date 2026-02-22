@@ -45,20 +45,28 @@ echo "[+] Injecting susfs_is_mount_hidden into $mount_block_count show_* functio
 # The awk script finds 'susfs_hide_sus_mnts_for_non_su_procs', then
 # at the next '#endif' inserts our block above it.
 awk '
-/susfs_hide_sus_mnts_for_non_su_procs/ {
+/if.*susfs_hide_sus_mnts_for_non_su_procs/ {
     in_sus_mount_block = 1
+    ifdef_depth = 0
+}
+in_sus_mount_block && /^#ifdef/ {
+    ifdef_depth++
 }
 in_sus_mount_block && /^#endif/ {
-    print "\t{"
-    print "\t\tstruct mount *r_hm = real_mount(mnt);"
-    print "\t\tif (susfs_is_mount_hidden(r_hm->mnt_id) &&"
-    print "\t\t    susfs_is_current_proc_umounted() &&"
-    print "\t\t    !susfs_is_current_ksu_domain())"
-    print "\t\t{"
-    print "\t\t\treturn 0;"
-    print "\t\t}"
-    print "\t}"
-    in_sus_mount_block = 0
+    if (ifdef_depth > 0) {
+        ifdef_depth--
+    } else {
+        print "\t{"
+        print "\t\tstruct mount *r_hm = real_mount(mnt);"
+        print "\t\tif (susfs_is_mount_hidden(r_hm->mnt_id) &&"
+        print "\t\t    susfs_is_current_proc_umounted() &&"
+        print "\t\t    !susfs_is_current_ksu_domain())"
+        print "\t\t{"
+        print "\t\t\treturn 0;"
+        print "\t\t}"
+        print "\t}"
+        in_sus_mount_block = 0
+    }
 }
 { print }
 ' "$PROC_NS" > "$PROC_NS.tmp" && mv "$PROC_NS.tmp" "$PROC_NS"
