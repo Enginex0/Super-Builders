@@ -38,6 +38,12 @@ if [ "$mount_block_count" -lt 3 ]; then
     exit 1
 fi
 
+# Inject extern declaration so proc_namespace.c can call susfs_is_mount_hidden
+if ! grep -q 'extern.*susfs_is_mount_hidden' "$PROC_NS"; then
+    sed -i '/extern bool susfs_is_current_ksu_domain/a extern bool susfs_is_mount_hidden(int mnt_id);' "$PROC_NS"
+    echo "[+] Added extern declaration for susfs_is_mount_hidden"
+fi
+
 echo "[+] Injecting susfs_is_mount_hidden into $mount_block_count show_* functions"
 
 # For each CONFIG_KSU_SUSFS_SUS_MOUNT block (one per show_ function),
