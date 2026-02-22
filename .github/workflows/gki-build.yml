@@ -241,6 +241,7 @@ jobs:
           bash "$INJECT_DIR/fix-safety.sh" "$SUSFS_PATCHES"
           bash "$INJECT_DIR/inject-susfs-features.sh" "$SUSFS_PATCHES"
           bash "$INJECT_DIR/add-supercall-dispatch.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/add-stock-overlay-hide.sh" "$SUSFS_PATCHES"
           bash "$INJECT_DIR/add-susfs-zeromount-coupling.sh" "$SUSFS_PATCHES"
         else
           echo "=== Skipping custom SUSFS injection (add_enhanced_susfs=false) ==="
@@ -303,6 +304,7 @@ jobs:
           echo "=== Post-patch: injecting into kernel source ==="
           bash "$HOOKS_DIR/add-vfs-open-redirect-all.sh" "$KERNEL_ROOT/common"
           bash "$HOOKS_DIR/add-mount-display.sh" "$KERNEL_ROOT/common"
+          bash "$HOOKS_DIR/add-stock-overlay-proc-filter.sh" "$KERNEL_ROOT/common"
 
           echo "=== Injecting custom handlers into KernelSU-Next ==="
           bash "$HOOKS_DIR/add-custom-handlers.sh" \

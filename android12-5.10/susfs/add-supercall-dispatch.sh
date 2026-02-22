@@ -74,4 +74,26 @@ if ! grep -q 'CMD_SUSFS_ADD_OPEN_REDIRECT_ALL' "$KSU_PATCH"; then
     exit 1
 fi
 
+# --- 3. hide_mount handler ---
+if grep -q 'CMD_SUSFS_HIDE_MOUNT' "$KSU_PATCH"; then
+    echo "[=] CMD_SUSFS_HIDE_MOUNT handler already present"
+else
+    echo "[+] Injecting CMD_SUSFS_HIDE_MOUNT handler"
+    # Anchor: after CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS handler block
+    sed -i '/CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS/,/+        }/ {
+        /+        }/ a\
++        if (cmd == CMD_SUSFS_HIDE_MOUNT) {\
++            susfs_hide_mount(arg);\
++            return 0;\
++        }
+    }' "$KSU_PATCH"
+    ((inject_count++)) || true
+fi
+
+# Validate
+if ! grep -q 'CMD_SUSFS_HIDE_MOUNT' "$KSU_PATCH"; then
+    echo "FATAL: CMD_SUSFS_HIDE_MOUNT handler injection failed"
+    exit 1
+fi
+
 echo "=== Done: $inject_count injections applied ==="
