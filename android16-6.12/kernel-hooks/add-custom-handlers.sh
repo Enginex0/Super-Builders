@@ -23,12 +23,14 @@ echo "=== SUSFS Custom Handler Injection ==="
 HANDLERS=(
     "susfs_add_sus_kstat_redirect|CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT|CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY|CONFIG_KSU_SUSFS_SUS_KSTAT|susfs_add_sus_kstat_redirect(arg)"
     "susfs_add_open_redirect_all|CMD_SUSFS_ADD_OPEN_REDIRECT_ALL|CMD_SUSFS_ADD_OPEN_REDIRECT|CONFIG_KSU_SUSFS_OPEN_REDIRECT|susfs_add_open_redirect_all(arg)"
+    "susfs_hide_mount|CMD_SUSFS_HIDE_MOUNT|CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS|CONFIG_KSU_SUSFS_SUS_MOUNT|susfs_hide_mount(arg)"
 )
 
 # Kconfig definitions: function_name|config_name|description|help_text|depends_on
 KCONFIGS=(
     "susfs_add_sus_kstat_redirect|KSU_SUSFS_SUS_KSTAT_REDIRECT|SUSFS kstat redirect|Redirects kstat lookups to real file metadata for spoofed paths.|KSU_SUSFS_SUS_KSTAT"
     "susfs_add_open_redirect_all|KSU_SUSFS_OPEN_REDIRECT_ALL|SUSFS open redirect for all UIDs|Extends open redirect to all UIDs instead of only root/system.|KSU_SUSFS_OPEN_REDIRECT"
+    "susfs_hide_mount|KSU_SUSFS_HIDE_MOUNT|SUSFS per-mount hiding|Hides individual mount points from proc mounts interfaces by path.|KSU_SUSFS_SUS_MOUNT"
     "susfs_check_unicode_bypass|KSU_SUSFS_UNICODE_FILTER|Unicode Filter (blocks scoped storage bypass)|Blocks filesystem path attacks using unicode characters.|KSU_SUSFS"
 )
 
