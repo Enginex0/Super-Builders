@@ -242,6 +242,7 @@ jobs:
           echo "=== Injecting custom features into upstream SUSFS ==="
           bash "$INJECT_DIR/fix-susfs.sh" "$SUSFS_PATCHES" "$KERNEL_ROOT/${{ env.KSU_DIR }}"
           bash "$INJECT_DIR/inject-susfs-features.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/fix-susfs-perf.sh" "$KERNEL_ROOT/common" "$SUSFS_PATCHES" "$SUSFS_PATCH"
         else
           echo "=== Skipping custom SUSFS injection (add_enhanced_susfs=false) ==="
         fi
