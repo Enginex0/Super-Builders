@@ -1,84 +1,62 @@
 #!/bin/bash
-# fix-susfs-safety.sh
-# Applies security and correctness fixes to upstream SUSFS source:
-# - strncpy null-termination (10+ locations)
-# - RCU transition for kstat/open_redirect hash tables (M1)
-#   readers: rcu_read_lock + hash_for_each_possible_rcu (lockless)
-#   writers: spinlock + hash_add_rcu/hash_del_rcu + kfree_rcu
-# - Sleep-under-spinlock fixes (C5 open_redirect, C1 sus_path RCU)
-# - Lock ordering rewrite for susfs_update_sus_kstat (C6/C7)
-# - NULL deref in cmdline_or_bootconfig and enabled_features
-# - Racy lockless read in susfs_spoof_uname (L1)
-# - Struct field dedup in st_susfs_sus_path_list (L6)
+# Applies safety, correctness, and KSU integration fixes to upstream SUSFS.
 #
-# Usage: ./fix-susfs-safety.sh <SUSFS_KERNEL_PATCHES_DIR>
+# Phase 1: SUSFS source (susfs.c, susfs.h) — strncpy null-term, RCU
+#   transitions, NULL deref, lock ordering, format specifiers, etc.
+# Phase 2: KSU source (setuid_hook.c, ksud.c, sucompat.c) — off-by-one,
+#   early-boot guard, dead code, WRITE_ONCE barriers.
+#
+# Usage: ./fix-susfs.sh <SUSFS_DIR> <KSU_DIR>
 
-set -e
+set -euo pipefail
 
-SUSFS_DIR="$1"
-
-if [ -z "$SUSFS_DIR" ]; then
-    echo "Usage: $0 <SUSFS_KERNEL_PATCHES_DIR>"
-    exit 1
-fi
+SUSFS_DIR="${1:?Usage: $0 <SUSFS_DIR> <KSU_DIR>}"
+KSU_DIR="${2:?Usage: $0 <SUSFS_DIR> <KSU_DIR>}"
 
 SUSFS_C="$SUSFS_DIR/fs/susfs.c"
 SUSFS_H="$SUSFS_DIR/include/linux/susfs.h"
 
-if [ ! -f "$SUSFS_C" ]; then
-    echo "FATAL: missing $SUSFS_C"
-    exit 1
-fi
+for f in "$SUSFS_C" "$SUSFS_H"; do
+    [ -f "$f" ] || { echo "FATAL: missing $f"; exit 1; }
+done
 
-# Upstream SUSFS has been observed with a literal \x00 in susfs_get_redirected_path.
-# Strip before any awk processing touches the file, otherwise awk may mishandle
-# the null-containing line and carry the byte into the output.
+# Upstream has been observed with literal \x00 in susfs_get_redirected_path
 python3 - "$SUSFS_C" <<'PYEOF'
 import sys
 p = sys.argv[1]
 data = open(p, 'rb').read()
 if b'\x00' in data:
-    print('[+] Scrubbing null bytes from susfs.c (upstream source corruption)')
+    print('[+] Scrubbing null bytes from susfs.c')
     open(p, 'wb').write(data.replace(b'\x00', b'0'))
 PYEOF
 
-echo "=== fix-susfs-safety ==="
+echo "=== fix-susfs: safety ==="
 fix_count=0
 
-# --- 1. (removed: fsnotify_backend.h is required for sdcard monitor) ---
-
-# --- 2. Fix trailing whitespace in disabled log macros ---
+# -- Trailing whitespace in disabled log macros --
 if grep -q 'SUSFS_LOGI(fmt, \.\.\.) $' "$SUSFS_C"; then
     echo "[+] Fixing trailing whitespace in disabled log macros"
     sed -i 's/#define SUSFS_LOGI(fmt, \.\.\.) $/#define SUSFS_LOGI(fmt, ...)/' "$SUSFS_C"
     sed -i 's/#define SUSFS_LOGE(fmt, \.\.\.) $/#define SUSFS_LOGE(fmt, ...)/' "$SUSFS_C"
     ((fix_count++)) || true
-else
-    echo "[=] Log macros already clean"
 fi
 
-# --- 3. strncpy null-termination fixes ---
-# After every strncpy, ensure the buffer is null-terminated.
-# Pattern: strncpy(dst, src, SIZE - 1); -> add dst[SIZE-1] = '\0';
-# We target specific anchor patterns rather than blind replacement.
-
+# -- strncpy null-termination fixes --
 echo "[+] Applying strncpy null-termination fixes"
 
-# 3a. android_data_path.target_pathname
+# android_data_path.target_pathname
 if ! grep -A1 'android_data_path.target_pathname' "$SUSFS_C" | grep -q '\[SUSFS_MAX_LEN_PATHNAME-1\].*\\0'; then
     sed -i '/strncpy(android_data_path.target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME-1);/a \\t\tandroid_data_path.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '"'"'\\0'"'"';' "$SUSFS_C"
     ((fix_count++)) || true
 fi
 
-# 3b. sdcard_path.target_pathname
+# sdcard_path.target_pathname
 if ! grep -A1 'sdcard_path.target_pathname' "$SUSFS_C" | grep -q '\[SUSFS_MAX_LEN_PATHNAME-1\].*\\0'; then
     sed -i '/strncpy(sdcard_path.target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME-1);/a \\t\tsdcard_path.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '"'"'\\0'"'"';' "$SUSFS_C"
     ((fix_count++)) || true
 fi
 
-# 3c-d. sus_path: new_list->info.target_pathname + new_list->target_pathname (3 code blocks)
-# ADD blocks use 2-tab indent, sus_path_loop uses 1-tab — detect from strncpy line itself
-# State-based: after seeing strncpy, insert null-term before the NEXT line (handles adjacent pairs)
+# sus_path: new_list->info.target_pathname + new_list->target_pathname
 if grep -q 'strncpy(new_list->.*target_pathname,.*SUSFS_MAX_LEN_PATHNAME' "$SUSFS_C" && \
    ! awk '/strncpy\(new_list->(info\.)?target_pathname,.*SUSFS_MAX_LEN_PATHNAME *- *1\);/{found=1;next} found{if($0 !~ /target_pathname\[SUSFS_MAX_LEN_PATHNAME *- *1\]/){exit 1}; found=0}' "$SUSFS_C" 2>/dev/null; then
     awk '
@@ -103,13 +81,9 @@ if grep -q 'strncpy(new_list->.*target_pathname,.*SUSFS_MAX_LEN_PATHNAME' "$SUSF
     }
     ' "$SUSFS_C" > "$SUSFS_C.tmp" && mv "$SUSFS_C.tmp" "$SUSFS_C"
     ((fix_count++)) || true
-else
-    echo "  [=] Section 3c-d: null-terminators already present"
 fi
 
-# 3e. uname release/version null-termination (L10)
-# Insert null-term for BOTH branches (info.release AND utsname()->release) by
-# placing it once before spin_unlock in susfs_set_uname(), covering all paths.
+# uname release/version null-termination (L10)
 if ! grep -q 'my_uname.release\[__NEW_UTS_LEN\].*\\0' "$SUSFS_C"; then
     sed -i '/^void susfs_set_uname/,/^}/ {
         /spin_unlock(&susfs_spin_lock_set_uname);/i \\tmy_uname.release[__NEW_UTS_LEN] = '"'"'\\0'"'"';\n\tmy_uname.version[__NEW_UTS_LEN] = '"'"'\\0'"'"';
@@ -117,7 +91,7 @@ if ! grep -q 'my_uname.release\[__NEW_UTS_LEN\].*\\0' "$SUSFS_C"; then
     ((fix_count++)) || true
 fi
 
-# 3f. spoof_uname tmp->release/version null-termination
+# spoof_uname tmp->release/version null-termination
 if ! grep -A1 'strncpy(tmp->release' "$SUSFS_C" | grep -q 'tmp->release\[__NEW_UTS_LEN\]'; then
     sed -i '/strncpy(tmp->release, my_uname.release, __NEW_UTS_LEN);/a \\ttmp->release[__NEW_UTS_LEN] = '"'"'\\0'"'"';' "$SUSFS_C"
     ((fix_count++)) || true
@@ -128,21 +102,19 @@ if ! grep -A1 'strncpy(tmp->version' "$SUSFS_C" | grep -q 'tmp->version\[__NEW_U
     ((fix_count++)) || true
 fi
 
-# 3g. susfs_show_variant null-termination
+# susfs_show_variant null-termination
 if ! grep -A1 'strncpy(info.susfs_variant' "$SUSFS_C" | grep -q 'susfs_variant\[SUSFS_MAX_VARIANT_BUFSIZE-1\]'; then
     sed -i '/strncpy(info.susfs_variant, SUSFS_VARIANT, SUSFS_MAX_VARIANT_BUFSIZE-1);/a \\tinfo.susfs_variant[SUSFS_MAX_VARIANT_BUFSIZE-1] = '"'"'\\0'"'"';' "$SUSFS_C"
     ((fix_count++)) || true
 fi
 
-# 3h. susfs_show_version null-termination
+# susfs_show_version null-termination
 if ! grep -A1 'strncpy(info.susfs_version' "$SUSFS_C" | grep -q 'susfs_version\[SUSFS_MAX_VERSION_BUFSIZE-1\]'; then
     sed -i '/strncpy(info.susfs_version, SUSFS_VERSION, SUSFS_MAX_VERSION_BUFSIZE-1);/a \\tinfo.susfs_version[SUSFS_MAX_VERSION_BUFSIZE-1] = '"'"'\\0'"'"';' "$SUSFS_C"
     ((fix_count++)) || true
 fi
 
-# 3i. open_redirect: new_entry->target_pathname and new_entry->redirected_pathname
-# These appear in susfs_add_open_redirect() — the per-UID variant
-# State-based: track pending null-term without consuming lines via getline
+# open_redirect: new_entry->target_pathname and new_entry->redirected_pathname
 if grep -q 'strncpy(new_entry->.*pathname, info\..*pathname, SUSFS_MAX_LEN_PATHNAME' "$SUSFS_C" && \
    ! awk '/strncpy\(new_entry->(target|redirected)_pathname, info\..*, SUSFS_MAX_LEN_PATHNAME-1\);/{found=1;next} found{if($0 !~ /\[SUSFS_MAX_LEN_PATHNAME-1\]/){exit 1}; found=0}' "$SUSFS_C" 2>/dev/null; then
     awk '
@@ -171,61 +143,43 @@ if grep -q 'strncpy(new_entry->.*pathname, info\..*pathname, SUSFS_MAX_LEN_PATHN
     }
     ' "$SUSFS_C" > "$SUSFS_C.tmp" && mv "$SUSFS_C.tmp" "$SUSFS_C"
     ((fix_count++)) || true
-else
-    echo "  [=] Section 3i: null-terminators already present"
 fi
 
-# --- 4. RCU transition for kstat/open_redirect hash tables (M1) ---
-# Readers vastly outnumber writers for both SUS_KSTAT_HLIST and OPEN_REDIRECT_HLIST.
-# Transition from spinlock-based protection to RCU: lockless reads, spinlock only
-# for writer mutual exclusion with RCU-safe deletion and deferred freeing.
+# -- RCU transition for kstat/open_redirect hash tables (M1) --
 
-# 4-pre-a. Add struct rcu_head to st_susfs_sus_kstat_hlist for kfree_rcu
-if [ -f "$SUSFS_H" ] && ! grep -A5 'struct st_susfs_sus_kstat_hlist' "$SUSFS_H" | grep -q 'struct rcu_head'; then
-    echo "[+] Adding rcu_head to st_susfs_sus_kstat_hlist (M1)"
+# rcu_head in st_susfs_sus_kstat_hlist
+if ! grep -A5 'struct st_susfs_sus_kstat_hlist' "$SUSFS_H" | grep -q 'struct rcu_head'; then
+    echo "[+] Adding rcu_head to st_susfs_sus_kstat_hlist"
     sed -i '/struct st_susfs_sus_kstat_hlist {/,/};/ {
         /struct hlist_node.*node;/a \\tstruct rcu_head\t\t\t\trcu;
     }' "$SUSFS_H"
     ((fix_count++)) || true
-else
-    echo "[=] st_susfs_sus_kstat_hlist rcu_head already present"
 fi
 
-# 4-pre-b. Add struct rcu_head to st_susfs_open_redirect_hlist for kfree_rcu
-if [ -f "$SUSFS_H" ] && ! grep -A5 'struct st_susfs_open_redirect_hlist' "$SUSFS_H" | grep -q 'struct rcu_head'; then
-    echo "[+] Adding rcu_head to st_susfs_open_redirect_hlist (M1)"
+# rcu_head in st_susfs_open_redirect_hlist
+if ! grep -A5 'struct st_susfs_open_redirect_hlist' "$SUSFS_H" | grep -q 'struct rcu_head'; then
+    echo "[+] Adding rcu_head to st_susfs_open_redirect_hlist"
     sed -i '/struct st_susfs_open_redirect_hlist {/,/};/ {
         /struct hlist_node.*node;/a \\tstruct rcu_head\t\t\t\trcu;
     }' "$SUSFS_H"
     ((fix_count++)) || true
-else
-    echo "[=] st_susfs_open_redirect_hlist rcu_head already present"
 fi
 
-# 4-pre-c. Convert hash_add to hash_add_rcu in susfs_add_sus_kstat
+# hash_add -> hash_add_rcu for SUS_KSTAT_HLIST
 if grep -q 'hash_add(SUS_KSTAT_HLIST' "$SUSFS_C"; then
-    echo "[+] Converting hash_add to hash_add_rcu for SUS_KSTAT_HLIST"
     sed -i 's/hash_add(SUS_KSTAT_HLIST,/hash_add_rcu(SUS_KSTAT_HLIST,/g' "$SUSFS_C"
     ((fix_count++)) || true
-else
-    echo "[=] SUS_KSTAT_HLIST already uses hash_add_rcu"
 fi
 
-# 4-pre-d. Convert hash_add to hash_add_rcu in susfs_add_open_redirect
+# hash_add -> hash_add_rcu for OPEN_REDIRECT_HLIST
 if grep -q 'hash_add(OPEN_REDIRECT_HLIST' "$SUSFS_C"; then
-    echo "[+] Converting hash_add to hash_add_rcu for OPEN_REDIRECT_HLIST"
     sed -i 's/hash_add(OPEN_REDIRECT_HLIST,/hash_add_rcu(OPEN_REDIRECT_HLIST,/g' "$SUSFS_C"
     ((fix_count++)) || true
-else
-    echo "[=] OPEN_REDIRECT_HLIST already uses hash_add_rcu"
 fi
 
-# 4a. susfs_update_sus_kstat: complete rewrite with two-phase locking (C6/C7)
-# Upstream holds no lock during hash iteration and does hash_del/kfree unlocked.
-# Rewrite: Phase 1 (find under lock, copy pathname), Phase 2 (sleeping ops outside
-# lock), Phase 3 (re-find under lock, swap with RCU-safe del/add, deferred free).
+# -- susfs_update_sus_kstat: two-phase locking rewrite (C6/C7 + M1 RCU) --
 if ! grep -q 'match_pathname\[SUSFS_MAX_LEN_PATHNAME\]' "$SUSFS_C"; then
-    echo "[+] Rewriting susfs_update_sus_kstat lock ordering (C6/C7 + M1 RCU)"
+    echo "[+] Rewriting susfs_update_sus_kstat lock ordering (C6/C7 + M1)"
     awk '
     /^void susfs_update_sus_kstat\(void __user \*\*user_info\)/ {
         print "void susfs_update_sus_kstat(void __user **user_info) {"
@@ -298,7 +252,6 @@ if ! grep -q 'match_pathname\[SUSFS_MAX_LEN_PATHNAME\]' "$SUSFS_C"; then
         print "\t}"
         print "\tSUSFS_LOGI(\"CMD_SUSFS_UPDATE_SUS_KSTAT -> ret: %d\\n\", info.err);"
         print "}"
-        # consume original function
         brace = 0
         while ((getline) > 0) {
             if ($0 ~ /\{/) brace++
@@ -312,10 +265,9 @@ if ! grep -q 'match_pathname\[SUSFS_MAX_LEN_PATHNAME\]' "$SUSFS_C"; then
     ((fix_count++)) || true
 fi
 
-# 4b. susfs_sus_ino_for_generic_fillattr: RCU read-side protection (M1)
-# Replaces spinlock-based reader with lockless RCU iteration.
+# -- RCU read-side for susfs_sus_ino_for_generic_fillattr (M1) --
 if ! grep -A10 'void susfs_sus_ino_for_generic_fillattr' "$SUSFS_C" | grep -q 'rcu_read_lock\|spin_lock_irqsave'; then
-    echo "[+] Adding RCU read protection to susfs_sus_ino_for_generic_fillattr (M1)"
+    echo "[+] Adding RCU read protection to susfs_sus_ino_for_generic_fillattr"
     awk '
     /^void susfs_sus_ino_for_generic_fillattr\(unsigned long ino, struct kstat \*stat\)/ {
         print "void susfs_sus_ino_for_generic_fillattr(unsigned long ino, struct kstat *stat) {"
@@ -342,7 +294,6 @@ if ! grep -A10 'void susfs_sus_ino_for_generic_fillattr' "$SUSFS_C" | grep -q 'r
         print "\t}"
         print "\trcu_read_unlock();"
         print "}"
-        # consume original function
         brace = 0
         while ((getline) > 0) {
             if ($0 ~ /\{/) brace++
@@ -356,9 +307,9 @@ if ! grep -A10 'void susfs_sus_ino_for_generic_fillattr' "$SUSFS_C" | grep -q 'r
     ((fix_count++)) || true
 fi
 
-# 4c. susfs_sus_ino_for_show_map_vma: RCU read-side protection (M1)
+# -- RCU read-side for susfs_sus_ino_for_show_map_vma (M1) --
 if ! grep -A10 'void susfs_sus_ino_for_show_map_vma' "$SUSFS_C" | grep -q 'rcu_read_lock\|spin_lock_irqsave'; then
-    echo "[+] Adding RCU read protection to susfs_sus_ino_for_show_map_vma (M1)"
+    echo "[+] Adding RCU read protection to susfs_sus_ino_for_show_map_vma"
     awk '
     /^void susfs_sus_ino_for_show_map_vma\(unsigned long ino, dev_t \*out_dev, unsigned long \*out_ino\)/ {
         print "void susfs_sus_ino_for_show_map_vma(unsigned long ino, dev_t *out_dev, unsigned long *out_ino) {"
@@ -375,7 +326,6 @@ if ! grep -A10 'void susfs_sus_ino_for_show_map_vma' "$SUSFS_C" | grep -q 'rcu_r
         print "\t}"
         print "\trcu_read_unlock();"
         print "}"
-        # consume original function
         brace = 0
         while ((getline) > 0) {
             if ($0 ~ /\{/) brace++
@@ -389,9 +339,7 @@ if ! grep -A10 'void susfs_sus_ino_for_show_map_vma' "$SUSFS_C" | grep -q 'rcu_r
     ((fix_count++)) || true
 fi
 
-# 4d. susfs_get_redirected_path: RCU read + copy-to-stack (C5 + M1)
-# getname_kernel() sleeps (GFP_KERNEL alloc), cannot be called under any lock.
-# Copy pathname under RCU read-side, call getname_kernel after rcu_read_unlock.
+# -- susfs_get_redirected_path: RCU read + copy-to-stack (C5 + M1) --
 if ! grep -A5 'susfs_get_redirected_path(unsigned long ino)' "$SUSFS_C" | grep -q 'tmp_path\[SUSFS_MAX_LEN_PATHNAME\]'; then
     echo "[+] Fixing susfs_get_redirected_path with RCU read-side (C5 + M1)"
     awk '
@@ -417,7 +365,6 @@ if ! grep -A5 'susfs_get_redirected_path(unsigned long ino)' "$SUSFS_C" | grep -
         print "\t\treturn getname_kernel(tmp_path);"
         print "\treturn ERR_PTR(-ENOENT);"
         print "}"
-        # consume original function
         in_func = 1
         brace_depth = 0
         next
@@ -435,11 +382,7 @@ if ! grep -A5 'susfs_get_redirected_path(unsigned long ino)' "$SUSFS_C" | grep -
     ((fix_count++)) || true
 fi
 
-# --- 5. NULL deref fixes ---
-# 5a/5b: kzalloc returns NULL → code dereferences info->err.
-# Only replace the block inside if (!info) { ... }, not subsequent error paths.
-# Pattern: if (!info) { info->err = -ENOMEM; goto out_copy_to_user; }
-# We match the 3-line sequence and replace with SUSFS_LOGE + return.
+# -- NULL deref in kzalloc error paths --
 if grep -q 'if (!info)' "$SUSFS_C" && grep -A1 'if (!info)' "$SUSFS_C" | grep -q 'info->err = -ENOMEM'; then
     echo "[+] Fixing NULL deref in kzalloc error paths"
     awk '
@@ -464,55 +407,38 @@ if grep -q 'if (!info)' "$SUSFS_C" && grep -A1 'if (!info)' "$SUSFS_C" | grep -q
     { print }
     ' "$SUSFS_C" > "$SUSFS_C.tmp" && mv "$SUSFS_C.tmp" "$SUSFS_C"
     ((fix_count++)) || true
-else
-    echo "[=] kzalloc NULL deref already fixed"
 fi
 
-# --- 6. sus_mount default: keep upstream false (L2) ---
-# Upstream defaults to false so zygisk can inspect sus mounts during
-# post-fs-data. ZeroMount toggles this via supercall at runtime (brene.rs S06).
-echo "[=] sus_mount default: keeping upstream false (toggled at runtime)"
-
-# --- 7. Fix trailing whitespace before kzalloc in cmdline_or_bootconfig ---
+# -- Trailing whitespace before kzalloc in cmdline_or_bootconfig --
 sed -i '/void susfs_set_cmdline_or_bootconfig/,/^}/ {
     s/	$/	/
 }' "$SUSFS_C"
 
-# --- 8. Fix format specifier: spoofed_size is loff_t (long long), not unsigned int ---
-# Upstream uses '%u' for spoofed_size in the #else (non-STAT64) SUSFS_LOGI paths
+# -- Format specifier: spoofed_size is loff_t, not unsigned int --
 if grep -q "spoofed_size: '%u'" "$SUSFS_C"; then
     echo "[+] Fixing spoofed_size format specifier (%u -> %llu)"
     sed -i "s/spoofed_size: '%u'/spoofed_size: '%llu'/g" "$SUSFS_C"
     ((fix_count++)) || true
-else
-    echo "[=] spoofed_size format specifier already correct"
 fi
 
-# --- 9. Null guards for susfs_is_base_dentry_* (prevents kernel panic on null base) ---
+# -- Null guards for susfs_is_base_dentry_* --
 if grep -q 'return (base->d_inode->i_mapping->flags & BIT_ANDROID_DATA_ROOT_DIR)' "$SUSFS_C"; then
     echo "[+] Adding null guards to susfs_is_base_dentry functions"
     sed -i 's/return (base->d_inode->i_mapping->flags & BIT_ANDROID_DATA_ROOT_DIR);/return (base \&\& !IS_ERR(base) \&\& base->d_inode \&\& (base->d_inode->i_mapping->flags \& BIT_ANDROID_DATA_ROOT_DIR));/' "$SUSFS_C"
     sed -i 's/return (base->d_inode->i_mapping->flags & BIT_ANDROID_SDCARD_ROOT_DIR);/return (base \&\& !IS_ERR(base) \&\& base->d_inode \&\& (base->d_inode->i_mapping->flags \& BIT_ANDROID_SDCARD_ROOT_DIR));/' "$SUSFS_C"
     ((fix_count++)) || true
-else
-    echo "[=] susfs_is_base_dentry null guards already present"
 fi
 
-# --- 10. Remove EACCES permission leak from SUS_PATH in GKI patch ---
-# Older upstream versions return ERR_PTR(-EACCES) on create/excl lookups,
-# which leaks SUSFS presence to detector apps. Replace with blank lines
-# to preserve patch hunk line counts.
+# -- Remove EACCES permission leak from SUS_PATH in GKI patch --
 for patch_file in "$SUSFS_DIR"/50_add_susfs_in_gki-*.patch; do
     [ -f "$patch_file" ] || continue
     if grep -q 'ERR_PTR(-EACCES)' "$patch_file"; then
         echo "[+] Removing EACCES permission leak from $(basename "$patch_file")"
         awk '
-        # 5.10: if (flags & (LOOKUP_CREATE | LOOKUP_EXCL)) { return ERR_PTR(-EACCES); }
         /^\+[[:space:]]*if \(flags & \(LOOKUP_CREATE \| LOOKUP_EXCL\)\) \{/ {
             print "+"; getline; print "+"; getline; print "+"
             next
         }
-        # 6.6: if (create_flags) { dentry = ERR_PTR(-EACCES); goto unlock; }
         /^\+[[:space:]]*if \(create_flags\) \{/ {
             saved = $0
             if (getline > 0 && $0 ~ /ERR_PTR\(-EACCES\)/) {
@@ -525,15 +451,10 @@ for patch_file in "$SUSFS_DIR"/50_add_susfs_in_gki-*.patch; do
         { print }
         ' "$patch_file" > "$patch_file.tmp" && mv "$patch_file.tmp" "$patch_file"
         ((fix_count++)) || true
-    else
-        echo "[=] No EACCES permission leak in $(basename "$patch_file")"
     fi
 done
 
-# --- 11. susfs_run_sus_path_loop: move kern_path() outside RCU (C1) ---
-# kern_path() sleeps (dcache mutex, GFP_KERNEL alloc). Calling it inside
-# rcu_read_lock() blocks RCU grace periods and causes softlockup on 2GB devices.
-# Three-phase fix: count under RCU, kmalloc outside, copy under RCU, resolve outside.
+# -- sus_path_loop: move kern_path() outside RCU (C1) --
 if ! grep -q 'kmalloc_array.*SUSFS_MAX_LEN_PATHNAME' "$SUSFS_C"; then
     echo "[+] Fixing kern_path inside RCU in susfs_run_sus_path_loop (C1)"
     awk '
@@ -597,7 +518,6 @@ if ! grep -q 'kmalloc_array.*SUSFS_MAX_LEN_PATHNAME' "$SUSFS_C"; then
         print "\t}"
         print "\tkfree(pathnames);"
         print "}"
-        # consume original function
         brace = 0
         while ((getline) > 0) {
             if ($0 ~ /\{/) brace++
@@ -611,49 +531,129 @@ if ! grep -q 'kmalloc_array.*SUSFS_MAX_LEN_PATHNAME' "$SUSFS_C"; then
     ((fix_count++)) || true
 fi
 
-# --- 12. susfs_spoof_uname: replace spin_is_locked with proper locking (L1) ---
-# spin_is_locked() is a debug/diagnostic function, not a synchronization
-# primitive. Returns false on UP kernels. Replace with spin_lock/spin_unlock.
+# -- susfs_spoof_uname: replace spin_is_locked with proper locking (L1) --
 if grep -q 'spin_is_locked(&susfs_spin_lock_set_uname)' "$SUSFS_C"; then
     echo "[+] Fixing racy lockless read in susfs_spoof_uname (L1)"
-    # Remove the spin_is_locked condition from the early-return check
     sed -i 's/if (unlikely(my_uname.release\[0\] == '"'"'\\0'"'"' || spin_is_locked(\&susfs_spin_lock_set_uname)))/if (unlikely(my_uname.release[0] == '"'"'\\0'"'"'))/' "$SUSFS_C"
-    # Add spin_lock before the first strncpy and spin_unlock after the second
     sed -i '/^void susfs_spoof_uname/,/^}/ {
         /strncpy(tmp->release, my_uname.release, __NEW_UTS_LEN);/i \\tspin_lock(\&susfs_spin_lock_set_uname);
     }' "$SUSFS_C"
-    # Find the last strncpy in the function (tmp->version) and add unlock after it
-    # Account for possible null-term line added by 3f
     sed -i '/^void susfs_spoof_uname/,/^}/ {
         /^}/ i\\tspin_unlock(\&susfs_spin_lock_set_uname);
     }' "$SUSFS_C"
     ((fix_count++)) || true
 fi
 
-# --- 13. Remove redundant target_pathname field from st_susfs_sus_path_list (L6) ---
-# The struct has both info.target_pathname[256] and a standalone target_pathname[256].
-# Both are populated identically. Remove the redundant field and redirect all references.
+# -- Remove redundant target_pathname from st_susfs_sus_path_list (L6) --
 if [ -f "$SUSFS_H" ] && grep -q 'target_pathname\[SUSFS_MAX_LEN_PATHNAME\]' "$SUSFS_H"; then
-    # Only apply if the redundant field exists in the list struct
     if sed -n '/struct st_susfs_sus_path_list/,/};/p' "$SUSFS_H" | grep -q '^\s*char.*target_pathname\[SUSFS_MAX_LEN_PATHNAME\]'; then
         echo "[+] Removing redundant target_pathname from st_susfs_sus_path_list (L6)"
-        # Remove the standalone target_pathname field from the struct in susfs.h
         sed -i '/struct st_susfs_sus_path_list/,/};/ {
             /^[[:space:]]*char[[:space:]]*target_pathname\[SUSFS_MAX_LEN_PATHNAME\];/d
         }' "$SUSFS_H"
-        # Remove the redundant strncpy and its null-term in susfs.c
         sed -i '/strncpy(new_list->target_pathname, info.target_pathname/d' "$SUSFS_C"
-        # Remove null-term lines for the standalone field (before rename)
         sed -i '/^[[:space:]]*new_list->target_pathname\[SUSFS_MAX_LEN_PATHNAME-1\]/d' "$SUSFS_C"
-        # Redirect remaining ->target_pathname to ->info.target_pathname
         sed -i 's/new_list->target_pathname/new_list->info.target_pathname/g' "$SUSFS_C"
         sed -i 's/cursor->target_pathname/cursor->info.target_pathname/g' "$SUSFS_C"
         ((fix_count++)) || true
-    else
-        echo "[=] st_susfs_sus_path_list redundant field already removed"
     fi
-else
-    echo "[=] susfs.h not found or field already removed"
 fi
 
-echo "=== Done: $fix_count fixes applied ==="
+echo "=== fix-susfs: safety done ($fix_count fixes) ==="
+
+
+# Phase 2: KSU integration fixes
+
+SETUID_HOOK="$KSU_DIR/kernel/setuid_hook.c"
+KSUD="$KSU_DIR/kernel/ksud.c"
+SUCOMPAT="$KSU_DIR/kernel/sucompat.c"
+
+for f in "$SETUID_HOOK" "$KSUD" "$SUCOMPAT"; do
+    [ -f "$f" ] || { echo "FATAL: missing $f"; exit 1; }
+done
+
+echo "=== fix-susfs: ksu-integration ==="
+ksu_count=0
+
+# -- Off-by-one in is_zygote_normal_app_uid (L3) --
+if grep -q 'uid >= 10000 && uid < 19999' "$SETUID_HOOK"; then
+    echo "[+] Fixing off-by-one in is_zygote_normal_app_uid (uid < 19999 -> < 20000)"
+    sed -i 's/uid >= 10000 && uid < 19999/uid >= 10000 \&\& uid < 20000/' "$SETUID_HOOK"
+    ((ksu_count++)) || true
+fi
+
+# -- susfs_zygote_sid == 0 early-boot guard (L7) --
+if ! grep -q 'susfs_zygote_sid == 0' "$SETUID_HOOK"; then
+    echo "[+] Adding susfs_zygote_sid == 0 early-boot guard"
+    sed -i '/if (!susfs_is_sid_equal(current_cred(), susfs_zygote_sid))/i \
+\tif (susfs_zygote_sid == 0) {\
+\t\treturn 0;\
+\t}\
+' "$SETUID_HOOK"
+    ((ksu_count++)) || true
+fi
+
+# -- Remove redundant ksu_handle_execveat_init call (L4) --
+if grep -q '(void)ksu_handle_execveat_init(filename)' "$KSUD"; then
+    echo "[+] Removing redundant ksu_handle_execveat_init call from ksud.c"
+    sed -i '/#ifdef CONFIG_KSU_SUSFS/{
+        N
+        /We need to run ksu_handle_execveat_init/{
+            N
+            /(void)ksu_handle_execveat_init(filename);/{
+                N
+                /#endif/d
+            }
+        }
+    }' "$KSUD"
+    ((ksu_count++)) || true
+fi
+
+# -- Remove orphaned extern ksu_handle_execveat_init declaration (L4) --
+if grep -q 'extern int ksu_handle_execveat_init' "$KSUD"; then
+    echo "[+] Removing orphaned extern ksu_handle_execveat_init declaration"
+    sed -i '/#ifdef CONFIG_KSU_SUSFS/{
+        N
+        /extern int ksu_handle_execveat_init/{
+            N
+            /#endif/d
+        }
+    }' "$KSUD"
+    ((ksu_count++)) || true
+fi
+
+# -- Dead return 0 in ksu_handle_faccessat (L8) --
+if awk '/ksu_handle_faccessat.*dfd.*filename_user.*mode/,/^}/ {
+       if (/return 0;/) { count++ }
+       if (/^}/ && count >= 2) { found=1; exit 0 }
+   } END { exit !found }' "$SUCOMPAT"; then
+    echo "[+] Removing dead return 0 in ksu_handle_faccessat"
+    sed -i '/ksu_handle_faccessat.*dfd.*filename_user.*mode/,/^}/ {
+        /[[:space:]]*return 0;$/{
+            N
+            /\n$/{
+                N
+                /\n[[:space:]]*return 0;$/{ s/\n\n[[:space:]]*return 0;// }
+            }
+        }
+    }' "$SUCOMPAT"
+    ((ksu_count++)) || true
+fi
+
+# -- WRITE_ONCE/READ_ONCE for hook flags (L9) --
+if grep -q 'ksu_init_rc_hook = false;' "$KSUD"; then
+    echo "[+] Wrapping hook flag writers with WRITE_ONCE"
+    sed -i 's/ksu_init_rc_hook = false;/WRITE_ONCE(ksu_init_rc_hook, false);/' "$KSUD"
+    sed -i 's/ksu_execveat_hook = false;/WRITE_ONCE(ksu_execveat_hook, false);/' "$KSUD"
+    sed -i 's/ksu_input_hook = false;/WRITE_ONCE(ksu_input_hook, false);/' "$KSUD"
+    ((ksu_count++)) || true
+fi
+
+if grep -q 'if (!ksu_input_hook)' "$KSUD"; then
+    echo "[+] Wrapping hook flag reader with READ_ONCE"
+    sed -i 's/if (!ksu_input_hook)/if (!READ_ONCE(ksu_input_hook))/' "$KSUD"
+    ((ksu_count++)) || true
+fi
+
+echo "=== fix-susfs: ksu-integration done ($ksu_count fixes) ==="
+echo "=== fix-susfs: total $(( fix_count + ksu_count )) fixes ==="

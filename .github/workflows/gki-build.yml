@@ -236,13 +236,12 @@ jobs:
         INJECT_DIR="$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/susfs"
         chmod +x "$INJECT_DIR"/*.sh
 
+        SUSFS_PATCH="$SUSFS_PATCHES/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch"
+
         if [[ "${{ inputs.add_enhanced_susfs }}" == "true" ]]; then
           echo "=== Injecting custom features into upstream SUSFS ==="
-          bash "$INJECT_DIR/fix-safety.sh" "$SUSFS_PATCHES"
+          bash "$INJECT_DIR/fix-susfs.sh" "$SUSFS_PATCHES" "$KERNEL_ROOT/${{ env.KSU_DIR }}"
           bash "$INJECT_DIR/inject-susfs-features.sh" "$SUSFS_PATCHES"
-          bash "$INJECT_DIR/add-supercall-dispatch.sh" "$SUSFS_PATCHES"
-          bash "$INJECT_DIR/add-stock-overlay-hide.sh" "$SUSFS_PATCHES"
-          bash "$INJECT_DIR/add-susfs-zeromount-coupling.sh" "$SUSFS_PATCHES"
         else
           echo "=== Skipping custom SUSFS injection (add_enhanced_susfs=false) ==="
         fi
@@ -253,7 +252,6 @@ jobs:
         cp "$SUSFS_PATCHES/fs/susfs.c" ./fs/
         cp "$SUSFS_PATCHES/include/linux/"*.h ./include/linux/
 
-        SUSFS_PATCH="$SUSFS_PATCHES/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch"
         if [ ! -f "$SUSFS_PATCH" ]; then
           echo "ERROR: SUSFS patch not found: $SUSFS_PATCH" && exit 1
         fi
@@ -268,19 +266,8 @@ jobs:
         echo "=== Post-patch: cross-sublevel compat fixes ==="
         HOOKS_DIR="$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/kernel-hooks"
 
-        # fdinfo.c compat — old vs new inotify API across sublevels
-        if [ -x "$HOOKS_DIR/fix-fdinfo-compat.sh" ]; then
-          bash "$HOOKS_DIR/fix-fdinfo-compat.sh" "$KERNEL_ROOT/common"
-        fi
-
-        # namespace.c/open.c compat — mnt_idmapping.h missing in old sublevels
-        if [ -x "$HOOKS_DIR/fix-susfs-include-compat.sh" ]; then
-          bash "$HOOKS_DIR/fix-susfs-include-compat.sh" "$KERNEL_ROOT/common"
-        fi
-
-        # proc/base.c compat — include context shifts across sublevels
-        if [ -x "$HOOKS_DIR/fix-proc-base-compat.sh" ]; then
-          bash "$HOOKS_DIR/fix-proc-base-compat.sh" "$KERNEL_ROOT/common"
+        if [ -x "$HOOKS_DIR/patch-fdinfo-compat.sh" ]; then
+          bash "$HOOKS_DIR/patch-fdinfo-compat.sh" "$KERNEL_ROOT/common"
         fi
 
         # Only fail on rejects in paths that matter for SUSFS/ZeroMount
@@ -302,27 +289,16 @@ jobs:
 
         if [[ "${{ inputs.add_enhanced_susfs }}" == "true" ]]; then
           echo "=== Post-patch: injecting into kernel source ==="
-          bash "$HOOKS_DIR/add-vfs-open-redirect-all.sh" "$KERNEL_ROOT/common"
-          bash "$HOOKS_DIR/add-mount-display.sh" "$KERNEL_ROOT/common"
-          bash "$HOOKS_DIR/add-stock-overlay-proc-filter.sh" "$KERNEL_ROOT/common"
-          bash "$HOOKS_DIR/add-stock-overlay-stat-filter.sh" "$KERNEL_ROOT/common"
-
-          echo "=== Injecting custom handlers into KernelSU-Next ==="
-          bash "$HOOKS_DIR/add-custom-handlers.sh" \
+          bash "$HOOKS_DIR/patch-kernel-sources.sh" \
+            "$KERNEL_ROOT/common" \
             "$KERNEL_ROOT/${{ env.KSU_DIR }}/kernel/supercalls.c" \
+            "$KERNEL_ROOT/common/fs/susfs.c"
+
+          bash "$HOOKS_DIR/patch-config.sh" \
+            "$KERNEL_ROOT/common" \
             "$KERNEL_ROOT/common/fs/susfs.c" \
             "$KERNEL_ROOT/${{ env.KSU_DIR }}/kernel/Kconfig" \
             "${{ env.DEFCONFIG }}"
-        fi
-
-        if [[ "${{ inputs.add_unicode_filter }}" == "true" ]]; then
-          echo "=== Injecting unicode filter VFS hooks ==="
-          bash "$HOOKS_DIR/add-unicode-filter.sh" "$KERNEL_ROOT/common"
-        fi
-
-        if [[ "${{ inputs.add_overlayfs_support }}" == "true" ]]; then
-          echo "=== Validating overlayfs support ==="
-          bash "$HOOKS_DIR/add-overlayfs-support.sh" "$KERNEL_ROOT/common"
         fi
 
         if grep -q 'goto show_pad;' ./fs/proc/task_mmu.c && ! grep -q '^show_pad:' ./fs/proc/task_mmu.c; then
@@ -355,7 +331,8 @@ jobs:
         echo "=== Running ZeroMount injection scripts ==="
         chmod +x "$ZEROMOUNT_DIR/"*.sh
 
-        bash "$ZEROMOUNT_DIR/inject-zeromount-vfs-hooks.sh" .
+        bash "$ZEROMOUNT_DIR/inject-zeromount-vfs.sh" .
+        bash "$ZEROMOUNT_DIR/inject-zeromount-proc.sh" .
 
         echo "=== All ZeroMount hooks injected ==="
 
@@ -376,8 +353,8 @@ jobs:
       if: inputs.add_zeromount && inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
-        chmod +x "$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/zeromount/fix-zeromount-susfs-bypass.sh"
-        bash "$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/zeromount/fix-zeromount-susfs-bypass.sh" fs/zeromount.c
+        chmod +x "$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/zeromount/fix-zeromount-susfs.sh"
+        bash "$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/zeromount/fix-zeromount-susfs.sh" fs/zeromount.c
 
     - name: Upgrade LZ4 to v1.10.0 with ARM64 NEON
       if: inputs.add_zram
