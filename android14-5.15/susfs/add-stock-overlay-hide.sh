@@ -49,11 +49,13 @@ else
 \
 struct st_susfs_hide_mount {\
 \tchar                                    mount_point[SUSFS_MAX_LEN_PATHNAME];\
+\tunsigned int                            spoofed_dev;\
 \tint                                     err;\
 };\
 \
 struct st_susfs_hide_mount_hlist {\
 \tdev_t                                   s_dev;\
+\tdev_t                                   spoofed_dev;\
 \tstruct hlist_node                       node;\
 };
     }' "$SUSFS_H"
@@ -70,7 +72,7 @@ if grep -q 'void susfs_hide_mount' "$SUSFS_H"; then
     echo "[=] susfs_hide_mount declarations already present in susfs.h"
 else
     echo "[+] Injecting susfs_hide_mount declarations into susfs.h"
-    sed -i '/void susfs_set_hide_sus_mnts_for_non_su_procs/a void susfs_hide_mount(void __user **user_info);\nbool susfs_is_mount_hidden(dev_t s_dev);' "$SUSFS_H"
+    sed -i '/void susfs_set_hide_sus_mnts_for_non_su_procs/a void susfs_hide_mount(void __user **user_info);\nbool susfs_is_mount_hidden(dev_t s_dev);\nvoid susfs_spoof_stat_dev(struct kstat *stat);' "$SUSFS_H"
     ((inject_count++)) || true
 fi
 
@@ -113,11 +115,12 @@ void susfs_hide_mount(void __user **user_info)\
 \t\tgoto out_copy_to_user;\
 \t}\
 \n\tnew_entry->s_dev = p.dentry->d_sb->s_dev;\
+\tnew_entry->spoofed_dev = info.spoofed_dev;\
 \tspin_lock(&susfs_spin_lock_hidden_mount);\
 \thash_add(HIDDEN_MOUNT_HLIST, &new_entry->node, new_entry->s_dev);\
 \tspin_unlock(&susfs_spin_lock_hidden_mount);\
-\n\tSUSFS_LOGI("hide_mount: s_dev=%u path='"'"'%s'"'"' added to hidden list\\n",\
-\t           new_entry->s_dev, info.mount_point);\
+\n\tSUSFS_LOGI("hide_mount: s_dev=%u spoofed=%u path='"'"'%s'"'"' added to hidden list\\n",\
+\t           new_entry->s_dev, new_entry->spoofed_dev, info.mount_point);\
 \tpath_put(&p);\
 \tinfo.err = 0;\
 \nout_copy_to_user:\
@@ -135,6 +138,21 @@ bool susfs_is_mount_hidden(dev_t s_dev)\
 \t\t\treturn true;\
 \t}\
 \treturn false;\
+}\
+\
+void susfs_spoof_stat_dev(struct kstat *stat)\
+{\
+\tstruct st_susfs_hide_mount_hlist *entry;\
+\n\tif (!susfs_is_current_proc_umounted())\
+\t\treturn;\
+\tif (susfs_is_current_ksu_domain())\
+\t\treturn;\
+\n\thash_for_each_possible(HIDDEN_MOUNT_HLIST, entry, node, stat->dev) {\
+\t\tif (entry->s_dev == stat->dev) {\
+\t\t\tstat->dev = entry->spoofed_dev;\
+\t\t\treturn;\
+\t\t}\
+\t}\
 }
     }' "$SUSFS_C"
     ((inject_count++)) || true
@@ -146,6 +164,10 @@ if ! grep -q 'susfs_hide_mount' "$SUSFS_C"; then
 fi
 if ! grep -q 'susfs_is_mount_hidden' "$SUSFS_C"; then
     echo "FATAL: susfs_is_mount_hidden function injection failed"
+    exit 1
+fi
+if ! grep -q 'susfs_spoof_stat_dev' "$SUSFS_C"; then
+    echo "FATAL: susfs_spoof_stat_dev function injection failed"
     exit 1
 fi
 

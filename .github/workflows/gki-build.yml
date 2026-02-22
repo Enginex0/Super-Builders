@@ -305,6 +305,7 @@ jobs:
           bash "$HOOKS_DIR/add-vfs-open-redirect-all.sh" "$KERNEL_ROOT/common"
           bash "$HOOKS_DIR/add-mount-display.sh" "$KERNEL_ROOT/common"
           bash "$HOOKS_DIR/add-stock-overlay-proc-filter.sh" "$KERNEL_ROOT/common"
+          bash "$HOOKS_DIR/add-stock-overlay-stat-filter.sh" "$KERNEL_ROOT/common"
 
           echo "=== Injecting custom handlers into KernelSU-Next ==="
           bash "$HOOKS_DIR/add-custom-handlers.sh" \
