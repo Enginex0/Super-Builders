@@ -93,9 +93,12 @@ if grep -q 'ilookup(buf->sb, ino)' "$GKI_PATCH" 2>/dev/null; then
     in_readdir && !injected_shared_fn && /^\+extern bool susfs_is_inode_sus_path\(struct inode \*inode\);/ {
         print
         print "+extern bool susfs_is_hidden_ino(struct super_block *sb, unsigned long ino);"
+        print "+extern bool susfs_is_hidden_name(const char *name, int namlen);"
         print "+static inline bool susfs_should_hide_dirent(struct super_block *sb,"
         print "+\t\t\t\t\t\tstruct inode *parent_inode,"
-        print "+\t\t\t\t\t\tunsigned long ino)"
+        print "+\t\t\t\t\t\tunsigned long ino,"
+        print "+\t\t\t\t\t\tconst char *name,"
+        print "+\t\t\t\t\t\tint namlen)"
         print "+"
         print "+{"
         print "+\tif (current_uid().val < 10000)"
@@ -106,7 +109,9 @@ if grep -q 'ilookup(buf->sb, ino)' "$GKI_PATCH" 2>/dev/null; then
         print "+\t    !test_bit(AS_FLAGS_SUS_PATH_PARENT,"
         print "+\t\t      &parent_inode->i_mapping->flags))"
         print "+\t\treturn false;"
-        print "+\treturn susfs_is_hidden_ino(sb, ino);"
+        print "+\tif (susfs_is_hidden_ino(sb, ino))"
+        print "+\t\treturn true;"
+        print "+\treturn susfs_is_hidden_name(name, namlen);"
         print "+}"
         injected_shared_fn = 1
         next
@@ -135,7 +140,7 @@ if grep -q 'ilookup(buf->sb, ino)' "$GKI_PATCH" 2>/dev/null; then
                 if ($0 ~ /^\+orig_flow:/) break
             } else break
         }
-        print "+\tif (susfs_should_hide_dirent(buf->sb, buf->parent_inode, ino))"
+        print "+\tif (susfs_should_hide_dirent(buf->sb, buf->parent_inode, ino, name, namlen))"
         print "+\t\treturn 0;"
         next
     }
@@ -375,6 +380,111 @@ if [ -f "$SUSFS_C" ] && ! grep -q 'susfs_hidden_ino_entry \*new_entry' "$SUSFS_C
     }
     { print }
     ' "$SUSFS_C" > "$SUSFS_C.tmp" && mv "$SUSFS_C.tmp" "$SUSFS_C"
+    ((fix_count++)) || true
+fi
+
+# -- N1: Hidden-name hash table for FUSE-safe readdir fallback --
+# FUSE evicts/recreates inodes, losing AS_FLAGS_SUS_PATH. Name-based
+# matching survives inode recycling since we compare the dirent name
+# against basenames extracted from android_data sus_paths.
+if [ -f "$SUSFS_C" ] && ! grep -q 'susfs_hidden_names' "$SUSFS_C"; then
+    echo "[+] N1: Injecting hidden-name hash table for FUSE readdir fallback"
+    awk '
+    /^static DEFINE_HASHTABLE\(susfs_hidden_inos, 10\);/ {
+        print
+        print ""
+        print "struct susfs_hidden_name_entry {"
+        print "\tchar name[SUSFS_MAX_LEN_PATHNAME];"
+        print "\tint namlen;"
+        print "\tstruct hlist_node node;"
+        print "\tstruct rcu_head rcu;"
+        print "};"
+        print ""
+        print "static DEFINE_HASHTABLE(susfs_hidden_names, 8);"
+        print "static DEFINE_SPINLOCK(susfs_hidden_names_lock);"
+        print ""
+        print "static u32 susfs_name_hash(const char *name, int namlen)"
+        print "{"
+        print "\tu32 hash = 0;"
+        print "\tint i;"
+        print "\tfor (i = 0; i < namlen; i++)"
+        print "\t\thash = hash * 31 + (unsigned char)name[i];"
+        print "\treturn hash;"
+        print "}"
+        print ""
+        print "bool susfs_is_hidden_name(const char *name, int namlen)"
+        print "{"
+        print "\tstruct susfs_hidden_name_entry *entry;"
+        print "\tu32 key = susfs_name_hash(name, namlen);"
+        print ""
+        print "\trcu_read_lock();"
+        print "\thash_for_each_possible_rcu(susfs_hidden_names, entry, node, key) {"
+        print "\t\tif (entry->namlen == namlen &&"
+        print "\t\t    !memcmp(entry->name, name, namlen)) {"
+        print "\t\t\trcu_read_unlock();"
+        print "\t\t\treturn true;"
+        print "\t\t}"
+        print "\t}"
+        print "\trcu_read_unlock();"
+        print "\treturn false;"
+        print "}"
+        print "EXPORT_SYMBOL(susfs_is_hidden_name);"
+        print ""
+        print "static void susfs_add_hidden_name(const char *name, int namlen)"
+        print "{"
+        print "\tstruct susfs_hidden_name_entry *entry;"
+        print "\tu32 key = susfs_name_hash(name, namlen);"
+        print ""
+        print "\trcu_read_lock();"
+        print "\thash_for_each_possible_rcu(susfs_hidden_names, entry, node, key) {"
+        print "\t\tif (entry->namlen == namlen &&"
+        print "\t\t    !memcmp(entry->name, name, namlen)) {"
+        print "\t\t\trcu_read_unlock();"
+        print "\t\t\treturn;"
+        print "\t\t}"
+        print "\t}"
+        print "\trcu_read_unlock();"
+        print ""
+        print "\tentry = kmalloc(sizeof(*entry), GFP_KERNEL);"
+        print "\tif (!entry)"
+        print "\t\treturn;"
+        print "\tmemcpy(entry->name, name, namlen);"
+        print "\tentry->name[namlen] = '"'"'\\0'"'"';"
+        print "\tentry->namlen = namlen;"
+        print "\tspin_lock(&susfs_hidden_names_lock);"
+        print "\thash_add_rcu(susfs_hidden_names, &entry->node, key);"
+        print "\tspin_unlock(&susfs_hidden_names_lock);"
+        print "}"
+        print ""
+        print "static void susfs_try_register_hidden_name(const char *pathname)"
+        print "{"
+        print "\tconst char *prefix = strstr(pathname, \"/Android/data/\");"
+        print "\tconst char *basename;"
+        print "\tint namlen;"
+        print ""
+        print "\tif (!prefix)"
+        print "\t\treturn;"
+        print "\tbasename = prefix + 14;"
+        print "\tif (!*basename)"
+        print "\t\treturn;"
+        print "\tnamlen = 0;"
+        print "\twhile (basename[namlen] && basename[namlen] != '"'"'/'"'"')"
+        print "\t\tnamlen++;"
+        print "\tif (namlen > 0)"
+        print "\t\tsusfs_add_hidden_name(basename, namlen);"
+        print "}"
+        print ""
+        next
+    }
+    { print }
+    ' "$SUSFS_C" > "$SUSFS_C.tmp" && mv "$SUSFS_C.tmp" "$SUSFS_C"
+    ((fix_count++)) || true
+fi
+
+# -- N2: Register hidden names when add_sus_path succeeds --
+if [ -f "$SUSFS_C" ] && ! grep -q 'susfs_try_register_hidden_name(info\.target_pathname)' "$SUSFS_C"; then
+    echo "[+] N2: Wiring name registration into add_sus_path"
+    sed -i '/SUSFS_LOGI("CMD_SUSFS_ADD_SUS_PATH -> ret: %d/i\\tif (!info.err)\n\t\tsusfs_try_register_hidden_name(info.target_pathname);' "$SUSFS_C"
     ((fix_count++)) || true
 fi
 
