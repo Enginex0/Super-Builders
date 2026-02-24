@@ -1,0 +1,265 @@
+name: Baseline SUSFS Test
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      susfs_commit:
+        description: "SUSFS commit hash to pin (default: pre-refactor 4c065ad)"
+        type: string
+        default: "4c065ad468e40d625afc0d7394b1f4821ff2929c"
+
+jobs:
+  build:
+    name: "Baseline: SUSFS @ ${{ inputs.susfs_commit }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      ANDROID_VERSION: android12
+      KERNEL_VERSION: "5.10"
+      OS_PATCH_LEVEL: "2024-05"
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Free Disk Space
+      uses: endersonmenezes/free-disk-space@v3
+      with:
+        remove_android: true
+        remove_dotnet: true
+        remove_haskell: true
+        remove_tool_cache: true
+        remove_swap: true
+        remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+        remove_packages_one_command: true
+        remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+        rm_cmd: "rmz"
+        rmz_version: "3.1.1"
+        testing: false
+
+    - name: Setup Build Environment
+      run: |
+        KERNEL_ROOT="$GITHUB_WORKSPACE/android12-5.10-2024-05"
+        mkdir -p "$KERNEL_ROOT"
+
+        cat >> $GITHUB_ENV << EOF
+        KERNEL_ROOT=$KERNEL_ROOT
+        DEFCONFIG=$KERNEL_ROOT/common/arch/arm64/configs/gki_defconfig
+        ANYKERNEL3=$GITHUB_WORKSPACE/AnyKernel3
+        SUSFS4KSU=$GITHUB_WORKSPACE/susfs4ksu
+        EOF
+
+        mkdir -p "$GITHUB_WORKSPACE/git-repo"
+        curl -L https://storage.googleapis.com/git-repo-downloads/repo -o "$GITHUB_WORKSPACE/git-repo/repo"
+        chmod 0755 "$GITHUB_WORKSPACE/git-repo/repo"
+        echo "$GITHUB_WORKSPACE/git-repo" >> "$GITHUB_PATH"
+
+    - name: Clone Dependencies
+      run: |
+        git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0
+        rm -rf AnyKernel3/.git
+
+    - name: Initialize and Sync Kernel Source
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        FORMATTED_BRANCH="android12-5.10-2024-05"
+        repo init -u https://android.googlesource.com/kernel/manifest -b common-${FORMATTED_BRANCH} --repo-rev=stable --depth=1
+
+        REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${FORMATTED_BRANCH})
+        if grep -q deprecated <<< $REMOTE_BRANCH; then
+          sed -i "s/\"${FORMATTED_BRANCH}\"/\"deprecated\/${FORMATTED_BRANCH}\"/g" .repo/manifests/default.xml
+        fi
+
+        repo --trace sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
+
+    - name: Extract Sublevel
+      run: |
+        ACTUAL_SUBLEVEL="209"
+        if [[ -f "$KERNEL_ROOT/common/Makefile" ]]; then
+          EXTRACTED=$(grep '^SUBLEVEL = ' "$KERNEL_ROOT/common/Makefile" | awk '{print $3}')
+          [[ -n "$EXTRACTED" ]] && ACTUAL_SUBLEVEL="$EXTRACTED"
+        fi
+        COMMIT_SHORT=$(echo "${{ inputs.susfs_commit }}" | cut -c1-7)
+        echo "ACTUAL_SUBLEVEL=$ACTUAL_SUBLEVEL" >> $GITHUB_ENV
+        echo "FILE_NAME=baseline-5.10.$ACTUAL_SUBLEVEL-susfs-${COMMIT_SHORT}" >> $GITHUB_ENV
+
+    - name: Apply glibc 2.38 Compatibility Fix
+      run: |
+        GLIBC_VERSION=$(ldd --version 2>/dev/null | head -n 1 | awk '{print $NF}')
+        if [ "$(printf '%s\n' "2.38" "$GLIBC_VERSION" | sort -V | head -n1)" = "2.38" ]; then
+          cd "$KERNEL_ROOT/common"
+          sed -i '/\$(Q)\$(MAKE) -C \$(SUBCMD_SRC) OUTPUT=\$(abspath \$(dir \$@))\/ \$(abspath \$@)/s//$(Q)$(MAKE) -C $(SUBCMD_SRC) EXTRA_CFLAGS="$(CFLAGS)" OUTPUT=$(abspath $(dir $@))\/ $(abspath $@)/' tools/bpf/resolve_btfids/Makefile 2>/dev/null || true
+          sed -i '/char \*buf = NULL;/a int i;' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+          sed -i 's/for (int i = 0; subcommands\[i\]; i++) {/for (i = 0; subcommands[i]; i++) {/' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+          sed -i '/if (subcommands) {/a int i;' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+          sed -i 's/for (int i = 0; subcommands\[i\]; i++)/for (i = 0; subcommands[i]; i++)/' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+        fi
+
+    - name: Setup KernelSU-Next
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/dev_susfs/kernel/setup.sh" | bash -s dev_susfs
+        echo "KSU_DIR=KernelSU-Next" >> $GITHUB_ENV
+
+    - name: Fix KernelSU API Compatibility
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        KSUD_FILE="$KERNEL_ROOT/KernelSU-Next/kernel/ksud.c"
+        if [ -f "$KSUD_FILE" ] && ! grep -q "ksu_handle_sys_newfstatat" "$KSUD_FILE"; then
+          awk '/void ksu_handle_vfs_fstat/{found=1} found && /^}/{print; print "void ksu_handle_sys_newfstatat(int fd, loff_t *kstat_size_ptr) { }"; found=0; next}1' "$KSUD_FILE" > "$KSUD_FILE.tmp" && mv "$KSUD_FILE.tmp" "$KSUD_FILE"
+        fi
+
+    - name: Clone and Apply Upstream SUSFS (Pinned)
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        SUSFS_COMMIT="${{ inputs.susfs_commit }}"
+        echo "=== Cloning SUSFS pinned to ${SUSFS_COMMIT:0:12} ==="
+
+        CLONE_BRANCH=""
+        if git ls-remote --heads https://gitlab.com/simonpunk/susfs4ksu.git "gki-android12-5.10-dev" | grep -q .; then
+          CLONE_BRANCH="gki-android12-5.10-dev"
+        elif git ls-remote --heads https://gitlab.com/simonpunk/susfs4ksu.git "gki-android12-5.10" | grep -q .; then
+          CLONE_BRANCH="gki-android12-5.10"
+        fi
+
+        if [ -n "$CLONE_BRANCH" ]; then
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$CLONE_BRANCH" "$SUSFS4KSU"
+        else
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS4KSU"
+        fi
+        git -C "$SUSFS4KSU" checkout "$SUSFS_COMMIT"
+
+        echo "=== SUSFS commit details ==="
+        git -C "$SUSFS4KSU" log --oneline -1
+
+        SUSFS_PATCHES="$SUSFS4KSU/kernel_patches"
+        SUSFS_PATCH="$SUSFS_PATCHES/50_add_susfs_in_gki-android12-5.10.patch"
+
+        cd "$KERNEL_ROOT/common"
+        cp "$SUSFS_PATCHES/fs/susfs.c" ./fs/
+        cp "$SUSFS_PATCHES/include/linux/"*.h ./include/linux/
+
+        echo "=== Applying SUSFS GKI patch (upstream only, no custom scripts) ==="
+        patch -p1 --no-backup-if-mismatch < "$SUSFS_PATCH"
+
+        CRITICAL=$(find . -name "*.rej" \( -path "*/fs/*" -o -path "*/include/*" -o -path "*/kernel/*" -o -path "*/security/*" \) 2>/dev/null || true)
+        NONCRITICAL=$(find . -name "*.rej" ! \( -path "*/fs/*" -o -path "*/include/*" -o -path "*/kernel/*" -o -path "*/security/*" \) 2>/dev/null || true)
+        [ -n "$NONCRITICAL" ] && echo "$NONCRITICAL" | xargs rm -f
+        if [ -n "$CRITICAL" ]; then
+          echo "FATAL: Patch rejects in SUSFS-critical paths:"
+          for f in $CRITICAL; do cat "$f"; done
+          exit 1
+        fi
+
+        if grep -q 'goto show_pad;' ./fs/proc/task_mmu.c && ! grep -q '^show_pad:' ./fs/proc/task_mmu.c; then
+          sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
+        fi
+
+    - name: Configure Kernel
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        cat >> "${{ env.DEFCONFIG }}" << 'DEFCONFIG_EOF'
+        CONFIG_KSU=y
+        CONFIG_KSU_SUSFS=y
+        CONFIG_KSU_SUSFS_SUS_PATH=y
+        CONFIG_KSU_SUSFS_SUS_MOUNT=y
+        CONFIG_KSU_SUSFS_SUS_KSTAT=y
+        CONFIG_KSU_SUSFS_SUS_MAP=y
+        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+        CONFIG_KSU_SUSFS_ENABLE_LOG=y
+        CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+        CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+        CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+        DEFCONFIG_EOF
+        sed -i 's/^        //' "${{ env.DEFCONFIG }}"
+
+        tac "${{ env.DEFCONFIG }}" | awk -F= '/^CONFIG_/{if(seen[$1]++)next} {print}' | tac > "${{ env.DEFCONFIG }}.tmp"
+        mv "${{ env.DEFCONFIG }}.tmp" "${{ env.DEFCONFIG }}"
+
+        sed -i 's/check_defconfig//' ./common/build.config.gki
+
+    - name: Apply Module Check Bypass
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' "$KERNEL_ROOT/common/kernel/module.c"
+
+    - name: Clean Build Flags
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        sed -i 's/-dirty//' ./common/scripts/setlocalversion
+
+    - name: Set Stock Build Identity
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        PROFILE_FILE="$GITHUB_WORKSPACE/device-profiles.json"
+        if [ -f "$PROFILE_FILE" ] && command -v jq &> /dev/null; then
+          STOCK_RELEASE=$(jq -r ".devices.lake.stock_kernel.release" "$PROFILE_FILE")
+          STOCK_VERSION=$(jq -r ".devices.lake.stock_kernel.version_string" "$PROFILE_FILE")
+          STOCK_BUILD_USER=$(jq -r ".devices.lake.stock_kernel.build_user" "$PROFILE_FILE")
+          STOCK_BUILD_HOST=$(jq -r ".devices.lake.stock_kernel.build_host" "$PROFILE_FILE")
+
+          cat > scripts/setlocalversion << SETLOCAL_EOF
+        #!/bin/sh
+        printf '%s' "${STOCK_RELEASE}"
+        SETLOCAL_EOF
+          chmod +x scripts/setlocalversion
+
+          if [ -f "scripts/mkcompile_h" ]; then
+            sed -i "s|UTS_VERSION=.*|UTS_VERSION=\"${STOCK_VERSION}\"|" scripts/mkcompile_h
+            sed -i "s|LINUX_COMPILE_BY=.*|LINUX_COMPILE_BY=\"${STOCK_BUILD_USER}\"|" scripts/mkcompile_h
+            sed -i "s|LINUX_COMPILE_HOST=.*|LINUX_COMPILE_HOST=\"${STOCK_BUILD_HOST}\"|" scripts/mkcompile_h
+          fi
+
+          echo "KBUILD_BUILD_USER=$STOCK_BUILD_USER" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=$STOCK_BUILD_HOST" >> $GITHUB_ENV
+        fi
+
+    - name: Commit Changes
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git add .
+        git commit -m "Baseline: KSU-Next + upstream SUSFS" || true
+
+    - name: Build Kernel
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=ld.lld LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
+
+    - name: Prepare AnyKernel3 Zip
+      run: |
+        if [ -f "$KERNEL_ROOT/out/android12-5.10/dist/Image" ]; then
+          cp "$KERNEL_ROOT/out/android12-5.10/dist/Image" "$ANYKERNEL3/Image"
+        else
+          echo "ERROR: Cannot find kernel Image"
+          find $KERNEL_ROOT -name "Image" -type f 2>/dev/null || true
+          exit 1
+        fi
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.FILE_NAME }}-AnyKernel3
+        path: ./AnyKernel3/**
+        compression-level: 9
+
+    - name: Build Summary
+      run: |
+        COMMIT_SHORT=$(echo "${{ inputs.susfs_commit }}" | cut -c1-7)
+        echo "## Baseline SUSFS Test" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| **Kernel** | 5.10.${{ env.ACTUAL_SUBLEVEL }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Android** | android12 |" >> $GITHUB_STEP_SUMMARY
+        echo "| **KSU** | KernelSU-Next (dev_susfs) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **SUSFS Commit** | ${COMMIT_SHORT} |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Custom Scripts** | None (pure upstream) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **ZeroMount** | Disabled |" >> $GITHUB_STEP_SUMMARY
+        echo "| **ZRAM** | Disabled |" >> $GITHUB_STEP_SUMMARY
