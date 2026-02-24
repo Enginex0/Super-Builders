@@ -95,7 +95,6 @@ if grep -q 'ilookup(buf->sb, ino)' "$GKI_PATCH" 2>/dev/null; then
         print "+extern bool susfs_is_hidden_ino(struct super_block *sb, unsigned long ino);"
         print "+extern bool susfs_is_hidden_name(const char *name, int namlen);"
         print "+static inline bool susfs_should_hide_dirent(struct super_block *sb,"
-        print "+\t\t\t\t\t\tstruct inode *parent_inode,"
         print "+\t\t\t\t\t\tunsigned long ino,"
         print "+\t\t\t\t\t\tconst char *name,"
         print "+\t\t\t\t\t\tint namlen)"
@@ -105,29 +104,11 @@ if grep -q 'ilookup(buf->sb, ino)' "$GKI_PATCH" 2>/dev/null; then
         print "+\t\treturn false;"
         print "+\tif (!susfs_is_current_proc_umounted())"
         print "+\t\treturn false;"
-        print "+\tif (!parent_inode ||"
-        print "+\t    !test_bit(AS_FLAGS_SUS_PATH_PARENT,"
-        print "+\t\t      &parent_inode->i_mapping->flags))"
-        print "+\t\treturn false;"
         print "+\tif (susfs_is_hidden_ino(sb, ino))"
         print "+\t\treturn true;"
         print "+\treturn susfs_is_hidden_name(name, namlen);"
         print "+}"
         injected_shared_fn = 1
-        next
-    }
-
-    # Add parent_inode to each callback struct
-    /^\+\tstruct super_block \*sb;$/ {
-        print
-        print "+\tstruct inode *parent_inode;"
-        next
-    }
-
-    # Set buf.parent_inode in each syscall function
-    /^\+\tbuf\.sb = f\.file->f_inode->i_sb;$/ {
-        print
-        print "+\tbuf.parent_inode = f.file->f_inode;"
         next
     }
 
@@ -140,7 +121,7 @@ if grep -q 'ilookup(buf->sb, ino)' "$GKI_PATCH" 2>/dev/null; then
                 if ($0 ~ /^\+orig_flow:/) break
             } else break
         }
-        print "+\tif (susfs_should_hide_dirent(buf->sb, buf->parent_inode, ino, name, namlen))"
+        print "+\tif (susfs_should_hide_dirent(buf->sb, ino, name, namlen))"
         print "+\t\treturn 0;"
         next
     }
@@ -458,13 +439,19 @@ if [ -f "$SUSFS_C" ] && ! grep -q 'susfs_hidden_names' "$SUSFS_C"; then
         print ""
         print "static void susfs_try_register_hidden_name(const char *pathname)"
         print "{"
-        print "\tconst char *prefix = strstr(pathname, \"/Android/data/\");"
+        print "\tconst char *prefix;"
         print "\tconst char *basename;"
         print "\tint namlen;"
         print ""
-        print "\tif (!prefix)"
-        print "\t\treturn;"
-        print "\tbasename = prefix + 14;"
+        print "\tprefix = strstr(pathname, \"/Android/data/\");"
+        print "\tif (prefix) {"
+        print "\t\tbasename = prefix + 14;"
+        print "\t} else {"
+        print "\t\tprefix = strstr(pathname, \"/Android/obb/\");"
+        print "\t\tif (!prefix)"
+        print "\t\t\treturn;"
+        print "\t\tbasename = prefix + 13;"
+        print "\t}"
         print "\tif (!*basename)"
         print "\t\treturn;"
         print "\tnamlen = 0;"
