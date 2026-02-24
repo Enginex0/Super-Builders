@@ -455,7 +455,7 @@ jobs:
           awk '/^# \[overlayfs\]/{found=1; next} /^# \[/{found=0} found && NF' "$FRAGMENT" >> "${{ env.DEFCONFIG }}"
         fi
 
-        if [[ "${{ inputs.add_kpm }}" == "true" ]]; then
+        if [[ "${{ inputs.add_kpm }}" == "true" && ("${{ inputs.ksu_variant }}" == "SukiSU" || "${{ inputs.ksu_variant }}" == "ReSukiSU") ]]; then
           awk '/^# \[kpm\]/{found=1; next} /^# \[/{found=0} found && NF' "$FRAGMENT" >> "${{ env.DEFCONFIG }}"
         fi
 
@@ -943,8 +943,10 @@ jobs:
         echo "| **Enhanced SUSFS** | $(S ${{ inputs.add_enhanced_susfs }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **Unicode Filter** | $(S ${{ inputs.add_unicode_filter }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **ZeroMount** | $(S ${{ inputs.add_zeromount }}) |" >> $GITHUB_STEP_SUMMARY
-        echo "| **ZRAM (LZ4K/LZ4KD)** | $(S ${{ inputs.add_zram }}) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **ZRAM (LZ4/LZ4K/LZ4KD)** | $(S ${{ inputs.add_zram }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **Overlayfs Support** | $(S ${{ inputs.add_overlayfs_support }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **Baseband Guard** | $(S ${{ inputs.add_bbg }}) |" >> $GITHUB_STEP_SUMMARY
-        echo "| **KPM** | $(S ${{ inputs.add_kpm }}) |" >> $GITHUB_STEP_SUMMARY
+        KPM_ACTUAL="false"
+        [[ "${{ inputs.add_kpm }}" == "true" && ("${{ inputs.ksu_variant }}" == "SukiSU" || "${{ inputs.ksu_variant }}" == "ReSukiSU") ]] && KPM_ACTUAL="true"
+        echo "| **KPM** | $(S $KPM_ACTUAL) |" >> $GITHUB_STEP_SUMMARY
         echo "| **Device Profile** | ${{ env.IDENTITY_STATUS }} |" >> $GITHUB_STEP_SUMMARY
