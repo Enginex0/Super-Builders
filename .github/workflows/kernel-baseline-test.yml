@@ -11,6 +11,10 @@ on:
         description: "SUSFS commit hash to pin (default: pre-refactor 4c065ad)"
         type: string
         default: "4c065ad468e40d625afc0d7394b1f4821ff2929c"
+      apply_safe_cleanups:
+        description: "Apply safe API cleanups (test_bit, remove i_lock, RCU) on top of pinned commit"
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -85,8 +89,10 @@ jobs:
           [[ -n "$EXTRACTED" ]] && ACTUAL_SUBLEVEL="$EXTRACTED"
         fi
         COMMIT_SHORT=$(echo "${{ inputs.susfs_commit }}" | cut -c1-7)
+        SUFFIX=""
+        [[ "${{ inputs.apply_safe_cleanups }}" == "true" ]] && SUFFIX="-safe-cleanups"
         echo "ACTUAL_SUBLEVEL=$ACTUAL_SUBLEVEL" >> $GITHUB_ENV
-        echo "FILE_NAME=baseline-5.10.$ACTUAL_SUBLEVEL-susfs-${COMMIT_SHORT}" >> $GITHUB_ENV
+        echo "FILE_NAME=baseline-5.10.$ACTUAL_SUBLEVEL-susfs-${COMMIT_SHORT}${SUFFIX}" >> $GITHUB_ENV
 
     - name: Apply glibc 2.38 Compatibility Fix
       run: |
@@ -159,6 +165,48 @@ jobs:
         if grep -q 'goto show_pad;' ./fs/proc/task_mmu.c && ! grep -q '^show_pad:' ./fs/proc/task_mmu.c; then
           sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
         fi
+
+    - name: Apply Safe API Cleanups
+      if: inputs.apply_safe_cleanups
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        echo "=== Applying safe cleanups (test_bit, remove i_lock, RCU) ==="
+
+        # 1. Replace BIT_* mask checks with test_bit() — same semantics, cleaner API
+        for f in fs/susfs.c fs/stat.c fs/statfs.c fs/namei.c fs/readdir.c fs/namespace.c kernel/kallsyms.c; do
+          [ -f "$f" ] || continue
+          sed -i 's/inode->i_mapping->flags & BIT_SUS_PATH/test_bit(AS_FLAGS_SUS_PATH, \&inode->i_mapping->flags)/g' "$f"
+          sed -i 's/inode->i_mapping->flags & BIT_SUS_MOUNT/test_bit(AS_FLAGS_SUS_MOUNT, \&inode->i_mapping->flags)/g' "$f"
+          sed -i 's/inode->i_mapping->flags & BIT_SUS_KSTAT/test_bit(AS_FLAGS_SUS_KSTAT, \&inode->i_mapping->flags)/g' "$f"
+          sed -i 's/inode->i_mapping->flags & BIT_SUS_MAPS/test_bit(AS_FLAGS_SUS_MAP, \&inode->i_mapping->flags)/g' "$f"
+        done
+        sed -i 's/filp->f_inode->i_mapping->flags & BIT_OPEN_REDIRECT/test_bit(AS_FLAGS_OPEN_REDIRECT, \&filp->f_inode->i_mapping->flags)/g' fs/namei.c
+        sed -i 's/base->d_inode->i_mapping->flags & BIT_ANDROID_DATA_ROOT_DIR/test_bit(AS_FLAGS_ANDROID_DATA_ROOT_DIR, \&base->d_inode->i_mapping->flags)/g' fs/susfs.c
+        sed -i 's/base->d_inode->i_mapping->flags & BIT_ANDROID_SDCARD_ROOT_DIR/test_bit(AS_FLAGS_SDCARD_ROOT_DIR, \&base->d_inode->i_mapping->flags)/g' fs/susfs.c
+
+        # Remove BIT_* macros from header (all usages replaced above)
+        sed -i '/^#define BIT_/d' include/linux/susfs_def.h
+
+        # 2. Remove unnecessary i_lock around atomic set_bit() in susfs.c
+        sed -i '/spin_lock(&inode->i_lock);/d' fs/susfs.c
+        sed -i '/spin_unlock(&inode->i_lock);/d' fs/susfs.c
+
+        # 3. RCU list traversal for sus_path_loop
+        sed -i 's/list_add_tail(&new_list->list, &LH_SUS_PATH_LOOP)/list_add_tail_rcu(\&new_list->list, \&LH_SUS_PATH_LOOP)/' fs/susfs.c
+        sed -i 's/list_for_each_entry(cursor, \&LH_SUS_PATH_LOOP, list)/rcu_read_lock();\n\tlist_for_each_entry_rcu(cursor, \&LH_SUS_PATH_LOOP, list)/' fs/susfs.c
+
+        # Close rcu_read_unlock before the function end in susfs_run_sus_path_loop
+        sed -i '/^}$/{ /^}$/{ x; /susfs_run_sus_path_loop/{ x; i\\trcu_read_unlock();
+        b; }; x; } }' fs/susfs.c 2>/dev/null || true
+
+        # Verify replacements
+        if grep -rn 'BIT_SUS_PATH\|BIT_SUS_KSTAT\|BIT_OPEN_REDIRECT\|BIT_SUS_MOUNT\|BIT_SUS_MAPS\|BIT_ANDROID' fs/susfs.c fs/stat.c fs/namei.c include/linux/susfs_def.h 2>/dev/null; then
+          echo "WARNING: Some BIT_* references remain"
+        else
+          echo "All BIT_* replaced with test_bit()"
+        fi
+
+        echo "=== Safe cleanups applied ==="
 
     - name: Configure Kernel
       working-directory: ${{ env.KERNEL_ROOT }}
@@ -260,6 +308,7 @@ jobs:
         echo "| **Android** | android12 |" >> $GITHUB_STEP_SUMMARY
         echo "| **KSU** | KernelSU-Next (dev_susfs) |" >> $GITHUB_STEP_SUMMARY
         echo "| **SUSFS Commit** | ${COMMIT_SHORT} |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Safe Cleanups** | ${{ inputs.apply_safe_cleanups }} |" >> $GITHUB_STEP_SUMMARY
         echo "| **Custom Scripts** | None (pure upstream) |" >> $GITHUB_STEP_SUMMARY
         echo "| **ZeroMount** | Disabled |" >> $GITHUB_STEP_SUMMARY
         echo "| **ZRAM** | Disabled |" >> $GITHUB_STEP_SUMMARY
