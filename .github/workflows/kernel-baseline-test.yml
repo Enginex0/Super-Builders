@@ -173,7 +173,7 @@ jobs:
         echo "=== Applying safe cleanups (test_bit, remove i_lock, RCU) ==="
 
         # 1. Replace BIT_* mask checks with test_bit() — same semantics, cleaner API
-        for f in fs/susfs.c fs/stat.c fs/statfs.c fs/namei.c fs/readdir.c fs/namespace.c kernel/kallsyms.c fs/proc/task_mmu.c; do
+        for f in fs/susfs.c fs/stat.c fs/statfs.c fs/namei.c fs/readdir.c fs/namespace.c kernel/kallsyms.c fs/proc/task_mmu.c fs/proc/base.c; do
           [ -f "$f" ] || continue
           sed -i 's/inode->i_mapping->flags & BIT_SUS_PATH/test_bit(AS_FLAGS_SUS_PATH, \&inode->i_mapping->flags)/g' "$f"
           sed -i 's/inode->i_mapping->flags & BIT_SUS_MOUNT/test_bit(AS_FLAGS_SUS_MOUNT, \&inode->i_mapping->flags)/g' "$f"
@@ -183,7 +183,10 @@ jobs:
         sed -i 's/filp->f_inode->i_mapping->flags & BIT_OPEN_REDIRECT/test_bit(AS_FLAGS_OPEN_REDIRECT, \&filp->f_inode->i_mapping->flags)/g' fs/namei.c
         sed -i 's/base->d_inode->i_mapping->flags & BIT_ANDROID_DATA_ROOT_DIR/test_bit(AS_FLAGS_ANDROID_DATA_ROOT_DIR, \&base->d_inode->i_mapping->flags)/g' fs/susfs.c
         sed -i 's/base->d_inode->i_mapping->flags & BIT_ANDROID_SDCARD_ROOT_DIR/test_bit(AS_FLAGS_SDCARD_ROOT_DIR, \&base->d_inode->i_mapping->flags)/g' fs/susfs.c
-        sed -i 's/file_inode(vma->vm_file)->i_mapping->flags & BIT_SUS_MAPS/test_bit(AS_FLAGS_SUS_MAP, \&file_inode(vma->vm_file)->i_mapping->flags)/g' fs/proc/task_mmu.c
+        for f in fs/proc/task_mmu.c fs/proc/base.c; do
+          [ -f "$f" ] || continue
+          sed -i 's/file_inode(vma->vm_file)->i_mapping->flags & BIT_SUS_MAPS/test_bit(AS_FLAGS_SUS_MAP, \&file_inode(vma->vm_file)->i_mapping->flags)/g' "$f"
+        done
 
         # Remove BIT_* macros from header (all usages replaced above)
         sed -i '/^#define BIT_/d' include/linux/susfs_def.h
@@ -201,7 +204,7 @@ jobs:
         b; }; x; } }' fs/susfs.c 2>/dev/null || true
 
         # Verify replacements
-        if grep -rn 'BIT_SUS_PATH\|BIT_SUS_KSTAT\|BIT_OPEN_REDIRECT\|BIT_SUS_MOUNT\|BIT_SUS_MAPS\|BIT_ANDROID' fs/susfs.c fs/stat.c fs/namei.c fs/proc/task_mmu.c include/linux/susfs_def.h 2>/dev/null; then
+        if grep -rn 'BIT_SUS_PATH\|BIT_SUS_KSTAT\|BIT_OPEN_REDIRECT\|BIT_SUS_MOUNT\|BIT_SUS_MAPS\|BIT_ANDROID' fs/ kernel/ include/linux/susfs_def.h 2>/dev/null; then
           echo "WARNING: Some BIT_* references remain"
         else
           echo "All BIT_* replaced with test_bit()"
