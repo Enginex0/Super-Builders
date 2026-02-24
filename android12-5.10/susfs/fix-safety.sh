@@ -560,6 +560,18 @@ if grep -q 'msleep(5000)' "$SUSFS_C" && grep -q 'susfs_handle_sdcard_inode_event
     ((fix_count++)) || true
 fi
 
+# -- FUSE include for C1 two-pass kern_path (5.10 has no public FUSE_SUPER_MAGIC) --
+if ! grep -q 'fuse/fuse_i\.h' "$SUSFS_C"; then
+    echo "[+] Adding fuse/fuse_i.h include for FUSE_SUPER_MAGIC"
+    sed -i '/#include <linux\/susfs\.h>/a\
+#include "fuse/fuse_i.h"\
+\
+#ifndef FUSE_SUPER_MAGIC\
+#define FUSE_SUPER_MAGIC 0x65735546\
+#endif' "$SUSFS_C"
+    ((fix_count++)) || true
+fi
+
 # -- sus_path_loop: move kern_path() outside RCU (C1) --
 if ! grep -q 'kmalloc_array.*SUSFS_MAX_LEN_PATHNAME' "$SUSFS_C"; then
     echo "[+] Fixing kern_path inside RCU in susfs_run_sus_path_loop (C1)"

@@ -103,27 +103,21 @@ if grep -q 'ilookup(buf->sb, ino)' "$GKI_PATCH" 2>/dev/null; then
         print "+\tuid_t uid = current_uid().val;"
         print "+\tif (uid < 10000)"
         print "+\t\treturn false;"
-        print "+\tif (!susfs_is_current_proc_umounted()) {"
-        print "+\t\tprintk_ratelimited(KERN_INFO \"susfs_debug: SKIP not_umounted uid=%u name='%.*s'\\n\", uid, namlen, name);"
+        print "+\tif (!susfs_is_current_proc_umounted())"
         print "+\t\treturn false;"
-        print "+\t}"
-        print "+\tprintk_ratelimited(KERN_INFO \"susfs_debug: ENTER hide_dirent uid=%u name='%.*s' ino=%lu\\n\", uid, namlen, name, ino);"
-        print "+\tif (susfs_is_hidden_ino(sb, ino)) {"
-        print "+\t\tprintk(KERN_INFO \"susfs_debug: HIDE via ino_hit ino=%lu uid=%u name='%.*s'\\n\", ino, uid, namlen, name);"
+        print "+\tif (susfs_is_hidden_ino(sb, ino))"
         print "+\t\treturn true;"
-        print "+\t}"
-        print "+\t{"
-        print "+\t\tbool r = susfs_is_hidden_name(name, namlen, uid);"
-        print "+\t\tprintk(KERN_INFO \"susfs_debug: name_check '%.*s' uid=%u result=%s\\n\", namlen, name, uid, r ? \"HIDE\" : \"SHOW\");"
-        print "+\t\treturn r;"
-        print "+\t}"
+        print "+\treturn susfs_is_hidden_name(name, namlen, uid);"
         print "+}"
         injected_shared_fn = 1
         next
     }
 
-    # Track filldir variant from hunk headers — fillonedir uses buf->result (no -EINVAL leak)
-    /^@@ / { is_onedir = ($0 ~ /fillonedir/) }
+    # Track filldir variant from hunk headers
+    /^@@ / {
+        is_onedir = ($0 ~ /fillonedir/)
+        in_filldir = ($0 ~ /fillonedir|filldir|compat_fillonedir|compat_filldir/)
+    }
 
     # Replace each ilookup block with unified function call
     /^\+\tinode = ilookup\(buf->sb, ino\);/ {
@@ -146,8 +140,8 @@ if grep -q 'ilookup(buf->sb, ino)' "$GKI_PATCH" 2>/dev/null; then
         next
     }
 
-    # Remove per-filldir "struct inode *inode;" declaration (now unused)
-    /^\+\tstruct inode \*inode;$/ { next }
+    # Remove per-filldir "struct inode *inode;" declaration (only in filldir variants, not SYSCALL functions)
+    in_filldir && /^\+\tstruct inode \*inode;$/ { next }
 
     { print }
     ' "$GKI_PATCH" > "$GKI_PATCH.tmp" && mv "$GKI_PATCH.tmp" "$GKI_PATCH"
@@ -424,17 +418,14 @@ if [ -f "$SUSFS_C" ] && ! grep -q 'susfs_hidden_names' "$SUSFS_C"; then
         print "\t\tif (entry->namlen == namlen &&"
         print "\t\t    !memcmp(entry->name, name, namlen)) {"
         print "\t\t\tif (entry->owner_uid && caller_uid == entry->owner_uid) {"
-        print "\t\t\t\tprintk_ratelimited(KERN_INFO \"susfs_debug: hidden_name SELF_EXEMPT '"'"'%.*s'"'"' caller=%u owner=%u\\n\", namlen, name, caller_uid, entry->owner_uid);"
         print "\t\t\t\trcu_read_unlock();"
         print "\t\t\t\treturn false;"
         print "\t\t\t}"
-        print "\t\t\tprintk_ratelimited(KERN_INFO \"susfs_debug: hidden_name HIDE '"'"'%.*s'"'"' caller=%u owner=%u\\n\", namlen, name, caller_uid, entry->owner_uid);"
         print "\t\t\trcu_read_unlock();"
         print "\t\t\treturn true;"
         print "\t\t}"
         print "\t}"
         print "\trcu_read_unlock();"
-        print "\tprintk_ratelimited(KERN_INFO \"susfs_debug: hidden_name MISS '"'"'%.*s'"'"' (no entry in table)\\n\", namlen, name);"
         print "\treturn false;"
         print "}"
         print "EXPORT_SYMBOL(susfs_is_hidden_name);"
@@ -475,16 +466,13 @@ if [ -f "$SUSFS_C" ] && ! grep -q 'susfs_hidden_names' "$SUSFS_C"; then
         print "\tstruct path data_path;"
         print "\tchar lookup_buf[256];"
         print ""
-        print "\tprintk(KERN_INFO \"susfs_debug: try_register pathname='%s'\\n\", pathname);"
         print "\tprefix = strstr(pathname, \"/Android/data/\");"
         print "\tif (prefix) {"
         print "\t\tbasename = prefix + 14;"
         print "\t} else {"
         print "\t\tprefix = strstr(pathname, \"/Android/obb/\");"
-        print "\t\tif (!prefix) {"
-        print "\t\t\tprintk(KERN_INFO \"susfs_debug: try_register SKIP no /Android/data/ or /obb/ prefix\\n\");"
+        print "\t\tif (!prefix)"
         print "\t\t\treturn;"
-        print "\t\t}"
         print "\t\tbasename = prefix + 13;"
         print "\t}"
         print "\tif (!*basename)"
@@ -502,7 +490,6 @@ if [ -f "$SUSFS_C" ] && ! grep -q 'susfs_hidden_names' "$SUSFS_C"; then
         print "\t\tpath_put(&data_path);"
         print "\t}"
         print "\tsusfs_add_hidden_name(basename, namlen, owner_uid);"
-        print "\tprintk(KERN_INFO \"susfs_debug: registered hidden_name '%.*s' owner_uid=%u\\n\", namlen, basename, owner_uid);"
         print "}"
         print ""
         next
