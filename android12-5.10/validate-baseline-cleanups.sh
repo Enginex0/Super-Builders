@@ -83,11 +83,6 @@ sed -i '/^#define BIT_/d' include/linux/susfs_def.h
 sed -i '/spin_lock(&inode->i_lock);/d' fs/susfs.c
 sed -i '/spin_unlock(&inode->i_lock);/d' fs/susfs.c
 
-sed -i 's/list_add_tail(&new_list->list, &LH_SUS_PATH_LOOP)/list_add_tail_rcu(\&new_list->list, \&LH_SUS_PATH_LOOP)/' fs/susfs.c
-sed -i 's/list_for_each_entry(cursor, \&LH_SUS_PATH_LOOP, list)/rcu_read_lock();\n\tlist_for_each_entry_rcu(cursor, \&LH_SUS_PATH_LOOP, list)/' fs/susfs.c
-sed -i '/^}$/{ /^}$/{ x; /susfs_run_sus_path_loop/{ x; i\\trcu_read_unlock();
-b; }; x; } }' fs/susfs.c 2>/dev/null || true
-
 pass "safe cleanups applied"
 
 echo ""

@@ -195,14 +195,6 @@ jobs:
         sed -i '/spin_lock(&inode->i_lock);/d' fs/susfs.c
         sed -i '/spin_unlock(&inode->i_lock);/d' fs/susfs.c
 
-        # 3. RCU list traversal for sus_path_loop
-        sed -i 's/list_add_tail(&new_list->list, &LH_SUS_PATH_LOOP)/list_add_tail_rcu(\&new_list->list, \&LH_SUS_PATH_LOOP)/' fs/susfs.c
-        sed -i 's/list_for_each_entry(cursor, \&LH_SUS_PATH_LOOP, list)/rcu_read_lock();\n\tlist_for_each_entry_rcu(cursor, \&LH_SUS_PATH_LOOP, list)/' fs/susfs.c
-
-        # Close rcu_read_unlock before the function end in susfs_run_sus_path_loop
-        sed -i '/^}$/{ /^}$/{ x; /susfs_run_sus_path_loop/{ x; i\\trcu_read_unlock();
-        b; }; x; } }' fs/susfs.c 2>/dev/null || true
-
         # Verify replacements
         if grep -rn 'BIT_SUS_PATH\|BIT_SUS_KSTAT\|BIT_OPEN_REDIRECT\|BIT_SUS_MOUNT\|BIT_SUS_MAPS\|BIT_ANDROID' fs/ kernel/ include/linux/susfs_def.h 2>/dev/null; then
           echo "WARNING: Some BIT_* references remain"
