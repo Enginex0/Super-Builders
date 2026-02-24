@@ -282,11 +282,104 @@ patch_unicode_stat() {
 #endif' "$f"
 }
 
+inject_stat_hide() {
+    local f="$KERNEL_DIR/fs/stat.c"
+    [ -f "$f" ] && grep -q "CONFIG_KSU_SUSFS" "$f" && grep -q "susfs_is_hidden_name" "$f" && return
+
+    echo "[+] $f"
+
+    sed -i '/#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT/{
+        N
+        /extern void susfs_sus_ino_for_generic_fillattr/a\
+extern bool susfs_is_hidden_name(const char *name, int namlen, uid_t caller_uid);
+    }' "$f"
+
+    awk '
+    /error = vfs_getattr\(&path, stat,/ && !stat_hide_done {
+        print "\tif (current_uid().val >= 10000 &&"
+        print "\t    susfs_is_current_proc_umounted()) {"
+        print "\t\tstruct dentry *_d = path.dentry;"
+        print "\t\tstruct dentry *_par = _d->d_parent;"
+        print "\t\tif (_par && _par != _d && _par->d_parent) {"
+        print "\t\t\tint _plen = _par->d_name.len;"
+        print "\t\t\tif ((_plen == 4 && !memcmp(_par->d_name.name, \"data\", 4)) ||"
+        print "\t\t\t    (_plen == 3 && !memcmp(_par->d_name.name, \"obb\", 3))) {"
+        print "\t\t\t\tstruct dentry *_gp = _par->d_parent;"
+        print "\t\t\t\tif (_gp->d_name.len == 7 &&"
+        print "\t\t\t\t    !memcmp(_gp->d_name.name, \"Android\", 7) &&"
+        print "\t\t\t\t    susfs_is_hidden_name(_d->d_name.name,"
+        print "\t\t\t\t        _d->d_name.len, current_uid().val)) {"
+        print "\t\t\t\t\tprintk_ratelimited(KERN_INFO"
+        print "\t\t\t\t\t\t\"susfs_debug: HIDE stat uid=%u name='"'"'%.*s'"'"'\\n\","
+        print "\t\t\t\t\t\tcurrent_uid().val, _d->d_name.len, _d->d_name.name);"
+        print "\t\t\t\t\tpath_put(&path);"
+        print "\t\t\t\t\terror = -ENOENT;"
+        print "\t\t\t\t\tgoto out;"
+        print "\t\t\t\t}"
+        print "\t\t\t}"
+        print "\t\t}"
+        print "\t}"
+        print ""
+        stat_hide_done = 1
+    }
+    { print }
+    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+
+inject_access_hide() {
+    local f="$KERNEL_DIR/fs/open.c"
+    [ -f "$f" ] && grep -q "CONFIG_KSU_SUSFS" "$f" && grep -q "susfs_is_hidden_name" "$f" && return
+
+    echo "[+] $f"
+
+    # ksu_handle_faccessat spans two lines — consume both before appending
+    sed -i '/extern int ksu_handle_faccessat/{
+        N
+        a\
+extern bool susfs_is_hidden_name(const char *name, int namlen, uid_t caller_uid);
+    }' "$f"
+
+    awk '
+    BEGIN { in_faccessat = 0 }
+    /^static long do_faccessat\(/ { in_faccessat = 1 }
+    in_faccessat && /inode = d_backing_inode\(path\.dentry\)/ && !access_hide_done {
+        print "\tif (current_uid().val >= 10000 &&"
+        print "\t    susfs_is_current_proc_umounted()) {"
+        print "\t\tstruct dentry *_d = path.dentry;"
+        print "\t\tstruct dentry *_par = _d->d_parent;"
+        print "\t\tif (_par && _par != _d && _par->d_parent) {"
+        print "\t\t\tint _plen = _par->d_name.len;"
+        print "\t\t\tif ((_plen == 4 && !memcmp(_par->d_name.name, \"data\", 4)) ||"
+        print "\t\t\t    (_plen == 3 && !memcmp(_par->d_name.name, \"obb\", 3))) {"
+        print "\t\t\t\tstruct dentry *_gp = _par->d_parent;"
+        print "\t\t\t\tif (_gp->d_name.len == 7 &&"
+        print "\t\t\t\t    !memcmp(_gp->d_name.name, \"Android\", 7) &&"
+        print "\t\t\t\t    susfs_is_hidden_name(_d->d_name.name,"
+        print "\t\t\t\t        _d->d_name.len, current_uid().val)) {"
+        print "\t\t\t\t\tprintk_ratelimited(KERN_INFO"
+        print "\t\t\t\t\t\t\"susfs_debug: HIDE access uid=%u name='"'"'%.*s'"'"'\\n\","
+        print "\t\t\t\t\t\tcurrent_uid().val, _d->d_name.len, _d->d_name.name);"
+        print "\t\t\t\t\tres = -ENOENT;"
+        print "\t\t\t\t\tgoto out_path_release;"
+        print "\t\t\t\t}"
+        print "\t\t\t}"
+        print "\t\t}"
+        print "\t}"
+        print ""
+        access_hide_done = 1
+        in_faccessat = 0
+    }
+    { print }
+    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+
 inject_supercall_handlers
 inject_zeromount_mount_display
 inject_vfs_open_redirect_all
 patch_unicode_namei
 patch_unicode_open
 patch_unicode_stat
+inject_stat_hide
+inject_access_hide
 
 echo "[+] All kernel source patches applied"
