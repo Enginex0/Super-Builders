@@ -99,17 +99,34 @@ jobs:
         REPO=$GITHUB_WORKSPACE/git-repo/repo
         EOF
 
-        mkdir -p "$GITHUB_WORKSPACE/git-repo"
-        curl -L https://storage.googleapis.com/git-repo-downloads/repo -o "$GITHUB_WORKSPACE/git-repo/repo"
+    - name: Download AnyKernel3
+      uses: actions/download-artifact@v4
+      with:
+        name: anykernel3
+        path: AnyKernel3
+
+    - name: Download Kernel Patches
+      uses: actions/download-artifact@v4
+      with:
+        name: kernel-patches
+        path: kernel_patches
+
+    - name: Download SukiSU Patch
+      uses: actions/download-artifact@v4
+      with:
+        name: sukisu-patch
+        path: SukiSU_patch
+
+    - name: Download Git Repo Tool
+      uses: actions/download-artifact@v4
+      with:
+        name: git-repo-tool
+        path: git-repo
+
+    - name: Setup Repo Tool
+      run: |
         chmod 0755 "$GITHUB_WORKSPACE/git-repo/repo"
         echo "$GITHUB_WORKSPACE/git-repo" >> "$GITHUB_PATH"
-
-    - name: Clone Dependencies
-      run: |
-        git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0
-        rm -rf AnyKernel3/.git
-        git clone https://github.com/ShirkNeko/SukiSU_patch.git
-        git clone https://github.com/WildKernels/kernel_patches.git
 
     - name: Initialize and Sync Kernel Source
       working-directory: ${{ env.KERNEL_ROOT }}
@@ -180,6 +197,9 @@ jobs:
           BRANCH="main"
           [[ "${{ inputs.add_susfs }}" == "true" ]] && BRANCH="susfs-ksud"
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s "$BRANCH"
+        elif [[ "$KSU_VARIANT" == "WKSU" ]]; then
+          echo "=== Adding WKSU ==="
+          curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/stable/kernel/setup.sh" | bash -
         else
           echo "=== Adding KernelSU-Next ==="
           BRANCH="next"
@@ -189,6 +209,8 @@ jobs:
 
         if [[ "$KSU_VARIANT" == "KernelSU-Next" ]]; then
           echo "KSU_DIR=KernelSU-Next" >> $GITHUB_ENV
+        elif [[ "$KSU_VARIANT" == "WKSU" ]]; then
+          echo "KSU_DIR=Wild_KSU" >> $GITHUB_ENV
         else
           echo "KSU_DIR=KernelSU" >> $GITHUB_ENV
         fi
@@ -496,6 +518,35 @@ jobs:
           echo "SUCCESS: Added device_find_any_child to Xiaomi symbol list"
         else
           echo "Note: Xiaomi symbol list not found, skipping"
+        fi
+
+    - name: Fix WiFi/BT on Samsung 6.6 GKI devices
+      if: env.KERNEL_VERSION == '6.6'
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        echo "=== Adding Samsung 6.6 KDP WiFi/BT fix ==="
+        SYMBOL_LIST=android/abi_gki_aarch64_galaxy
+        if [ -f "$SYMBOL_LIST" ]; then
+          echo "kdp_set_cred_non_rcu" >> $SYMBOL_LIST
+          echo "kdp_usecount_dec_and_test" >> $SYMBOL_LIST
+          echo "kdp_usecount_inc" >> $SYMBOL_LIST
+        fi
+
+        PATCH="${{ env.KERNEL_PATCHES }}/samsung/min_kdp/add-min_kdp-symbols.patch"
+        if [ -f "$PATCH" ]; then
+          if patch -p1 --dry-run < "$PATCH" 2>/dev/null; then
+            patch -p1 --no-backup-if-mismatch < "$PATCH"
+          else
+            echo "Note: KDP symbols patch did not apply cleanly, skipping (symbols added to galaxy list directly)"
+          fi
+        fi
+
+        if [ -f "${{ env.KERNEL_PATCHES }}/samsung/min_kdp/min_kdp.c" ]; then
+          cp "${{ env.KERNEL_PATCHES }}/samsung/min_kdp/min_kdp.c" drivers/min_kdp.c
+          echo "obj-y += min_kdp.o" >> drivers/Makefile
+          echo "SUCCESS: min_kdp driver added"
+        else
+          echo "WARNING: min_kdp.c not found in kernel_patches"
         fi
 
     - name: Apply Module Check Bypass
@@ -887,7 +938,7 @@ jobs:
         echo "| **Enhanced SUSFS** | $(S ${{ inputs.add_enhanced_susfs }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **Unicode Filter** | $(S ${{ inputs.add_unicode_filter }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **ZeroMount** | $(S ${{ inputs.add_zeromount }}) |" >> $GITHUB_STEP_SUMMARY
-        echo "| **ZRAM (LZ4K)** | $(S ${{ inputs.add_zram }}) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **ZRAM (LZ4K/LZ4KD)** | $(S ${{ inputs.add_zram }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **Overlayfs Support** | $(S ${{ inputs.add_overlayfs_support }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **Baseband Guard** | $(S ${{ inputs.add_bbg }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **KPM** | $(S ${{ inputs.add_kpm }}) |" >> $GITHUB_STEP_SUMMARY

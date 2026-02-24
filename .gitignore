@@ -11,3 +11,8 @@ service-account*.json
 vectors.db*
 logs_llm/
 evidence_*.png
+
+# Removed overlay scripts
+**/add-stock-overlay-proc-filter.sh
+**/add-stock-overlay-stat-filter.sh
+**/add-stock-overlay-hide.sh

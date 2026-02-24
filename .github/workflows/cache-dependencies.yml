@@ -1,0 +1,63 @@
+name: Download Build Dependencies
+permissions:
+  contents: read
+  actions: write
+
+on:
+  workflow_call:
+
+jobs:
+  download-dependencies:
+    name: Cache Dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - name: Clone AnyKernel3
+      run: |
+        git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1
+        rm -rf AnyKernel3/.git
+
+    - name: Clone Kernel Patches
+      run: git clone https://github.com/WildKernels/kernel_patches.git --depth=1
+
+    - name: Clone SukiSU Patch
+      run: git clone https://github.com/ShirkNeko/SukiSU_patch.git --depth=1
+
+    - name: Download Git Repo Tool
+      run: |
+        mkdir -p git-repo
+        curl -L https://storage.googleapis.com/git-repo-downloads/repo -o git-repo/repo
+        chmod 0755 git-repo/repo
+
+    - name: Upload AnyKernel3
+      uses: actions/upload-artifact@v4
+      with:
+        name: anykernel3
+        path: AnyKernel3/
+        retention-days: 1
+        compression-level: 6
+
+    - name: Upload Kernel Patches
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-patches
+        path: kernel_patches/
+        retention-days: 1
+        compression-level: 6
+
+    - name: Upload SukiSU Patch
+      uses: actions/upload-artifact@v4
+      with:
+        name: sukisu-patch
+        path: SukiSU_patch/
+        retention-days: 1
+        compression-level: 6
+
+    - name: Upload Git Repo Tool
+      uses: actions/upload-artifact@v4
+      with:
+        name: git-repo-tool
+        path: git-repo/
+        retention-days: 1
+        compression-level: 0

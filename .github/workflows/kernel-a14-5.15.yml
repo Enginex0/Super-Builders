@@ -15,6 +15,7 @@ on:
           - SukiSU
           - MKSU
           - ReSukiSU
+          - WKSU
         default: "KernelSU-Next"
       add_susfs:
         description: "Add SUSFS (upstream)"
@@ -72,7 +73,14 @@ on:
         default: false
 
 jobs:
+  download-dependencies:
+    uses: ./.github/workflows/cache-dependencies.yml
+    permissions:
+      contents: read
+      actions: write
+
   build:
+    needs: [download-dependencies]
     strategy:
       fail-fast: false
       matrix:
