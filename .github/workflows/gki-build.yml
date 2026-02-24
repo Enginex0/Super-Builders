@@ -200,6 +200,11 @@ jobs:
         elif [[ "$KSU_VARIANT" == "WKSU" ]]; then
           echo "=== Adding WKSU ==="
           curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/stable/kernel/setup.sh" | bash -
+        elif [[ "$KSU_VARIANT" == "RKSU" ]]; then
+          echo "=== Adding RKSU ==="
+          BRANCH="main"
+          [[ "${{ inputs.add_susfs }}" == "true" ]] && BRANCH="susfs-rksu-master"
+          curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s "$BRANCH"
         else
           echo "=== Adding KernelSU-Next ==="
           BRANCH="next"

@@ -16,6 +16,7 @@ on:
           - MKSU
           - ReSukiSU
           - WKSU
+          - RKSU
         default: "KernelSU-Next"
       add_susfs:
         description: "Add SUSFS (upstream)"
