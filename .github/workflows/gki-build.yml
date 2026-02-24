@@ -252,11 +252,11 @@ jobs:
           if [ -f "$SUSFS_PIN_FILE" ] && [ -s "$SUSFS_PIN_FILE" ]; then
             SUSFS_PIN=$(tr -d '[:space:]' < "$SUSFS_PIN_FILE")
             echo "=== Cloning SUSFS fork (branch: $FORK_BRANCH, pinned: ${SUSFS_PIN:0:12}) ==="
-            git clone "$FORK_URL" -b "$FORK_BRANCH" "$SUSFS4KSU"
+            git -c credential.helper= clone "$FORK_URL" -b "$FORK_BRANCH" "$SUSFS4KSU"
             git -C "$SUSFS4KSU" checkout "$SUSFS_PIN" 2>/dev/null || echo "::warning::Pin unreachable, using branch HEAD"
           else
             echo "=== Cloning SUSFS fork (branch: $FORK_BRANCH, HEAD) ==="
-            git clone --depth 1 "$FORK_URL" -b "$FORK_BRANCH" "$SUSFS4KSU"
+            git -c credential.helper= clone --depth 1 "$FORK_URL" -b "$FORK_BRANCH" "$SUSFS4KSU"
           fi
         else
           SUSFS_BRANCH="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-dev"
