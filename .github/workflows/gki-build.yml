@@ -264,7 +264,9 @@ jobs:
             echo "=== Cloning SUSFS (no refs/heads branch, pinned: ${SUSFS_PIN:0:12}) ==="
             git clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS4KSU"
           fi
-          git -C "$SUSFS4KSU" checkout "$SUSFS_PIN"
+          if ! git -C "$SUSFS4KSU" checkout "$SUSFS_PIN" 2>/dev/null; then
+            echo "::warning::Pinned commit ${SUSFS_PIN:0:12} unreachable (force-pushed?), using branch HEAD"
+          fi
         else
           if [ -n "$CLONE_BRANCH" ]; then
             echo "=== Cloning SUSFS (branch: $CLONE_BRANCH, HEAD — no pin file) ==="
