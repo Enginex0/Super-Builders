@@ -238,58 +238,79 @@ jobs:
           echo "[+] SUSFS API naming aligned (all_procs → non_su_procs)"
         fi
 
-    - name: Clone Upstream SUSFS and Inject Custom Features
+    - name: Clone SUSFS and Apply Patches
       if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        SUSFS_BRANCH="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-dev"
-        SUSFS_BRANCH_FALLBACK="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
+        INJECT_DIR="$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/susfs"
         SUSFS_PIN_FILE="$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/susfs-pin.txt"
 
-        # Resolve SUSFS branch: prefer -dev, fall back to base, then branchless clone
-        # Some branches only exist as refs/remotes/origin/ (upstream repo artifact)
-        CLONE_BRANCH=""
-        if git ls-remote --heads https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" | grep -q .; then
-          CLONE_BRANCH="$SUSFS_BRANCH"
-        elif git ls-remote --heads https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH_FALLBACK" | grep -q .; then
-          CLONE_BRANCH="$SUSFS_BRANCH_FALLBACK"
-        fi
+        if [ -f "$INJECT_DIR/patch-gki.sh" ]; then
+          FORK_URL="https://github.com/Enginex0/susfs4ksu.git"
+          FORK_BRANCH="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
 
-        if [ -f "$SUSFS_PIN_FILE" ] && [ -s "$SUSFS_PIN_FILE" ]; then
-          SUSFS_PIN=$(tr -d '[:space:]' < "$SUSFS_PIN_FILE")
-          if [ -n "$CLONE_BRANCH" ]; then
-            echo "=== Cloning SUSFS (branch: $CLONE_BRANCH, pinned: ${SUSFS_PIN:0:12}) ==="
-            git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$CLONE_BRANCH" "$SUSFS4KSU"
+          if [ -f "$SUSFS_PIN_FILE" ] && [ -s "$SUSFS_PIN_FILE" ]; then
+            SUSFS_PIN=$(tr -d '[:space:]' < "$SUSFS_PIN_FILE")
+            echo "=== Cloning SUSFS fork (branch: $FORK_BRANCH, pinned: ${SUSFS_PIN:0:12}) ==="
+            git clone "$FORK_URL" -b "$FORK_BRANCH" "$SUSFS4KSU"
+            git -C "$SUSFS4KSU" checkout "$SUSFS_PIN" 2>/dev/null || echo "::warning::Pin unreachable, using branch HEAD"
           else
-            echo "=== Cloning SUSFS (no refs/heads branch, pinned: ${SUSFS_PIN:0:12}) ==="
-            git clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS4KSU"
-          fi
-          if ! git -C "$SUSFS4KSU" checkout "$SUSFS_PIN" 2>/dev/null; then
-            echo "::warning::Pinned commit ${SUSFS_PIN:0:12} unreachable (force-pushed?), using branch HEAD"
+            echo "=== Cloning SUSFS fork (branch: $FORK_BRANCH, HEAD) ==="
+            git clone --depth 1 "$FORK_URL" -b "$FORK_BRANCH" "$SUSFS4KSU"
           fi
         else
-          if [ -n "$CLONE_BRANCH" ]; then
-            echo "=== Cloning SUSFS (branch: $CLONE_BRANCH, HEAD — no pin file) ==="
-            git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$CLONE_BRANCH" "$SUSFS4KSU"
+          SUSFS_BRANCH="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-dev"
+          SUSFS_BRANCH_FALLBACK="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
+
+          CLONE_BRANCH=""
+          if git ls-remote --heads https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" | grep -q .; then
+            CLONE_BRANCH="$SUSFS_BRANCH"
+          elif git ls-remote --heads https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH_FALLBACK" | grep -q .; then
+            CLONE_BRANCH="$SUSFS_BRANCH_FALLBACK"
+          fi
+
+          if [ -f "$SUSFS_PIN_FILE" ] && [ -s "$SUSFS_PIN_FILE" ]; then
+            SUSFS_PIN=$(tr -d '[:space:]' < "$SUSFS_PIN_FILE")
+            if [ -n "$CLONE_BRANCH" ]; then
+              echo "=== Cloning SUSFS (branch: $CLONE_BRANCH, pinned: ${SUSFS_PIN:0:12}) ==="
+              git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$CLONE_BRANCH" "$SUSFS4KSU"
+            else
+              echo "=== Cloning SUSFS (no refs/heads branch, pinned: ${SUSFS_PIN:0:12}) ==="
+              git clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS4KSU"
+            fi
+            if ! git -C "$SUSFS4KSU" checkout "$SUSFS_PIN" 2>/dev/null; then
+              echo "::warning::Pinned commit ${SUSFS_PIN:0:12} unreachable (force-pushed?), using branch HEAD"
+            fi
           else
-            echo "::error::No SUSFS refs/heads branch found and no pin file — cannot determine commit"
-            exit 1
+            if [ -n "$CLONE_BRANCH" ]; then
+              echo "=== Cloning SUSFS (branch: $CLONE_BRANCH, HEAD — no pin file) ==="
+              git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$CLONE_BRANCH" "$SUSFS4KSU"
+            else
+              echo "::error::No SUSFS refs/heads branch found and no pin file — cannot determine commit"
+              exit 1
+            fi
           fi
         fi
 
         SUSFS_PATCHES="$SUSFS4KSU/kernel_patches"
-        INJECT_DIR="$GITHUB_WORKSPACE/${{ env.VERSION_DIR }}/susfs"
         chmod +x "$INJECT_DIR"/*.sh
 
         SUSFS_PATCH="$SUSFS_PATCHES/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch"
 
         if [[ "${{ inputs.add_enhanced_susfs }}" == "true" ]]; then
-          echo "=== Injecting custom features into upstream SUSFS ==="
-          bash "$INJECT_DIR/fix-susfs.sh" "$SUSFS_PATCHES" "$KERNEL_ROOT/${{ env.KSU_DIR }}"
-          bash "$INJECT_DIR/inject-susfs-features.sh" "$SUSFS_PATCHES"
-          # bash "$INJECT_DIR/fix-susfs-perf.sh" "$KERNEL_ROOT/common" "$SUSFS_PATCHES" "$SUSFS_PATCH"
-        else
-          echo "=== Skipping custom SUSFS injection (add_enhanced_susfs=false) ==="
+          if [ -f "$INJECT_DIR/patch-gki.sh" ]; then
+            echo "=== Applying GKI patch and KSU integration fixes (fork path) ==="
+            bash "$INJECT_DIR/patch-gki.sh" "$SUSFS_PATCHES" "$KERNEL_ROOT/${{ env.KSU_DIR }}"
+          else
+            echo "=== Injecting custom features into upstream SUSFS (legacy path) ==="
+            [ -f "$INJECT_DIR/fix-susfs.sh" ] && bash "$INJECT_DIR/fix-susfs.sh" "$SUSFS_PATCHES" "$KERNEL_ROOT/${{ env.KSU_DIR }}"
+            [ -f "$INJECT_DIR/fix-safety.sh" ] && bash "$INJECT_DIR/fix-safety.sh" "$SUSFS_PATCHES" "$KERNEL_ROOT/${{ env.KSU_DIR }}"
+            [ -f "$INJECT_DIR/inject-susfs-features.sh" ] && bash "$INJECT_DIR/inject-susfs-features.sh" "$SUSFS_PATCHES"
+            [ -f "$INJECT_DIR/fix-perf.sh" ] && bash "$INJECT_DIR/fix-perf.sh" "$KERNEL_ROOT/common" "$SUSFS_PATCHES" "$SUSFS_PATCH"
+            [ -f "$INJECT_DIR/fix-ksu-integration.sh" ] && bash "$INJECT_DIR/fix-ksu-integration.sh" "$KERNEL_ROOT/${{ env.KSU_DIR }}"
+            [ -f "$INJECT_DIR/add-supercall-dispatch.sh" ] && bash "$INJECT_DIR/add-supercall-dispatch.sh" "$SUSFS_PATCHES"
+            [ -f "$INJECT_DIR/add-susfs-zeromount-coupling.sh" ] && bash "$INJECT_DIR/add-susfs-zeromount-coupling.sh" "$SUSFS_PATCHES"
+          fi
         fi
 
         echo "=== Applying modified SUSFS to kernel ==="

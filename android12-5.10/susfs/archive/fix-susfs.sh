@@ -465,6 +465,101 @@ for patch_file in "$SUSFS_DIR"/50_add_susfs_in_gki-*.patch; do
     fi
 done
 
+# -- fsnotify: defer cleanup outside SRCU context to prevent deadlock --
+if grep -q 'msleep(5000)' "$SUSFS_C" && grep -q 'susfs_handle_sdcard_inode_event' "$SUSFS_C"; then
+    echo "[+] Fixing fsnotify handler SRCU deadlock (deferred cleanup via delayed_work)"
+
+    # workqueue.h for queue_delayed_work
+    if ! grep -q '#include <linux/workqueue.h>' "$SUSFS_C"; then
+        sed -i '/#include <linux\/delay.h>/a #include <linux/workqueue.h>' "$SUSFS_C"
+    fi
+
+    # static vars + cleanup function before the handler
+    awk '
+    /^static int susfs_handle_sdcard_inode_event/ {
+        print "static unsigned long sdcard_cleanup_scheduled;"
+        print "static struct delayed_work sdcard_cleanup_dwork;"
+        print ""
+        print "static void susfs_sdcard_cleanup_fn(struct work_struct *work)"
+        print "{"
+        print "\tstruct fsnotify_group *grp;"
+        print "\tstruct inode *inode;"
+        print ""
+        print "\tSUSFS_LOGI(\"set susfs_is_sdcard_android_data_decrypted to true\\n\");"
+        print "\tWRITE_ONCE(susfs_is_sdcard_android_data_decrypted, true);"
+        print ""
+        print "\tSUSFS_LOGI(\"cleaning up fsnotify sdcard watch\\n\");"
+        print ""
+        print "\tgrp = xchg(&g, NULL);"
+        print "\tif (grp)"
+        print "\t\tfsnotify_destroy_group(grp);"
+        print ""
+        print "\tinode = xchg(&g_watch.inode, NULL);"
+        print "\tif (inode)"
+        print "\t\tiput(inode);"
+        print ""
+        print "\tif (g_watch.kpath.mnt) {"
+        print "\t\tpath_put(&g_watch.kpath);"
+        print "\t\tmemset(&g_watch.kpath, 0, sizeof(g_watch.kpath));"
+        print "\t}"
+        print "}"
+        print ""
+    }
+    { print }
+    ' "$SUSFS_C" > "$SUSFS_C.tmp" && mv "$SUSFS_C.tmp" "$SUSFS_C"
+
+    # rewrite the handler itself
+    awk '
+    /^static int susfs_handle_sdcard_inode_event/ {
+        print "static int susfs_handle_sdcard_inode_event(struct fsnotify_mark *mark, u32 mask,"
+        print "\t\t\t\t\t\t\t\t\t\t\tstruct inode *inode, struct inode *dir,"
+        print "\t\t\t\t\t\t\t\t\t\t\tconst struct qstr *file_name, u32 cookie)"
+        print "{"
+        print "\tif (!file_name || file_name->len != 7 ||"
+        print "\t    memcmp(file_name->name, \"Android\", 7))"
+        print "\t\treturn 0;"
+        print ""
+        print "\tif (test_and_set_bit(0, &sdcard_cleanup_scheduled))"
+        print "\t\treturn 0;"
+        print ""
+        print "\tSUSFS_LOGI(\"'"'"'Android'"'"' detected, mask: 0x%x\\n\", mask);"
+        print "\tSUSFS_LOGI(\"deferring cleanup for 5 seconds\\n\");"
+        print "\tqueue_delayed_work(system_unbound_wq, &sdcard_cleanup_dwork, 5 * HZ);"
+        print "\treturn 0;"
+        print "}"
+        brace = 0
+        while ((getline) > 0) {
+            if ($0 ~ /\{/) brace++
+            if ($0 ~ /\}/) brace--
+            if ($0 ~ /^\}/ && brace <= 0) break
+        }
+        next
+    }
+    { print }
+    ' "$SUSFS_C" > "$SUSFS_C.tmp" && mv "$SUSFS_C.tmp" "$SUSFS_C"
+
+    # INIT_DELAYED_WORK before the #if/fsnotify_alloc_group block
+    if ! grep -q 'INIT_DELAYED_WORK' "$SUSFS_C"; then
+        awk '
+        /LINUX_VERSION_CODE.*KERNEL_VERSION/ && !init_done {
+            if (getline next_line > 0) {
+                if (next_line ~ /fsnotify_alloc_group/) {
+                    print "\tINIT_DELAYED_WORK(&sdcard_cleanup_dwork, susfs_sdcard_cleanup_fn);"
+                    print ""
+                    init_done = 1
+                }
+                print $0
+                print next_line
+                next
+            }
+        }
+        { print }
+        ' "$SUSFS_C" > "$SUSFS_C.tmp" && mv "$SUSFS_C.tmp" "$SUSFS_C"
+    fi
+
+    ((fix_count++)) || true
+fi
+
 # -- sus_path_loop: move kern_path() outside RCU (C1) --
 if ! grep -q 'kmalloc_array.*SUSFS_MAX_LEN_PATHNAME' "$SUSFS_C"; then
     echo "[+] Fixing kern_path inside RCU in susfs_run_sus_path_loop (C1)"
