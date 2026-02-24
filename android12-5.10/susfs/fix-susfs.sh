@@ -454,6 +454,17 @@ for patch_file in "$SUSFS_DIR"/50_add_susfs_in_gki-*.patch; do
     fi
 done
 
+# -- Extend kallsyms filter to hide zeromount symbols (M4) --
+for patch_file in "$SUSFS_DIR"/50_add_susfs_in_gki-*.patch; do
+    [ -f "$patch_file" ] || continue
+    if grep -q 'susfs_starts_with(iter->name, "is_zygote")' "$patch_file" && \
+       ! grep -q 'susfs_starts_with(iter->name, "zeromount")' "$patch_file"; then
+        echo "[+] Extending kallsyms filter for zeromount symbols in $(basename "$patch_file")"
+        sed -i 's/susfs_starts_with(iter->name, "is_zygote"))/susfs_starts_with(iter->name, "is_zygote") ||\n+\t\t\tsusfs_starts_with(iter->name, "zeromount"))/' "$patch_file"
+        ((fix_count++)) || true
+    fi
+done
+
 # -- sus_path_loop: move kern_path() outside RCU (C1) --
 if ! grep -q 'kmalloc_array.*SUSFS_MAX_LEN_PATHNAME' "$SUSFS_C"; then
     echo "[+] Fixing kern_path inside RCU in susfs_run_sus_path_loop (C1)"
