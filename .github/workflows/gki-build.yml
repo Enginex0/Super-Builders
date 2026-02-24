@@ -230,6 +230,14 @@ jobs:
           echo "[+] ksu_handle_sys_newfstatat stub added to ksud.c"
         fi
 
+        # RKSU's susfs-rksu-master uses old SUSFS API naming — align with upstream
+        SUPERCALLS="$KERNEL_ROOT/${{ env.KSU_DIR }}/kernel/supercalls.c"
+        if [ -f "$SUPERCALLS" ] && grep -q "CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS" "$SUPERCALLS"; then
+          sed -i 's/CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS/CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS/g' "$SUPERCALLS"
+          sed -i 's/susfs_set_hide_sus_mnts_for_all_procs/susfs_set_hide_sus_mnts_for_non_su_procs/g' "$SUPERCALLS"
+          echo "[+] SUSFS API naming aligned (all_procs → non_su_procs)"
+        fi
+
     - name: Clone Upstream SUSFS and Inject Custom Features
       if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}
