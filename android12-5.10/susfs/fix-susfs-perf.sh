@@ -122,6 +122,9 @@ if grep -q 'ilookup(buf->sb, ino)' "$GKI_PATCH" 2>/dev/null; then
         next
     }
 
+    # Track filldir variant from hunk headers — fillonedir uses buf->result (no -EINVAL leak)
+    /^@@ / { is_onedir = ($0 ~ /fillonedir/) }
+
     # Replace each ilookup block with unified function call
     /^\+\tinode = ilookup\(buf->sb, ino\);/ {
         consumed = 0
@@ -131,8 +134,15 @@ if grep -q 'ilookup(buf->sb, ino)' "$GKI_PATCH" 2>/dev/null; then
                 if ($0 ~ /^\+orig_flow:/) break
             } else break
         }
-        print "+\tif (susfs_should_hide_dirent(buf->sb, ino, name, namlen))"
-        print "+\t\treturn 0;"
+        if (is_onedir) {
+            print "+\tif (susfs_should_hide_dirent(buf->sb, ino, name, namlen))"
+            print "+\t\treturn 0;"
+        } else {
+            print "+\tif (susfs_should_hide_dirent(buf->sb, ino, name, namlen)) {"
+            print "+\t\tbuf->error = 0;"
+            print "+\t\treturn 0;"
+            print "+\t}"
+        }
         next
     }
 
