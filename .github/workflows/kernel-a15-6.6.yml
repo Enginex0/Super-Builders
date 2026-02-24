@@ -14,6 +14,7 @@ on:
           - KernelSU-Next
           - SukiSU
           - MKSU
+          - ReSukiSU
         default: "KernelSU-Next"
       add_susfs:
         description: "Add SUSFS (upstream)"
@@ -39,6 +40,10 @@ on:
         description: "Add Baseband Guard"
         type: boolean
         default: true
+      add_kpm:
+        description: "Add KPM (SukiSU/ReSukiSU)"
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       ksu_variant:
@@ -62,6 +67,9 @@ on:
       add_bbg:
         type: boolean
         default: true
+      add_kpm:
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -116,4 +124,5 @@ jobs:
       add_zeromount: ${{ inputs.add_zeromount }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
+      add_kpm: ${{ inputs.add_kpm }}
       device_codename: "generic"

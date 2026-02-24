@@ -43,6 +43,9 @@ on:
       add_overlayfs_support:
         type: boolean
         default: true
+      add_kpm:
+        type: boolean
+        default: false
       device_codename:
         type: string
         default: ""
@@ -172,6 +175,11 @@ jobs:
           BRANCH="main"
           [[ "${{ inputs.add_susfs }}" == "true" ]] && BRANCH="susfs-dev"
           curl -LSs "https://raw.githubusercontent.com/5ec1cff/KernelSU/main/kernel/setup.sh" | bash -s "$BRANCH"
+        elif [[ "$KSU_VARIANT" == "ReSukiSU" ]]; then
+          echo "=== Adding ReSukiSU ==="
+          BRANCH="main"
+          [[ "${{ inputs.add_susfs }}" == "true" ]] && BRANCH="susfs-ksud"
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s "$BRANCH"
         else
           echo "=== Adding KernelSU-Next ==="
           BRANCH="next"
@@ -418,6 +426,10 @@ jobs:
         # Overlayfs support (tmpfs xattr + POSIX ACL for overlay whiteouts)
         if [[ "${{ inputs.add_overlayfs_support }}" == "true" ]]; then
           awk '/^# \[overlayfs\]/{found=1; next} /^# \[/{found=0} found && NF' "$FRAGMENT" >> "${{ env.DEFCONFIG }}"
+        fi
+
+        if [[ "${{ inputs.add_kpm }}" == "true" ]]; then
+          awk '/^# \[kpm\]/{found=1; next} /^# \[/{found=0} found && NF' "$FRAGMENT" >> "${{ env.DEFCONFIG }}"
         fi
 
         # ZRAM config
@@ -878,4 +890,5 @@ jobs:
         echo "| **ZRAM (LZ4K)** | $(S ${{ inputs.add_zram }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **Overlayfs Support** | $(S ${{ inputs.add_overlayfs_support }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **Baseband Guard** | $(S ${{ inputs.add_bbg }}) |" >> $GITHUB_STEP_SUMMARY
+        echo "| **KPM** | $(S ${{ inputs.add_kpm }}) |" >> $GITHUB_STEP_SUMMARY
         echo "| **Device Profile** | ${{ env.IDENTITY_STATUS }} |" >> $GITHUB_STEP_SUMMARY
