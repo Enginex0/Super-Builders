@@ -1467,7 +1467,7 @@ index 000000000..43ca3f0fa
 +	return 0;
 +}
 +fs_initcall(zeromount_init);
-
++
 diff --git a/include/linux/zeromount.h b/include/linux/zeromount.h
 new file mode 100644
 index 000000000..9e0fb1b21
