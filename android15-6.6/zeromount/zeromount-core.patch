@@ -28,7 +28,7 @@ new file mode 100644
 index 000000000..43ca3f0fa
 --- /dev/null
 +++ b/fs/zeromount.c
-@@ -0,0 +1,1225 @@
+@@ -0,0 +1,1344 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -173,23 +173,34 @@ index 000000000..43ca3f0fa
 +    return false;
 +}
 +
-+static char *zeromount_normalize_path(const char *path)
++static inline void zeromount_normalize_inline(const char *path,
++                                              const char **out_p,
++                                              size_t *out_len)
 +{
-+    char *normalized;
-+    size_t len;
 +    const char *p = path;
++    size_t len;
 +
-+    if (!path)
-+        return NULL;
-+
-+    // Android mounts system at both / and /system
 +    if (strncmp(path, "/system/", 8) == 0)
 +        p = path + 7;
 +
 +    len = strlen(p);
-+
 +    while (len > 1 && p[len - 1] == '/')
 +        len--;
++
++    *out_p = p;
++    *out_len = len;
++}
++
++static char *zeromount_normalize_path(const char *path)
++{
++    const char *p;
++    size_t len;
++    char *normalized;
++
++    if (!path)
++        return NULL;
++
++    zeromount_normalize_inline(path, &p, &len);
 +
 +    normalized = kmalloc(len + 1, GFP_KERNEL);
 +    if (!normalized)
@@ -207,6 +218,22 @@ index 000000000..43ca3f0fa
 +    kfree(rule->virtual_path);
 +    kfree(rule->real_path);
 +    kfree(rule);
++}
++
++static void zeromount_free_child_rcu(struct rcu_head *head)
++{
++    struct zeromount_child_name *child =
++        container_of(head, struct zeromount_child_name, rcu);
++    kfree(child->name);
++    kfree(child);
++}
++
++static void zeromount_free_dir_node_rcu(struct rcu_head *head)
++{
++    struct zeromount_dir_node *node =
++        container_of(head, struct zeromount_dir_node, rcu);
++    kfree(node->dir_path);
++    kfree(node);
 +}
 +
 +static void zeromount_flush_parent(const char *full_path) {
@@ -334,6 +361,57 @@ index 000000000..43ca3f0fa
 +    return found_path;
 +}
 +EXPORT_SYMBOL(zeromount_get_virtual_path_for_inode);
++
++const char *zeromount_get_static_vpath(struct inode *inode)
++{
++    struct zeromount_rule *rule;
++    unsigned long key;
++
++    if (unlikely(!inode || !inode->i_sb))
++        return NULL;
++
++    key = inode->i_ino ^ inode->i_sb->s_dev;
++
++    rcu_read_lock();
++    hash_for_each_possible_rcu(zeromount_ino_ht, rule, ino_node, key) {
++        if (rule->real_ino == inode->i_ino &&
++            rule->real_dev == inode->i_sb->s_dev &&
++            (rule->flags & ZM_FLAG_ACTIVE)) {
++            rcu_read_unlock();
++            return rule->virtual_path;
++        }
++    }
++    rcu_read_unlock();
++    return NULL;
++}
++EXPORT_SYMBOL(zeromount_get_static_vpath);
++
++void zeromount_spoof_mmap_metadata(struct inode *inode, dev_t *dev,
++                                   unsigned long *ino)
++{
++    struct zeromount_rule *rule;
++    unsigned long key;
++
++    if (unlikely(!inode || !dev || !ino))
++        return;
++    if (zeromount_should_skip())
++        return;
++
++    key = inode->i_ino ^ inode->i_sb->s_dev;
++
++    rcu_read_lock();
++    hash_for_each_possible_rcu(zeromount_ino_ht, rule, ino_node, key) {
++        if (rule->real_ino == inode->i_ino &&
++            rule->real_dev == inode->i_sb->s_dev &&
++            (rule->flags & ZM_FLAG_ACTIVE)) {
++            *dev = READ_ONCE(rule->v_dev);
++            *ino = READ_ONCE(rule->v_ino);
++            break;
++        }
++    }
++    rcu_read_unlock();
++}
++EXPORT_SYMBOL(zeromount_spoof_mmap_metadata);
 +
 +static unsigned long zeromount_get_inode_by_path(const char *path_str) {
 +    struct path path;
@@ -535,68 +613,56 @@ index 000000000..43ca3f0fa
 +    return new_name;
 +}
 +
-+static bool zeromount_find_next_injection(const char *dir_path, unsigned long v_index, char *name_out, unsigned char *type_out)
++void zeromount_inject_dents_common(struct file *file, void __user **dirent,
++                                   int *count, loff_t *pos, int compat)
 +{
-+    struct zeromount_dir_node *node;
-+    struct zeromount_child_name *child;
-+    char *normalized;
-+    bool found = false;
-+    int bkt;
++    char *page_buf, *dir_path;
++    unsigned long v_index;
 +
-+    // d_path() returns canonical paths; stored dir_paths are normalized
-+    normalized = zeromount_normalize_path(dir_path);
-+    if (!normalized) return false;
++    if (zeromount_should_skip() ||
++        zeromount_is_uid_blocked(current_uid().val))
++        return;
 +
-+    rcu_read_lock();
-+    hash_for_each_rcu(zeromount_dirs_ht, bkt, node, node) {
-+        if (strcmp(normalized, node->dir_path) == 0) {
-+            unsigned long current_idx = 0;
-+            list_for_each_entry_rcu(child, &node->children_names, list) {
-+                if (current_idx == v_index) {
-+                    strscpy(name_out, child->name, 256);
-+                    *type_out = child->d_type;
-+                    found = true;
++    if (!test_bit(file_inode(file)->i_ino & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
++        return;
++
++    page_buf = __getname();
++    if (!page_buf)
++        return;
++
++    dir_path = d_path(&file->f_path, page_buf, PAGE_SIZE);
++    if (IS_ERR(dir_path)) {
++        __putname(page_buf);
++        return;
++    }
++
++    {
++        const char *norm_p;
++        size_t norm_len;
++        u32 dir_hash;
++        bool is_redirected = false;
++
++        zeromount_normalize_inline(dir_path, &norm_p, &norm_len);
++        dir_hash = full_name_hash(NULL, norm_p, norm_len);
++
++        rcu_read_lock();
++        {
++            struct zeromount_rule *rule;
++
++            hash_for_each_possible_rcu(zeromount_rules_ht, rule,
++                                       node, dir_hash) {
++                if (rule->vp_len == norm_len &&
++                    memcmp(norm_p, rule->virtual_path,
++                           norm_len) == 0 &&
++                    (rule->flags & ZM_FLAG_ACTIVE)) {
++                    is_redirected = true;
 +                    break;
 +                }
-+                current_idx++;
 +            }
 +        }
-+        if (found) break;
-+    }
-+    rcu_read_unlock();
-+    kfree(normalized);
-+    return found;
-+}
++        rcu_read_unlock();
 +
-+void zeromount_inject_dents64(struct file *file, void __user **dirent, int *count, loff_t *pos)
-+{
-+    char name_buf[256];
-+    unsigned char type_buf;
-+    struct linux_dirent64 __user *curr_dirent;
-+    char *page_buf, *dir_path;
-+    unsigned long v_index;
-+    int name_len, reclen;
-+    unsigned long fake_ino;
-+
-+    if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;
-+
-+    if (!test_bit(file_inode(file)->i_ino & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
-+        return;
-+
-+    page_buf = __getname();
-+    if (!page_buf) return;
-+
-+    dir_path = d_path(&file->f_path, page_buf, PAGE_SIZE);
-+    if (IS_ERR(dir_path)) {
-+        __putname(page_buf);
-+        return;
-+    }
-+
-+    // Skip injection if this directory is itself redirected (real readdir has all files)
-+    {
-+        char *resolved = zeromount_resolve_path(dir_path);
-+        if (resolved) {
-+            kfree(resolved);
++        if (is_redirected) {
 +            __putname(page_buf);
 +            return;
 +        }
@@ -609,102 +675,98 @@ index 000000000..43ca3f0fa
 +        *pos = ZEROMOUNT_MAGIC_POS;
 +    }
 +
-+    while (1) {
-+        if (!zeromount_find_next_injection(dir_path, v_index, name_buf, &type_buf))
-+            break;
++    {
++        struct zeromount_dir_node *zm_dir;
++        struct zeromount_child_name *zm_child;
++        const char *normalized;
++        size_t normalized_len;
++        u32 zm_hash;
++        unsigned long cur_idx = 0;
 +
-+        name_len = strlen(name_buf);
-+        reclen = ALIGN(offsetof(struct linux_dirent64, d_name) + name_len + 1, sizeof(u64));
++        zeromount_normalize_inline(dir_path, &normalized,
++                                   &normalized_len);
++        zm_hash = full_name_hash(NULL, normalized, normalized_len);
 +
-+        if (*count < reclen) break;
++        rcu_read_lock();
++        hash_for_each_possible_rcu(zeromount_dirs_ht, zm_dir,
++                                   node, zm_hash) {
++            if (strlen(zm_dir->dir_path) != normalized_len ||
++                memcmp(normalized, zm_dir->dir_path,
++                       normalized_len) != 0)
++                continue;
 +
-+        curr_dirent = (struct linux_dirent64 __user *)*dirent;
++            list_for_each_entry_rcu(zm_child,
++                                    &zm_dir->children_names,
++                                    list) {
++                char name_local[256];
++                unsigned char type_local;
++                int name_len, reclen;
++                unsigned long fake_ino;
 +
-+        fake_ino = zeromount_generate_ino(dir_path, name_buf);
-+        if (put_user(fake_ino, &curr_dirent->d_ino) ||
-+            put_user(ZEROMOUNT_MAGIC_POS + v_index + 1, &curr_dirent->d_off) ||
-+            put_user(reclen, &curr_dirent->d_reclen) ||
-+            put_user(type_buf, &curr_dirent->d_type) ||
-+            copy_to_user(curr_dirent->d_name, name_buf, name_len) ||
-+            put_user(0, curr_dirent->d_name + name_len)) {
++                if (cur_idx++ < v_index)
++                    continue;
++
++                strscpy(name_local, zm_child->name,
++                        sizeof(name_local));
++                type_local = zm_child->d_type;
++                name_len = strlen(name_local);
++
++                if (compat) {
++                    struct linux_dirent __user *de;
++
++                    reclen = ALIGN(offsetof(struct linux_dirent, d_name) + name_len + 2, 4);
++                    if (*count < reclen)
++                        break;
++                    de = (struct linux_dirent __user *)*dirent;
++                    fake_ino = zeromount_generate_ino(dir_path, name_local);
++                    if (put_user(fake_ino, &de->d_ino) ||
++                        put_user(ZEROMOUNT_MAGIC_POS + v_index + 1, &de->d_off) ||
++                        put_user(reclen, &de->d_reclen) ||
++                        copy_to_user(de->d_name, name_local, name_len) ||
++                        put_user(0, de->d_name + name_len) ||
++                        put_user(type_local, ((char __user *)de) + reclen - 1))
++                        break;
++                } else {
++                    struct linux_dirent64 __user *de64;
++
++                    reclen = ALIGN(offsetof(struct linux_dirent64, d_name) + name_len + 1, sizeof(u64));
++                    if (*count < reclen)
++                        break;
++                    de64 = (struct linux_dirent64 __user *)*dirent;
++                    fake_ino = zeromount_generate_ino(dir_path, name_local);
++                    if (put_user(fake_ino, &de64->d_ino) ||
++                        put_user(ZEROMOUNT_MAGIC_POS + v_index + 1, &de64->d_off) ||
++                        put_user(reclen, &de64->d_reclen) ||
++                        put_user(type_local, &de64->d_type) ||
++                        copy_to_user(de64->d_name, name_local, name_len) ||
++                        put_user(0, de64->d_name + name_len))
++                        break;
++                }
++
++                *dirent = (void __user *)((char __user *)*dirent + reclen);
++                *count -= reclen;
++                v_index++;
++                *pos = ZEROMOUNT_MAGIC_POS + v_index;
++            }
 +            break;
 +        }
-+
-+        *dirent = (void __user *)((char __user *)*dirent + reclen);
-+        *count -= reclen;
-+        *pos = ZEROMOUNT_MAGIC_POS + v_index + 1;
-+        v_index++;
++        rcu_read_unlock();
 +    }
 +
 +    __putname(page_buf);
 +}
++EXPORT_SYMBOL(zeromount_inject_dents_common);
 +
-+void zeromount_inject_dents(struct file *file, void __user **dirent, int *count, loff_t *pos)
++void zeromount_inject_dents64(struct file *file, void __user **dirent,
++                              int *count, loff_t *pos)
 +{
-+    char name_buf[256];
-+    unsigned char type_buf;
-+    struct linux_dirent __user * curr_dirent;
-+    char *page_buf, *dir_path;
-+    unsigned long v_index;
-+    int name_len, reclen;
-+    unsigned long fake_ino;
++    zeromount_inject_dents_common(file, dirent, count, pos, 0);
++}
 +
-+    if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;
-+
-+    if (!test_bit(file_inode(file)->i_ino & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
-+        return;
-+
-+    page_buf = __getname();
-+    if (!page_buf) return;
-+
-+    dir_path = d_path(&file->f_path, page_buf, PAGE_SIZE);
-+    if (IS_ERR(dir_path)) {
-+        __putname(page_buf);
-+        return;
-+    }
-+
-+    // Skip injection if this directory is itself redirected (real readdir has all files)
-+    {
-+        char *resolved = zeromount_resolve_path(dir_path);
-+        if (resolved) {
-+            kfree(resolved);
-+            __putname(page_buf);
-+            return;
-+        }
-+    }
-+
-+    if (*pos >= ZEROMOUNT_MAGIC_POS) {
-+        v_index = *pos - ZEROMOUNT_MAGIC_POS;
-+    } else {
-+        v_index = 0;
-+        *pos = ZEROMOUNT_MAGIC_POS;
-+    }
-+
-+    while (1) {
-+        if (!zeromount_find_next_injection(dir_path, v_index, name_buf, &type_buf))
-+            break;
-+
-+        name_len = strlen(name_buf);
-+        reclen = ALIGN(offsetof(struct linux_dirent, d_name) + name_len + 2, 4);
-+        if (*count < reclen) break;
-+        curr_dirent = (struct linux_dirent __user *)*dirent;
-+        fake_ino = zeromount_generate_ino(dir_path, name_buf);
-+        if (put_user(fake_ino, &curr_dirent->d_ino) ||
-+            put_user(ZEROMOUNT_MAGIC_POS + v_index + 1, &curr_dirent->d_off) ||
-+            put_user(reclen, &curr_dirent->d_reclen) ||
-+            copy_to_user(curr_dirent->d_name, name_buf, name_len) ||
-+            put_user(0, curr_dirent->d_name + name_len) ||
-+            put_user(type_buf, ((char __user *)curr_dirent) + reclen - 1)) {
-+            break;
-+        }
-+
-+        *dirent = (void __user *)((char __user *)*dirent + reclen);
-+        *count -= reclen;
-+        *pos = ZEROMOUNT_MAGIC_POS + v_index + 1;
-+        v_index++;
-+    }
-+
-+    __putname(page_buf);
++void zeromount_inject_dents(struct file *file, void __user **dirent,
++                            int *count, loff_t *pos)
++{
++    zeromount_inject_dents_common(file, dirent, count, pos, 1);
 +}
 +
 +#define EROFS_SUPER_MAGIC 0xE0F5E1E2
@@ -968,6 +1030,42 @@ index 000000000..43ca3f0fa
 +        rule->real_dev = 0;
 +    }
 +
++    /* Capture virtual path's dev/ino for maps spoofing */
++    zm_enter();
++    if (kern_path(v_path, LOOKUP_FOLLOW, &path) == 0) {
++        struct inode *vinode = d_backing_inode(path.dentry);
++        if (vinode) {
++            rule->v_ino = vinode->i_ino;
++            rule->v_dev = vinode->i_sb->s_dev;
++        }
++        path_put(&path);
++    }
++    zm_exit();
++
++    if (rule->v_ino == 0) {
++        rule->v_ino = zeromount_generate_ino(v_path, r_path);
++        {
++            char *parent_copy = kstrdup(v_path, GFP_KERNEL);
++            if (parent_copy) {
++                char *slash = strrchr(parent_copy, '/');
++                if (slash && slash != parent_copy) {
++                    *slash = '\0';
++                    zm_enter();
++                    if (kern_path(parent_copy, LOOKUP_FOLLOW,
++                                  &path) == 0) {
++                        struct inode *pinode =
++                            d_backing_inode(path.dentry);
++                        if (pinode)
++                            rule->v_dev = pinode->i_sb->s_dev;
++                        path_put(&path);
++                    }
++                    zm_exit();
++                }
++                kfree(parent_copy);
++            }
++        }
++    }
++
 +    spin_lock(&zeromount_lock);
 +    hash_add_rcu(zeromount_rules_ht, &rule->node, hash);
 +    if (rule->real_ino != 0) {
@@ -1055,6 +1153,27 @@ index 000000000..43ca3f0fa
 +    hash_for_each_safe(zeromount_uid_ht, bkt, tmp, uid_node, node) {
 +        hash_del_rcu(&uid_node->node);
 +        kfree_rcu(uid_node, rcu);
++    }
++
++    {
++        struct zeromount_dir_node *dir_node;
++        struct zeromount_child_name *child, *tmp_child;
++        int bkt2;
++        struct hlist_node *tmp2;
++
++        hash_for_each_safe(zeromount_dirs_ht, bkt2, tmp2,
++                           dir_node, node) {
++            hash_del_rcu(&dir_node->node);
++            list_for_each_entry_safe(child, tmp_child,
++                                     &dir_node->children_names,
++                                     list) {
++                list_del_rcu(&child->list);
++                call_rcu(&child->rcu,
++                         zeromount_free_child_rcu);
++            }
++            call_rcu(&dir_node->rcu,
++                     zeromount_free_dir_node_rcu);
++        }
 +    }
 +
 +    bitmap_zero(zeromount_bloom, ZEROMOUNT_BLOOM_SIZE);
@@ -1259,7 +1378,7 @@ new file mode 100644
 index 000000000..9e0fb1b21
 --- /dev/null
 +++ b/include/linux/zeromount.h
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,177 @@
 +#ifndef _LINUX_ZEROMOUNT_H
 +#define _LINUX_ZEROMOUNT_H
 +
@@ -1358,6 +1477,8 @@ index 000000000..9e0fb1b21
 +    char *real_path;
 +    unsigned long real_ino;
 +    dev_t real_dev;
++    unsigned long v_ino;
++    dev_t v_dev;
 +    bool is_new;
 +    u32 flags;
 +    struct rcu_head rcu;
@@ -1398,9 +1519,14 @@ index 000000000..9e0fb1b21
 +char *zeromount_resolve_path(const char *pathname);
 +char *zeromount_build_absolute_path(int dfd, const char *name);
 +struct filename *zeromount_getname_hook(struct filename *name);
++void zeromount_inject_dents_common(struct file *file, void __user **dirent,
++                                   int *count, loff_t *pos, int compat);
 +void zeromount_inject_dents64(struct file *file, void __user **dirent, int *count, loff_t *pos);
 +void zeromount_inject_dents(struct file *file, void __user **dirent, int *count, loff_t *pos);
 +char *zeromount_get_virtual_path_for_inode(struct inode *inode);
++const char *zeromount_get_static_vpath(struct inode *inode);
++void zeromount_spoof_mmap_metadata(struct inode *inode, dev_t *dev,
++                                   unsigned long *ino);
 +bool zeromount_is_traversal_allowed(struct inode *inode, int mask);
 +bool zeromount_is_injected_file(struct inode *inode);
 +bool zeromount_is_uid_blocked(uid_t uid);
@@ -1412,9 +1538,15 @@ index 000000000..9e0fb1b21
 +static inline char *zeromount_resolve_path(const char *p) { return NULL; }
 +static inline char *zeromount_build_absolute_path(int dfd, const char *name) { return NULL; }
 +static inline struct filename *zeromount_getname_hook(struct filename *name) { return name; }
++static inline void zeromount_inject_dents_common(struct file *f, void __user **d,
++                                                 int *c, loff_t *p, int compat) {}
 +static inline void zeromount_inject_dents64(struct file *f, void __user **d, int *c, loff_t *p) {}
 +static inline void zeromount_inject_dents(struct file *f, void __user **d, int *c, loff_t *p) {}
 +static inline char *zeromount_get_virtual_path_for_inode(struct inode *inode) { return NULL; }
++static inline const char *zeromount_get_static_vpath(struct inode *inode) { return NULL; }
++static inline void zeromount_spoof_mmap_metadata(struct inode *inode,
++                                                 dev_t *dev,
++                                                 unsigned long *ino) {}
 +static inline bool zeromount_is_traversal_allowed(struct inode *inode, int mask) { return false; }
 +static inline bool zeromount_is_injected_file(struct inode *inode) { return false; }
 +static inline bool zeromount_is_uid_blocked(uid_t uid) { return false; }

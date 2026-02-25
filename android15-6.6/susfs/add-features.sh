@@ -1,54 +1,46 @@
 #!/bin/bash
-# inject-susfs-features.sh - Inject custom SUSFS features
+# Injects custom SUSFS features, zeromount coupling, and supercall dispatch.
 #
-# Consolidated from add-kstat-redirect.sh, add-open-redirect-all.sh,
-# add-unicode-filter-func.sh. Each feature is a self-contained function.
+# Features:
+#   - kstat_redirect (CMD + struct + function body)
+#   - open_redirect_all (CMD + AS_FLAGS + struct + 3 functions)
+#   - unicode_filter (byte pattern filter for bidi/ZW/cyrillic attacks)
+#   - BUILD_BUG_ON guards for address_space flag bit collisions
+#   - zeromount coupling (extern + inline wrapper + uid exclusion)
+#   - supercall dispatch handlers for kstat_redirect + open_redirect_all
 #
-# Usage: ./inject-susfs-features.sh <SUSFS_KERNEL_PATCHES_DIR>
+# Usage: ./add-features.sh <SUSFS_DIR>
 
-set -e
+set -euo pipefail
 
-SUSFS_DIR="${1:?Usage: $0 <SUSFS_KERNEL_PATCHES_DIR>}"
+SUSFS_DIR="${1:?Usage: $0 <SUSFS_DIR>}"
 
 SUSFS_DEF_H="$SUSFS_DIR/include/linux/susfs_def.h"
 SUSFS_H="$SUSFS_DIR/include/linux/susfs.h"
 SUSFS_C="$SUSFS_DIR/fs/susfs.c"
 
 for f in "$SUSFS_DEF_H" "$SUSFS_H" "$SUSFS_C"; do
-    if [ ! -f "$f" ]; then
-        echo "FATAL: missing $f"
-        exit 1
-    fi
+    [ -f "$f" ] || { echo "FATAL: missing $f"; exit 1; }
 done
 
 inject_count=0
 
 inject_kstat_redirect() {
-echo "=== inject-susfs-kstat-redirect ==="
+    echo "=== kstat_redirect ==="
 
-# --- 1. CMD code in susfs_def.h ---
-if grep -q 'CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT' "$SUSFS_DEF_H"; then
-    echo "[=] CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT already present in susfs_def.h"
-else
-    echo "[+] Injecting CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT into susfs_def.h"
-    sed -i '/CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY/a #define CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT 0x55573' "$SUSFS_DEF_H"
-    ((inject_count++)) || true
-fi
+    # CMD code
+    if ! grep -q 'CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT' "$SUSFS_DEF_H"; then
+        echo "[+] CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT"
+        sed -i '/CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY/a #define CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT 0x55573' "$SUSFS_DEF_H"
+        ((inject_count++)) || true
+    fi
+    grep -q 'CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT' "$SUSFS_DEF_H" || { echo "FATAL: CMD injection failed"; exit 1; }
 
-# Validate
-if ! grep -q 'CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT' "$SUSFS_DEF_H"; then
-    echo "FATAL: CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT injection failed"
-    exit 1
-fi
-
-# --- 2. Struct in susfs.h ---
-if grep -q 'st_susfs_sus_kstat_redirect' "$SUSFS_H"; then
-    echo "[=] st_susfs_sus_kstat_redirect already present in susfs.h"
-else
-    echo "[+] Injecting st_susfs_sus_kstat_redirect struct into susfs.h"
-    # Anchor: after the closing }; of st_susfs_sus_kstat_hlist struct
-    sed -i '/^struct st_susfs_sus_kstat_hlist {/,/^};/ {
-        /^};/ a\
+    # Struct
+    if ! grep -q 'st_susfs_sus_kstat_redirect' "$SUSFS_H"; then
+        echo "[+] st_susfs_sus_kstat_redirect struct"
+        sed -i '/^struct st_susfs_sus_kstat_hlist {/,/^};/ {
+            /^};/ a\
 \
 struct st_susfs_sus_kstat_redirect {\
 \tchar                                    virtual_pathname[SUSFS_MAX_LEN_PATHNAME];\
@@ -67,43 +59,24 @@ struct st_susfs_sus_kstat_redirect {\
 \tunsigned long long                      spoofed_blocks;\
 \tint                                     err;\
 };
-    }' "$SUSFS_H"
-    ((inject_count++)) || true
-fi
+        }' "$SUSFS_H"
+        ((inject_count++)) || true
+    fi
+    grep -q 'st_susfs_sus_kstat_redirect' "$SUSFS_H" || { echo "FATAL: struct injection failed"; exit 1; }
 
-# Validate
-if ! grep -q 'st_susfs_sus_kstat_redirect' "$SUSFS_H"; then
-    echo "FATAL: st_susfs_sus_kstat_redirect struct injection failed"
-    exit 1
-fi
+    # Declaration
+    if ! grep -q 'susfs_add_sus_kstat_redirect' "$SUSFS_H"; then
+        echo "[+] susfs_add_sus_kstat_redirect declaration"
+        sed -i '/void susfs_add_sus_kstat(void __user \*\*user_info);/a void susfs_add_sus_kstat_redirect(void __user **user_info);' "$SUSFS_H"
+        ((inject_count++)) || true
+    fi
+    grep -q 'susfs_add_sus_kstat_redirect' "$SUSFS_H" || { echo "FATAL: declaration injection failed"; exit 1; }
 
-# --- 3. Function declaration in susfs.h ---
-if grep -q 'susfs_add_sus_kstat_redirect' "$SUSFS_H"; then
-    echo "[=] susfs_add_sus_kstat_redirect declaration already present in susfs.h"
-else
-    echo "[+] Injecting susfs_add_sus_kstat_redirect declaration into susfs.h"
-    # Anchor: after susfs_add_sus_kstat declaration
-    sed -i '/void susfs_add_sus_kstat(void __user \*\*user_info);/a void susfs_add_sus_kstat_redirect(void __user **user_info);' "$SUSFS_H"
-    ((inject_count++)) || true
-fi
-
-# Validate
-if ! grep -q 'susfs_add_sus_kstat_redirect' "$SUSFS_H"; then
-    echo "FATAL: susfs_add_sus_kstat_redirect declaration injection failed"
-    exit 1
-fi
-
-# --- 4. Function body in susfs.c ---
-if grep -q 'susfs_add_sus_kstat_redirect' "$SUSFS_C"; then
-    echo "[=] susfs_add_sus_kstat_redirect function already present in susfs.c"
-else
-    echo "[+] Injecting susfs_add_sus_kstat_redirect function into susfs.c"
-    # Anchor: after the closing brace of susfs_add_sus_kstat() function.
-    # We find the SUSFS_LOGI for CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY and inject after
-    # the next closing brace (end of susfs_add_sus_kstat).
-    # Strategy: find the unique log line at end of susfs_add_sus_kstat, then its closing }
-    sed -i '/CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY -> ret/,/^}/ {
-        /^}/ a\
+    # Function body
+    if ! grep -q 'susfs_add_sus_kstat_redirect' "$SUSFS_C"; then
+        echo "[+] susfs_add_sus_kstat_redirect function body"
+        sed -i '/CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY -> ret/,/^}/ {
+            /^}/ a\
 \
 void susfs_add_sus_kstat_redirect(void __user **user_info) {\
 \tstruct st_susfs_sus_kstat_redirect info = {0};\
@@ -180,7 +153,7 @@ void susfs_add_sus_kstat_redirect(void __user **user_info) {\
 \tnew_entry->info.is_statically = 0;\
 \tnew_entry->info.target_ino = inode_real->i_ino;\
 \tstrncpy(new_entry->info.target_pathname, info.virtual_pathname, SUSFS_MAX_LEN_PATHNAME - 1);\
-\tnew_entry->info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '"'"'\\0'"'"';\
+\tnew_entry->info.target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = 0;\
 \tnew_entry->info.spoofed_ino = info.spoofed_ino;\
 \tnew_entry->info.spoofed_dev = info.spoofed_dev;\
 \tnew_entry->info.spoofed_nlink = info.spoofed_nlink;\
@@ -207,9 +180,9 @@ void susfs_add_sus_kstat_redirect(void __user **user_info) {\
 \t\tvirtual_entry->info.target_ino = virtual_ino;\
 \t}\
 \n\tspin_lock(&susfs_spin_lock_sus_kstat);\
-\thash_add(SUS_KSTAT_HLIST, &new_entry->node, new_entry->target_ino);\
+\thash_add_rcu(SUS_KSTAT_HLIST, &new_entry->node, new_entry->target_ino);\
 \tif (virtual_entry) {\
-\t\thash_add(SUS_KSTAT_HLIST, &virtual_entry->node, virtual_ino);\
+\t\thash_add_rcu(SUS_KSTAT_HLIST, &virtual_entry->node, virtual_ino);\
 \t}\
 \tspin_unlock(&susfs_spin_lock_sus_kstat);\
 \n\tSUSFS_LOGI("kstat_redirect: RPATH_OK ino=%lu dev=%lu '"'"'%s'"'"'\\n",\
@@ -245,68 +218,44 @@ out_copy_to_user:\
 \t}\
 \tSUSFS_LOGI("kstat_redirect: EXIT ret=%d vpath='"'"'%s'"'"'\\n", info.err, info.virtual_pathname);\
 }
-    }' "$SUSFS_C"
-    ((inject_count++)) || true
-fi
-
-# Validate
-if ! grep -q 'susfs_add_sus_kstat_redirect' "$SUSFS_C"; then
-    echo "FATAL: susfs_add_sus_kstat_redirect function injection failed"
-    exit 1
-fi
+        }' "$SUSFS_C"
+        ((inject_count++)) || true
+    fi
+    grep -q 'susfs_add_sus_kstat_redirect' "$SUSFS_C" || { echo "FATAL: function injection failed"; exit 1; }
 }
 
 inject_open_redirect_all() {
-echo "=== inject-susfs-open-redirect-all ==="
+    echo "=== open_redirect_all ==="
 
-# --- 1. CMD code in susfs_def.h ---
-if grep -q 'CMD_SUSFS_ADD_OPEN_REDIRECT_ALL' "$SUSFS_DEF_H"; then
-    echo "[=] CMD_SUSFS_ADD_OPEN_REDIRECT_ALL already present in susfs_def.h"
-else
-    echo "[+] Injecting CMD_SUSFS_ADD_OPEN_REDIRECT_ALL into susfs_def.h"
-    sed -i '/CMD_SUSFS_ADD_OPEN_REDIRECT 0x555c0/a #define CMD_SUSFS_ADD_OPEN_REDIRECT_ALL 0x555c1' "$SUSFS_DEF_H"
-    ((inject_count++)) || true
-fi
+    # CMD code
+    if ! grep -q 'CMD_SUSFS_ADD_OPEN_REDIRECT_ALL' "$SUSFS_DEF_H"; then
+        echo "[+] CMD_SUSFS_ADD_OPEN_REDIRECT_ALL"
+        sed -i '/CMD_SUSFS_ADD_OPEN_REDIRECT 0x555c0/a #define CMD_SUSFS_ADD_OPEN_REDIRECT_ALL 0x555c1' "$SUSFS_DEF_H"
+        ((inject_count++)) || true
+    fi
 
-# --- 2. AS_FLAGS and BIT in susfs_def.h ---
-if grep -q 'AS_FLAGS_OPEN_REDIRECT_ALL' "$SUSFS_DEF_H"; then
-    echo "[=] AS_FLAGS_OPEN_REDIRECT_ALL already present in susfs_def.h"
-else
-    echo "[+] Injecting AS_FLAGS_OPEN_REDIRECT_ALL into susfs_def.h"
-    sed -i '/^#define AS_FLAGS_SUS_MAP/a #define AS_FLAGS_OPEN_REDIRECT_ALL 40' "$SUSFS_DEF_H"
-    ((inject_count++)) || true
-fi
+    # AS_FLAGS + BIT
+    if ! grep -q 'AS_FLAGS_OPEN_REDIRECT_ALL' "$SUSFS_DEF_H"; then
+        echo "[+] AS_FLAGS_OPEN_REDIRECT_ALL"
+        sed -i '/^#define AS_FLAGS_SUS_MAP/a #define AS_FLAGS_OPEN_REDIRECT_ALL 40' "$SUSFS_DEF_H"
+        ((inject_count++)) || true
+    fi
 
-if grep -q 'BIT_OPEN_REDIRECT_ALL' "$SUSFS_DEF_H"; then
-    echo "[=] BIT_OPEN_REDIRECT_ALL already present in susfs_def.h"
-else
-    echo "[+] Injecting BIT_OPEN_REDIRECT_ALL into susfs_def.h"
-    sed -i '/^#define AS_FLAGS_OPEN_REDIRECT_ALL/a #define BIT_OPEN_REDIRECT_ALL BIT(40)' "$SUSFS_DEF_H"
-    ((inject_count++)) || true
-fi
+    if ! grep -q 'BIT_OPEN_REDIRECT_ALL' "$SUSFS_DEF_H"; then
+        echo "[+] BIT_OPEN_REDIRECT_ALL"
+        sed -i '/^#define AS_FLAGS_OPEN_REDIRECT_ALL/a #define BIT_OPEN_REDIRECT_ALL BIT(40)' "$SUSFS_DEF_H"
+        ((inject_count++)) || true
+    fi
 
-# Validate
-if ! grep -q 'CMD_SUSFS_ADD_OPEN_REDIRECT_ALL' "$SUSFS_DEF_H"; then
-    echo "FATAL: CMD_SUSFS_ADD_OPEN_REDIRECT_ALL injection failed"
-    exit 1
-fi
-if ! grep -q 'AS_FLAGS_OPEN_REDIRECT_ALL' "$SUSFS_DEF_H"; then
-    echo "FATAL: AS_FLAGS_OPEN_REDIRECT_ALL injection failed"
-    exit 1
-fi
-if ! grep -q 'BIT_OPEN_REDIRECT_ALL' "$SUSFS_DEF_H"; then
-    echo "FATAL: BIT_OPEN_REDIRECT_ALL injection failed"
-    exit 1
-fi
+    for sym in CMD_SUSFS_ADD_OPEN_REDIRECT_ALL AS_FLAGS_OPEN_REDIRECT_ALL BIT_OPEN_REDIRECT_ALL; do
+        grep -q "$sym" "$SUSFS_DEF_H" || { echo "FATAL: $sym injection failed"; exit 1; }
+    done
 
-# --- 3. Struct in susfs.h ---
-if grep -q 'st_susfs_open_redirect_all_hlist' "$SUSFS_H"; then
-    echo "[=] st_susfs_open_redirect_all_hlist already present in susfs.h"
-else
-    echo "[+] Injecting st_susfs_open_redirect_all_hlist struct into susfs.h"
-    # Anchor: after the closing }; of st_susfs_open_redirect_hlist
-    sed -i '/^struct st_susfs_open_redirect_hlist {/,/^};/ {
-        /^};/ a\
+    # Struct
+    if ! grep -q 'st_susfs_open_redirect_all_hlist' "$SUSFS_H"; then
+        echo "[+] st_susfs_open_redirect_all_hlist struct"
+        sed -i '/^struct st_susfs_open_redirect_hlist {/,/^};/ {
+            /^};/ a\
 \
 struct st_susfs_open_redirect_all_hlist {\
 \tunsigned long                           target_ino;\
@@ -314,55 +263,32 @@ struct st_susfs_open_redirect_all_hlist {\
 \tchar                                    redirected_pathname[SUSFS_MAX_LEN_PATHNAME];\
 \tstruct hlist_node                       node;\
 };
-    }' "$SUSFS_H"
-    ((inject_count++)) || true
-fi
+        }' "$SUSFS_H"
+        ((inject_count++)) || true
+    fi
+    grep -q 'st_susfs_open_redirect_all_hlist' "$SUSFS_H" || { echo "FATAL: struct injection failed"; exit 1; }
 
-# Validate
-if ! grep -q 'st_susfs_open_redirect_all_hlist' "$SUSFS_H"; then
-    echo "FATAL: st_susfs_open_redirect_all_hlist struct injection failed"
-    exit 1
-fi
+    # Declarations
+    if ! grep -q 'susfs_add_open_redirect_all' "$SUSFS_H"; then
+        echo "[+] open_redirect_all declarations"
+        sed -i '/void susfs_add_open_redirect(void __user \*\*user_info);/a void susfs_add_open_redirect_all(void __user **user_info);\nstruct filename* susfs_get_redirected_path_all(unsigned long ino);' "$SUSFS_H"
+        ((inject_count++)) || true
+    fi
+    grep -q 'susfs_add_open_redirect_all' "$SUSFS_H" || { echo "FATAL: declaration injection failed"; exit 1; }
 
-# --- 4. Function declarations in susfs.h ---
-if grep -q 'susfs_add_open_redirect_all' "$SUSFS_H"; then
-    echo "[=] susfs_add_open_redirect_all declaration already present in susfs.h"
-else
-    echo "[+] Injecting open_redirect_all declarations into susfs.h"
-    sed -i '/void susfs_add_open_redirect(void __user \*\*user_info);/a void susfs_add_open_redirect_all(void __user **user_info);\nstruct filename* susfs_get_redirected_path_all(unsigned long ino);' "$SUSFS_H"
-    ((inject_count++)) || true
-fi
+    # Hash table + spinlock
+    if ! grep -q 'OPEN_REDIRECT_ALL_HLIST' "$SUSFS_C"; then
+        echo "[+] OPEN_REDIRECT_ALL_HLIST hash table"
+        sed -i '/DEFINE_HASHTABLE(OPEN_REDIRECT_HLIST, 10);/a static DEFINE_SPINLOCK(susfs_spin_lock_open_redirect_all);\nstatic DEFINE_HASHTABLE(OPEN_REDIRECT_ALL_HLIST, 10);' "$SUSFS_C"
+        ((inject_count++)) || true
+    fi
+    grep -q 'OPEN_REDIRECT_ALL_HLIST' "$SUSFS_C" || { echo "FATAL: hash table injection failed"; exit 1; }
 
-# Validate
-if ! grep -q 'susfs_add_open_redirect_all' "$SUSFS_H"; then
-    echo "FATAL: susfs_add_open_redirect_all declaration injection failed"
-    exit 1
-fi
-
-# --- 5. Hash table + spinlock in susfs.c ---
-if grep -q 'OPEN_REDIRECT_ALL_HLIST' "$SUSFS_C"; then
-    echo "[=] OPEN_REDIRECT_ALL_HLIST already present in susfs.c"
-else
-    echo "[+] Injecting OPEN_REDIRECT_ALL hash table into susfs.c"
-    sed -i '/DEFINE_HASHTABLE(OPEN_REDIRECT_HLIST, 10);/a static DEFINE_SPINLOCK(susfs_spin_lock_open_redirect_all);\nstatic DEFINE_HASHTABLE(OPEN_REDIRECT_ALL_HLIST, 10);' "$SUSFS_C"
-    ((inject_count++)) || true
-fi
-
-# Validate
-if ! grep -q 'OPEN_REDIRECT_ALL_HLIST' "$SUSFS_C"; then
-    echo "FATAL: OPEN_REDIRECT_ALL_HLIST injection failed"
-    exit 1
-fi
-
-# --- 6. Three functions in susfs.c ---
-if grep -q 'susfs_update_open_redirect_all_inode' "$SUSFS_C"; then
-    echo "[=] open_redirect_all functions already present in susfs.c"
-else
-    echo "[+] Injecting open_redirect_all functions into susfs.c"
-    # Anchor: after susfs_add_open_redirect() function
-    # Find CMD_SUSFS_ADD_OPEN_REDIRECT -> ret log line and its closing brace
-    sed -i '/CMD_SUSFS_ADD_OPEN_REDIRECT -> ret/,/^}/ {
-        /^}/ a\
+    # Functions
+    if ! grep -q 'susfs_update_open_redirect_all_inode' "$SUSFS_C"; then
+        echo "[+] open_redirect_all functions"
+        sed -i '/CMD_SUSFS_ADD_OPEN_REDIRECT -> ret/,/^}/ {
+            /^}/ a\
 \
 static int susfs_update_open_redirect_all_inode(struct st_susfs_open_redirect_all_hlist *new_entry) {\
 \tstruct path path_target;\
@@ -401,9 +327,9 @@ void susfs_add_open_redirect_all(void __user **user_info) {\
 \t}\
 \n\tnew_entry->target_ino = info.target_ino;\
 \tstrncpy(new_entry->target_pathname, info.target_pathname, SUSFS_MAX_LEN_PATHNAME-1);\
-\tnew_entry->target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '"'"'\\0'"'"';\
+\tnew_entry->target_pathname[SUSFS_MAX_LEN_PATHNAME-1] = 0;\
 \tstrncpy(new_entry->redirected_pathname, info.redirected_pathname, SUSFS_MAX_LEN_PATHNAME-1);\
-\tnew_entry->redirected_pathname[SUSFS_MAX_LEN_PATHNAME-1] = '"'"'\\0'"'"';\
+\tnew_entry->redirected_pathname[SUSFS_MAX_LEN_PATHNAME-1] = 0;\
 \tif (susfs_update_open_redirect_all_inode(new_entry)) {\
 \t\tSUSFS_LOGE("failed adding path '"'"'%s'"'"' to OPEN_REDIRECT_ALL_HLIST\\n", new_entry->target_pathname);\
 \t\tkfree(new_entry);\
@@ -411,7 +337,7 @@ void susfs_add_open_redirect_all(void __user **user_info) {\
 \t\tgoto out_copy_to_user;\
 \t}\
 \n\tspin_lock(&susfs_spin_lock_open_redirect_all);\
-\thash_add(OPEN_REDIRECT_ALL_HLIST, &new_entry->node, info.target_ino);\
+\thash_add_rcu(OPEN_REDIRECT_ALL_HLIST, &new_entry->node, info.target_ino);\
 \tspin_unlock(&susfs_spin_lock_open_redirect_all);\
 \tSUSFS_LOGI("target_ino: '"'"'%lu'"'"', target_pathname: '"'"'%s'"'"' redirected_pathname: '"'"'%s'"'"', is successfully added to OPEN_REDIRECT_ALL_HLIST\\n",\
 \t\t\tnew_entry->target_ino, new_entry->target_pathname, new_entry->redirected_pathname);\
@@ -425,64 +351,53 @@ out_copy_to_user:\
 \
 struct filename* susfs_get_redirected_path_all(unsigned long ino) {\
 \tstruct st_susfs_open_redirect_all_hlist *entry;\
-\tstruct filename *result = ERR_PTR(-ENOENT);\
-\n\tspin_lock(&susfs_spin_lock_open_redirect_all);\
-\thash_for_each_possible(OPEN_REDIRECT_ALL_HLIST, entry, node, ino) {\
+\tchar tmp_path[SUSFS_MAX_LEN_PATHNAME];\
+\tbool found = false;\
+\n\trcu_read_lock();\
+\thash_for_each_possible_rcu(OPEN_REDIRECT_ALL_HLIST, entry, node, ino) {\
 \t\tif (entry->target_ino == ino) {\
 \t\t\tSUSFS_LOGI("Redirect_all for ino: %lu\\n", ino);\
-\t\t\tresult = getname_kernel(entry->redirected_pathname);\
+\t\t\tstrncpy(tmp_path, entry->redirected_pathname, SUSFS_MAX_LEN_PATHNAME - 1);\
+\t\t\ttmp_path[SUSFS_MAX_LEN_PATHNAME - 1] = 0;\
+\t\t\tfound = true;\
 \t\t\tbreak;\
 \t\t}\
 \t}\
-\tspin_unlock(&susfs_spin_lock_open_redirect_all);\
-\treturn result;\
+\trcu_read_unlock();\
+\treturn found ? getname_kernel(tmp_path) : ERR_PTR(-ENOENT);\
 }
-    }' "$SUSFS_C"
-    ((inject_count++)) || true
-fi
+        }' "$SUSFS_C"
+        ((inject_count++)) || true
+    fi
 
-# Validate
-if ! grep -q 'susfs_add_open_redirect_all' "$SUSFS_C"; then
-    echo "FATAL: susfs_add_open_redirect_all function injection failed"
-    exit 1
-fi
-if ! grep -q 'susfs_get_redirected_path_all' "$SUSFS_C"; then
-    echo "FATAL: susfs_get_redirected_path_all function injection failed"
-    exit 1
-fi
-if ! grep -q 'susfs_update_open_redirect_all_inode' "$SUSFS_C"; then
-    echo "FATAL: susfs_update_open_redirect_all_inode function injection failed"
-    exit 1
-fi
+    for sym in susfs_add_open_redirect_all susfs_get_redirected_path_all susfs_update_open_redirect_all_inode; do
+        grep -q "$sym" "$SUSFS_C" || { echo "FATAL: $sym injection failed"; exit 1; }
+    done
+
+    # hash_add -> hash_add_rcu in writer
+    if grep -q 'hash_add(OPEN_REDIRECT_ALL_HLIST' "$SUSFS_C"; then
+        echo "[+] Converting hash_add to hash_add_rcu in open_redirect_all writer"
+        sed -i 's/hash_add(OPEN_REDIRECT_ALL_HLIST,/hash_add_rcu(OPEN_REDIRECT_ALL_HLIST,/g' "$SUSFS_C"
+        ((inject_count++)) || true
+    fi
 }
 
-inject_unicode_filter_func() {
-echo "=== inject-susfs-unicode-filter-func ==="
+inject_unicode_filter() {
+    echo "=== unicode_filter ==="
 
-# --- 1. #include <linux/limits.h> in susfs.c ---
-if grep -q '#include <linux/limits.h>' "$SUSFS_C"; then
-    echo "[=] #include <linux/limits.h> already present in susfs.c"
-else
-    echo "[+] Injecting #include <linux/limits.h> into susfs.c"
-    sed -i '/#include <linux\/susfs.h>/a #include <linux/limits.h>' "$SUSFS_C"
-    ((inject_count++)) || true
-fi
+    # #include <linux/limits.h>
+    if ! grep -q '#include <linux/limits.h>' "$SUSFS_C"; then
+        echo "[+] limits.h include"
+        sed -i '/#include <linux\/susfs.h>/a #include <linux/limits.h>' "$SUSFS_C"
+        ((inject_count++)) || true
+    fi
+    grep -q '#include <linux/limits.h>' "$SUSFS_C" || { echo "FATAL: limits.h injection failed"; exit 1; }
 
-if ! grep -q '#include <linux/limits.h>' "$SUSFS_C"; then
-    echo "FATAL: #include <linux/limits.h> injection failed"
-    exit 1
-fi
-
-# --- 2. Unicode filter function body in susfs.c ---
-# Anchor: after the SUSFS_LOGE macro line, before susfs_starts_with.
-# The block goes between the #endif of the log macros and the next function.
-if grep -q 'susfs_check_unicode_bypass' "$SUSFS_C"; then
-    echo "[=] susfs_check_unicode_bypass already present in susfs.c"
-else
-    echo "[+] Injecting susfs_check_unicode_bypass function into susfs.c"
-    # Anchor on the SUSFS_LOGE macro (last line of the log config block)
-    sed -i '/^#define SUSFS_LOGE/,/^#endif/ {
-        /^#endif/ a\
+    # Function body
+    if ! grep -q 'susfs_check_unicode_bypass' "$SUSFS_C"; then
+        echo "[+] susfs_check_unicode_bypass function"
+        sed -i '/^#define SUSFS_LOGE/,/^#endif/ {
+            /^#endif/ a\
 \
 #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
 \
@@ -497,7 +412,7 @@ static const unsigned char PAT_BOM[]            = {0xEF, 0xBB, 0xBF};\
 \
 bool susfs_check_unicode_bypass(const char __user *filename)\
 {\
-\tchar *buf;\
+\tchar buf[NAME_MAX + 1];\
 \tunsigned int uid;\
 \tbool blocked = false;\
 \tlong len;\
@@ -510,16 +425,10 @@ bool susfs_check_unicode_bypass(const char __user *filename)\
 \tif (uid == 0 || uid == 1000)\
 \t\treturn false;\
 \
-\tbuf = kmalloc(PATH_MAX, GFP_KERNEL);\
-\tif (!buf)\
+\tlen = strncpy_from_user(buf, filename, NAME_MAX);\
+\tif (len <= 0)\
 \t\treturn false;\
-\
-\tlen = strncpy_from_user(buf, filename, PATH_MAX - 1);\
-\tif (len <= 0) {\
-\t\tkfree(buf);\
-\t\treturn false;\
-\t}\
-\tbuf[len] = '"'"'\\0'"'"';\
+\tbuf[len] = 0;\
 \
 \tfor (i = 0; i < len; i++) {\
 \t\tunsigned char c = (unsigned char)buf[i];\
@@ -558,43 +467,125 @@ bool susfs_check_unicode_bypass(const char __user *filename)\
 \t\tblocked = true;\
 \t\tbreak;\
 \t}\
-\tkfree(buf);\
 \treturn blocked;\
 }\
 #endif
-    }' "$SUSFS_C"
-    ((inject_count++)) || true
-fi
+        }' "$SUSFS_C"
+        ((inject_count++)) || true
+    fi
+    grep -q 'susfs_check_unicode_bypass' "$SUSFS_C" || { echo "FATAL: unicode function injection failed"; exit 1; }
 
-if ! grep -q 'susfs_check_unicode_bypass' "$SUSFS_C"; then
-    echo "FATAL: susfs_check_unicode_bypass function injection failed"
-    exit 1
-fi
-
-# --- 3. Declaration in susfs.h ---
-# Anchor: before the final #endif that closes the header guard
-if grep -q 'susfs_check_unicode_bypass' "$SUSFS_H"; then
-    echo "[=] susfs_check_unicode_bypass declaration already present in susfs.h"
-else
-    echo "[+] Injecting susfs_check_unicode_bypass declaration into susfs.h"
-    # Insert before susfs_init declaration as a reliable anchor near the end
-    sed -i '/^void susfs_init(void);/a \
+    # Declaration in susfs.h
+    if ! grep -q 'susfs_check_unicode_bypass' "$SUSFS_H"; then
+        echo "[+] susfs_check_unicode_bypass declaration"
+        sed -i '/^void susfs_init(void);/a \
 \
 #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
 bool susfs_check_unicode_bypass(const char __user *filename);\
 #endif' "$SUSFS_H"
-    ((inject_count++)) || true
-fi
-
-if ! grep -q 'susfs_check_unicode_bypass' "$SUSFS_H"; then
-    echo "FATAL: susfs_check_unicode_bypass declaration injection failed"
-    exit 1
-fi
+        ((inject_count++)) || true
+    fi
+    grep -q 'susfs_check_unicode_bypass' "$SUSFS_H" || { echo "FATAL: declaration injection failed"; exit 1; }
 }
 
-# Execution order matches gki-build.yml
+inject_build_bug_on_guards() {
+    echo "=== BUILD_BUG_ON guards (L5) ==="
+
+    # pagemap.h include
+    if ! grep -q '#include <linux/pagemap.h>' "$SUSFS_C"; then
+        echo "[+] pagemap.h include"
+        sed -i '/#include <linux\/susfs.h>/a #include <linux/pagemap.h>' "$SUSFS_C"
+        ((inject_count++)) || true
+    fi
+
+    # Guards in susfs_init()
+    if ! grep -q 'BUILD_BUG_ON.*AS_FLAGS_SUS_PATH' "$SUSFS_C"; then
+        echo "[+] BUILD_BUG_ON guards"
+        local bug_on_lines='\tBUILD_BUG_ON(AS_FLAGS_SUS_PATH <= AS_LARGE_FOLIO_SUPPORT);\
+\tBUILD_BUG_ON(AS_FLAGS_SUS_MAP >= BITS_PER_LONG);\
+\tBUILD_BUG_ON(AS_FLAGS_OPEN_REDIRECT_ALL >= BITS_PER_LONG);'
+        if grep -q 'AS_FLAGS_SUS_PATH_PARENT' "$SUSFS_DEF_H"; then
+            bug_on_lines="${bug_on_lines}"'\
+\tBUILD_BUG_ON(AS_FLAGS_SUS_PATH_PARENT >= BITS_PER_LONG);'
+        fi
+        sed -i "/^void susfs_init(void) {/a \\
+${bug_on_lines}" "$SUSFS_C"
+        ((inject_count++)) || true
+    fi
+    grep -q 'BUILD_BUG_ON.*AS_FLAGS_SUS_PATH' "$SUSFS_C" || { echo "FATAL: BUILD_BUG_ON injection failed"; exit 1; }
+}
+
+inject_zeromount_coupling() {
+    echo "=== zeromount coupling (M3) ==="
+
+    # Extern + inline wrapper in susfs_def.h
+    if ! grep -q 'zeromount_is_uid_blocked' "$SUSFS_DEF_H"; then
+        echo "[+] zeromount coupling in susfs_def.h"
+        sed -i '/^#endif.*KSU_SUSFS_DEF_H/ i\
+\/\/ ZeroMount integration: extern when enabled, no-op helper when disabled\
+#ifdef CONFIG_ZEROMOUNT\
+extern bool zeromount_is_uid_blocked(uid_t uid);\
+static inline bool susfs_is_uid_zeromount_excluded(uid_t uid) {\
+\treturn zeromount_is_uid_blocked(uid);\
+}\
+#else\
+static inline bool susfs_is_uid_zeromount_excluded(uid_t uid) { return false; }\
+#endif' "$SUSFS_DEF_H"
+        ((inject_count++)) || true
+    fi
+    grep -q 'zeromount_is_uid_blocked' "$SUSFS_DEF_H" || { echo "FATAL: zeromount coupling failed"; exit 1; }
+
+    # uid exclusion check in is_i_uid_not_allowed()
+    if ! grep -q 'susfs_is_uid_zeromount_excluded' "$SUSFS_C"; then
+        echo "[+] zeromount check in is_i_uid_not_allowed"
+        sed -i '/^static inline bool is_i_uid_not_allowed(uid_t i_uid) {$/a \\tif (susfs_is_uid_zeromount_excluded(current_uid().val))\n\t\treturn false;' "$SUSFS_C"
+        ((inject_count++)) || true
+    fi
+
+    count=$(grep -c 'susfs_is_uid_zeromount_excluded' "$SUSFS_C" || true)
+    [ "$count" -ge 1 ] || { echo "FATAL: zeromount check injection failed"; exit 1; }
+}
+
+inject_supercall_dispatch() {
+    echo "=== supercall dispatch (C4) ==="
+
+    local ksu_patch="$SUSFS_DIR/KernelSU/10_enable_susfs_for_ksu.patch"
+    [ -f "$ksu_patch" ] || { echo "FATAL: missing $ksu_patch"; exit 1; }
+
+    # kstat_redirect handler
+    if ! grep -q 'CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT' "$ksu_patch"; then
+        echo "[+] CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT handler"
+        sed -i '/CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY/,/+        }/ {
+            /+        }/ a\
++        if (cmd == CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT) {\
++            susfs_add_sus_kstat_redirect(arg);\
++            return 0;\
++        }
+        }' "$ksu_patch"
+        ((inject_count++)) || true
+    fi
+    grep -q 'CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT' "$ksu_patch" || { echo "FATAL: kstat_redirect dispatch failed"; exit 1; }
+
+    # open_redirect_all handler
+    if ! grep -q 'CMD_SUSFS_ADD_OPEN_REDIRECT_ALL' "$ksu_patch"; then
+        echo "[+] CMD_SUSFS_ADD_OPEN_REDIRECT_ALL handler"
+        sed -i '/CMD_SUSFS_ADD_OPEN_REDIRECT)/,/+        }/ {
+            /+        }/ a\
++        if (cmd == CMD_SUSFS_ADD_OPEN_REDIRECT_ALL) {\
++            susfs_add_open_redirect_all(arg);\
++            return 0;\
++        }
+        }' "$ksu_patch"
+        ((inject_count++)) || true
+    fi
+    grep -q 'CMD_SUSFS_ADD_OPEN_REDIRECT_ALL' "$ksu_patch" || { echo "FATAL: open_redirect_all dispatch failed"; exit 1; }
+}
+
 inject_kstat_redirect
 inject_open_redirect_all
-inject_unicode_filter_func
+inject_unicode_filter
+inject_build_bug_on_guards
+inject_zeromount_coupling
+inject_supercall_dispatch
 
-echo "=== Done: $inject_count injections applied ==="
+echo "=== add-features done ($inject_count injections) ==="
