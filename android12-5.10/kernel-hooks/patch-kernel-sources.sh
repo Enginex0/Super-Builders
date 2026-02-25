@@ -65,12 +65,14 @@ inject_zeromount_mount_display() {
     else
         echo "[+] Injecting zeromount checks into show_* functions"
         awk '
-        /^\t\t!susfs_is_current_ksu_domain\(\)\)$/ {
-            print "\t\t!susfs_is_current_ksu_domain()"
+        /^[[:space:]]+!susfs_is_current_ksu_domain\(\)\)$/ {
+            match($0, /^[[:space:]]+/)
+            indent = substr($0, 1, RLENGTH)
+            print indent "!susfs_is_current_ksu_domain()"
             print "#ifdef CONFIG_ZEROMOUNT"
-            print "\t\t&& !susfs_is_uid_zeromount_excluded(current_uid().val)"
+            print indent "&& !susfs_is_uid_zeromount_excluded(current_uid().val)"
             print "#endif"
-            print "\t\t)"
+            print indent ")"
             next
         }
         { print }

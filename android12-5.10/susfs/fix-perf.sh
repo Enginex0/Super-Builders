@@ -164,17 +164,23 @@ recalc_hunk_headers() {
         if (hunk_n == 0) return
         split(hdr_parts[2], om, ",")
         split(hdr_parts[3], nm, ",")
-        printf "@@ %s,%d %s,%d @@", om[1], old_count, nm[1], new_count
+        # Apply accumulated line delta to correct the start offsets of this hunk
+        old_start = om[1] + 0 + old_delta
+        new_start = nm[1] + 0 + new_delta
+        printf "@@ -%d,%d +%d,%d @@", old_start, old_count, new_start, new_count
         for (i = 5; i <= length(hdr_parts); i++) printf " %s", hdr_parts[i]
         printf "\n"
         for (i = 1; i <= hunk_n; i++) printf "%s\n", hunk_buf[i]
+        # Track net delta introduced by this hunk for subsequent hunks
+        old_delta += new_count - old_count
+        new_delta += new_count - old_count
     }
 
-    BEGIN { hunk_n = 0; old_count = 0; new_count = 0 }
+    BEGIN { hunk_n = 0; old_count = 0; new_count = 0; old_delta = 0; new_delta = 0 }
 
     /^diff --git/ || /^---/ || /^\+\+\+/ || /^index / || /^old mode/ || /^new mode/ || /^new file/ || /^deleted file/ || /^similarity/ || /^rename/ || /^copy/ {
         flush_hunk()
-        hunk_n = 0; old_count = 0; new_count = 0
+        hunk_n = 0; old_count = 0; new_count = 0; old_delta = 0; new_delta = 0
         print
         next
     }

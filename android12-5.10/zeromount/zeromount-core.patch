@@ -1519,14 +1519,21 @@ index 000000000..9e0fb1b21
 +#else
 +#define ZM_RECURSIVE_MARKER ((void *)0x5A4D)
 +
++/* Only claim journal_info if it is free — avoids clobbering jbd2 handles
++ * held by user processes doing ext4 I/O. If already occupied, we treat
++ * the call as a no-op; zm_is_recursive() returns false so ZeroMount
++ * proceeds normally, which is safe since the occupied handle means we
++ * are in a filesystem transaction context where redirection is unwanted. */
 +static inline void zm_enter(void)
 +{
-+	current->journal_info = ZM_RECURSIVE_MARKER;
++	if (!current->journal_info)
++		current->journal_info = ZM_RECURSIVE_MARKER;
 +}
 +
 +static inline void zm_exit(void)
 +{
-+	current->journal_info = NULL;
++	if (current->journal_info == ZM_RECURSIVE_MARKER)
++		current->journal_info = NULL;
 +}
 +
 +static inline bool zm_is_recursive(void)

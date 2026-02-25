@@ -55,7 +55,7 @@ inject_stat() {
 #ifdef CONFIG_ZEROMOUNT\
 static inline int zeromount_stat_hook(int dfd, const char __user *filename, \
                                       struct kstat *stat, unsigned int request_mask, \
-                                      unsigned int flags) {\
+                                      int flags) {\
     if (zm_is_recursive()) return -ENOENT;\
     if (filename) {\
         char kname[NAME_MAX + 1];\
