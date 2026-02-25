@@ -158,6 +158,7 @@ jobs:
 
     - name: Apply glibc 2.38 Compatibility Fix
       run: |
+        ACTUAL_SUBLEVEL="${{ env.ACTUAL_SUBLEVEL }}"
         if [[ "${{ env.ANDROID_VERSION }}" == "android13" && "${{ env.KERNEL_VERSION }}" == "5.10" && $ACTUAL_SUBLEVEL -le 186 ]] ||
            [[ "${{ env.ANDROID_VERSION }}" == "android13" && "${{ env.KERNEL_VERSION }}" == "5.15" && $ACTUAL_SUBLEVEL -le 119 ]] ||
            [[ "${{ env.ANDROID_VERSION }}" == "android14" && "${{ env.KERNEL_VERSION }}" == "5.15" && $ACTUAL_SUBLEVEL -le 110 ]] ||
@@ -199,6 +200,10 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s "$BRANCH"
         elif [[ "$KSU_VARIANT" == "WKSU" ]]; then
           echo "=== Adding WKSU ==="
+          if [[ "${{ inputs.add_susfs }}" == "true" ]]; then
+            echo "::error::WKSU has no SUSFS-enabled branch. Disable add_susfs or choose a different KSU variant."
+            exit 1
+          fi
           curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/stable/kernel/setup.sh" | bash -
         elif [[ "$KSU_VARIANT" == "RKSU" ]]; then
           echo "=== Adding RKSU ==="

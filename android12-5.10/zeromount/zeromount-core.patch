@@ -366,12 +366,12 @@ index 000000000..43ca3f0fa
 +}
 +EXPORT_SYMBOL(zeromount_get_virtual_path_for_inode);
 +
-+/* No-alloc virtual path return — pointer valid within single syscall
-+ * context. Safe because rule->virtual_path freed after synchronize_rcu(). */
-+const char *zeromount_get_static_vpath(struct inode *inode)
++/* Returns kstrdup'd copy; caller must kfree. GFP_ATOMIC safe from any context. */
++char *zeromount_get_static_vpath(struct inode *inode)
 +{
 +	struct zeromount_rule *rule;
 +	unsigned long key;
++	char *copy = NULL;
 +
 +	if (unlikely(!inode || !inode->i_sb))
 +		return NULL;
@@ -383,12 +383,12 @@ index 000000000..43ca3f0fa
 +		if (rule->real_ino == inode->i_ino &&
 +		    rule->real_dev == inode->i_sb->s_dev &&
 +		    (rule->flags & ZM_FLAG_ACTIVE)) {
-+			rcu_read_unlock();
-+			return rule->virtual_path;
++			copy = kstrdup(rule->virtual_path, GFP_ATOMIC);
++			break;
 +		}
 +	}
 +	rcu_read_unlock();
-+	return NULL;
++	return copy;
 +}
 +EXPORT_SYMBOL(zeromount_get_static_vpath);
 +
@@ -1627,7 +1627,7 @@ index 000000000..9e0fb1b21
 +void zeromount_inject_dents(struct file *file, void __user **dirent,
 +			    int *count, loff_t *pos);
 +char *zeromount_get_virtual_path_for_inode(struct inode *inode);
-+const char *zeromount_get_static_vpath(struct inode *inode);
++char *zeromount_get_static_vpath(struct inode *inode);
 +void zeromount_spoof_mmap_metadata(struct inode *inode, dev_t *dev,
 +				   unsigned long *ino);
 +bool zeromount_is_traversal_allowed(struct inode *inode, int mask);
@@ -1648,7 +1648,7 @@ index 000000000..9e0fb1b21
 +static inline void zeromount_inject_dents(struct file *f, void __user **d,
 +					  int *c, loff_t *p) {}
 +static inline char *zeromount_get_virtual_path_for_inode(struct inode *inode) { return NULL; }
-+static inline const char *zeromount_get_static_vpath(struct inode *inode) { return NULL; }
++static inline char *zeromount_get_static_vpath(struct inode *inode) { return NULL; }
 +static inline void zeromount_spoof_mmap_metadata(struct inode *inode,
 +						 dev_t *dev,
 +						 unsigned long *ino) {}
