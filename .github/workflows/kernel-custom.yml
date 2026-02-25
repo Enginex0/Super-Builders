@@ -7,6 +7,13 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      device:
+        description: "Target device profile"
+        type: choice
+        options:
+          - lake
+          - lake_a15
+        default: "lake"
       ksu_variant:
         description: "KernelSU variant"
         type: choice
@@ -69,6 +76,12 @@ jobs:
             sub_level: "209"
             os_patch_level: "2024-05"
             device_codename: "lake"
+          - android_version: "android15"
+            kernel_version: "6.6"
+            sub_level: "58"
+            os_patch_level: "2025-01"
+            device_codename: "lake_a15"
+    if: matrix.device_codename == inputs.device
     uses: ./.github/workflows/gki-build.yml
     secrets: inherit
     with:
