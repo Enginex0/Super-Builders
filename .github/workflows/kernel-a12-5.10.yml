@@ -94,14 +94,6 @@ jobs:
       matrix:
         include:
           - sub_level: "107"
-            os_patch_level: "2022-03"
-          - sub_level: "107"
-            os_patch_level: "2022-05"
-          - sub_level: "107"
-            os_patch_level: "2022-07"
-          - sub_level: "107"
-            os_patch_level: "2022-09"
-          - sub_level: "107"
             os_patch_level: "2022-11"
           - sub_level: "149"
             os_patch_level: "2023-01"
