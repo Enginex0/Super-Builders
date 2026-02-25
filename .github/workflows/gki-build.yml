@@ -687,11 +687,12 @@ jobs:
             echo "Stock version: $STOCK_VERSION"
             [ -n "$STOCK_COMPILER" ] && echo "Stock compiler: $STOCK_COMPILER"
 
-            cat > scripts/setlocalversion << 'SETLOCAL_EOF'
-        #!/bin/sh
-        printf '%s' "$STOCK_RELEASE_SUFFIX"
-        SETLOCAL_EOF
-            sed -i "s|\$STOCK_RELEASE_SUFFIX|${STOCK_RELEASE}|g" scripts/setlocalversion
+            if grep -q 'filechk_kernel.release.*KERNELVERSION' Makefile; then
+              RELEASE_FMT="${STOCK_RELEASE}"
+            else
+              RELEASE_FMT="\${KERNELVERSION}${STOCK_RELEASE}"
+            fi
+            printf '#!/bin/sh\nprintf "%%s" "%s"\n' "$RELEASE_FMT" > scripts/setlocalversion
             chmod +x scripts/setlocalversion
 
             if [ -f "scripts/mkcompile_h" ]; then
