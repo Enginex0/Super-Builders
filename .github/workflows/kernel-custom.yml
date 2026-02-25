@@ -24,7 +24,7 @@ on:
           # - MKSU  # no SUSFS branch exists — deferred
           - ReSukiSU
           - WKSU
-          - RKSU
+          # - RKSU  # no SUSFS integration — deferred
         default: "KernelSU-Next"
       add_susfs:
         description: "Add SUSFS (upstream only)"
