@@ -81,7 +81,7 @@ jobs:
             sub_level: "58"
             os_patch_level: "2025-01"
             device_codename: "lake_a15"
-    if: ${{ matrix.device_codename == inputs.device }}
+    if: matrix.device_codename == inputs.device
     uses: ./.github/workflows/gki-build.yml
     secrets: inherit
     with:
