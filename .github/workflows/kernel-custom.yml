@@ -7,6 +7,14 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      device:
+        description: "Device to build"
+        type: choice
+        options:
+          - all
+          - lake
+          - lake_a15
+        default: "all"
       ksu_variant:
         description: "KernelSU variant"
         type: choice
@@ -52,6 +60,9 @@ on:
         default: false
   workflow_call:
     inputs:
+      device:
+        type: string
+        default: "all"
       ksu_variant:
         type: string
         default: "KernelSU-Next"
@@ -87,29 +98,16 @@ jobs:
       contents: read
       actions: write
 
-  build:
+  build-lake:
+    if: ${{ inputs.device == 'all' || inputs.device == 'lake' }}
     needs: [download-dependencies]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - android_version: "android12"
-            kernel_version: "5.10"
-            sub_level: "209"
-            os_patch_level: "2024-05"
-            device_codename: "lake"
-          - android_version: "android15"
-            kernel_version: "6.6"
-            sub_level: "58"
-            os_patch_level: "2025-01"
-            device_codename: "lake_a15"
     uses: ./.github/workflows/gki-build.yml
     secrets: inherit
     with:
-      android_version: ${{ matrix.android_version }}
-      kernel_version: ${{ matrix.kernel_version }}
-      sub_level: ${{ matrix.sub_level }}
-      os_patch_level: ${{ matrix.os_patch_level }}
+      android_version: "android12"
+      kernel_version: "5.10"
+      sub_level: "209"
+      os_patch_level: "2024-05"
       ksu_variant: ${{ inputs.ksu_variant }}
       add_susfs: ${{ inputs.add_susfs }}
       add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
@@ -119,4 +117,25 @@ jobs:
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
       add_kpm: ${{ inputs.add_kpm }}
-      device_codename: ${{ matrix.device_codename }}
+      device_codename: "lake"
+
+  build-lake-a15:
+    if: ${{ inputs.device == 'all' || inputs.device == 'lake_a15' }}
+    needs: [download-dependencies]
+    uses: ./.github/workflows/gki-build.yml
+    secrets: inherit
+    with:
+      android_version: "android15"
+      kernel_version: "6.6"
+      sub_level: "58"
+      os_patch_level: "2025-01"
+      ksu_variant: ${{ inputs.ksu_variant }}
+      add_susfs: ${{ inputs.add_susfs }}
+      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
+      add_unicode_filter: ${{ inputs.add_unicode_filter }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_kpm: ${{ inputs.add_kpm }}
+      device_codename: "lake_a15"
