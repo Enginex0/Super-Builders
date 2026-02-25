@@ -1,0 +1,25 @@
+name: "Test 6.6.58 Minimal"
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/gki-build.yml
+    with:
+      android_version: android15
+      kernel_version: "6.6"
+      sub_level: "58"
+      os_patch_level: "2025-01"
+      ksu_variant: "KernelSU-Next"
+      add_susfs: true
+      add_enhanced_susfs: false
+      add_unicode_filter: false
+      add_zeromount: false
+      add_zram: false
+      add_bbg: false
+      device_codename: "generic"
