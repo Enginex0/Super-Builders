@@ -19,11 +19,11 @@ on:
           - RKSU
         default: "KernelSU-Next"
       add_susfs:
-        description: "Add SUSFS (upstream)"
+        description: "Add SUSFS (upstream only)"
         type: boolean
         default: true
       add_enhanced_susfs:
-        description: "Add enhanced SUSFS (custom injection)"
+        description: "Add enhanced SUSFS (custom injection scripts)"
         type: boolean
         default: true
       add_unicode_filter:
@@ -40,6 +40,10 @@ on:
         default: true
       add_bbg:
         description: "Add Baseband Guard"
+        type: boolean
+        default: true
+      add_overlayfs_support:
+        description: "Add overlayfs support (CONFIG_TMPFS_XATTR + POSIX ACL)"
         type: boolean
         default: true
       add_kpm:
@@ -67,6 +71,9 @@ on:
         type: boolean
         default: true
       add_bbg:
+        type: boolean
+        default: true
+      add_overlayfs_support:
         type: boolean
         default: true
       add_kpm:
@@ -113,5 +120,6 @@ jobs:
       add_zeromount: ${{ inputs.add_zeromount }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
       add_kpm: ${{ inputs.add_kpm }}
       device_codename: "generic"
