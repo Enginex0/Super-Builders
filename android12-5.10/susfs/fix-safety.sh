@@ -28,7 +28,7 @@ p = sys.argv[1]
 data = open(p, 'rb').read()
 if b'\x00' in data:
     print('[+] Scrubbing null bytes from susfs.c')
-    open(p, 'wb').write(data.replace(b'\x00', b'0'))
+    open(p, 'wb').write(data.replace(b'\x00', b''))
 PYEOF
 
 echo "=== fix-susfs: safety ==="
