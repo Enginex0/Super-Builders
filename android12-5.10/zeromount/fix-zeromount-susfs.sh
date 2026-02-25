@@ -15,8 +15,9 @@ if [ ! -f "$ZEROMOUNT_C" ]; then
     exit 1
 fi
 
-if grep -q "susfs_is_current_proc_umounted" "$ZEROMOUNT_C"; then
-    echo "SUSFS bypass checks already present"
+existing=$(grep -c "susfs_is_current_proc_umounted" "$ZEROMOUNT_C" 2>/dev/null || echo 0)
+if [ "$existing" -ge 9 ]; then
+    echo "SUSFS bypass checks already present ($existing)"
     exit 0
 fi
 

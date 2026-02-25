@@ -412,7 +412,7 @@ fi
 
 # -- Trailing whitespace before kzalloc in cmdline_or_bootconfig --
 sed -i '/void susfs_set_cmdline_or_bootconfig/,/^}/ {
-    s/	$/	/
+    s/[[:space:]]*$//
 }' "$SUSFS_C"
 
 # -- Format specifier: spoofed_size is loff_t, not unsigned int --

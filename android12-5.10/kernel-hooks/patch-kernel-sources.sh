@@ -179,7 +179,7 @@ patch_unicode_namei() {
     [ -f "$f" ] && grep -q "CONFIG_KSU_SUSFS_UNICODE_FILTER" "$f" && return
 
     echo "[+] $f"
-    inject_susfs_include '#include <linux\/uaccess.h>' "$f"
+    inject_susfs_include '#include <linux\/uaccess\.h>' "$f"
 
     # do_mkdirat
     sed -i '/unsigned int lookup_flags = LOOKUP_DIRECTORY;/a\
@@ -241,7 +241,7 @@ patch_unicode_open() {
     [ -f "$f" ] && grep -q "CONFIG_KSU_SUSFS_UNICODE_FILTER" "$f" && return
 
     echo "[+] $f"
-    inject_susfs_include '#include <linux\/compat.h>' "$f"
+    inject_susfs_include '#include <linux\/compat\.h>' "$f"
 
     sed -i '/^static long do_sys_openat2/,/struct filename \*tmp;/{
         /struct filename \*tmp;/a\
@@ -259,7 +259,7 @@ patch_unicode_stat() {
     [ -f "$f" ] && grep -q "CONFIG_KSU_SUSFS_UNICODE_FILTER" "$f" && return
 
     echo "[+] $f"
-    inject_susfs_include '#include <linux\/compat.h>' "$f"
+    inject_susfs_include '#include <linux\/compat\.h>' "$f"
 
     # vfs_statx
     sed -i '/^static int vfs_statx/,/int error;/{

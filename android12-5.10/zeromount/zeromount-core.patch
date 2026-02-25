@@ -894,13 +894,16 @@ index 000000000..43ca3f0fa
 +EXPORT_SYMBOL(zeromount_spoof_xattr);
 +
 +static void zeromount_auto_inject_parent(const char *v_path,
-+					 unsigned char type)
++					 unsigned char type, int depth)
 +{
 +	char *parent_path, *name, *path_copy, *last_slash;
 +	struct zeromount_dir_node *dir_node = NULL, *curr;
 +	struct zeromount_child_name *child;
 +	u32 hash;
 +	bool child_exists = false;
++
++	if (depth > 20)
++		return;
 +
 +	path_copy = kstrdup(v_path, GFP_KERNEL);
 +	if (!path_copy)
@@ -940,7 +943,7 @@ index 000000000..43ca3f0fa
 +		}
 +	}
 +
-+	zeromount_auto_inject_parent(parent_path, DT_DIR);
++	zeromount_auto_inject_parent(parent_path, DT_DIR, depth + 1);
 +
 +	hash = full_name_hash(NULL, parent_path, strlen(parent_path));
 +
@@ -1101,7 +1104,7 @@ index 000000000..43ca3f0fa
 +	if (kern_path(rule->virtual_path, LOOKUP_FOLLOW, &path) == 0) {
 +		path_put(&path);
 +	} else {
-+		zeromount_auto_inject_parent(rule->virtual_path, type);
++		zeromount_auto_inject_parent(rule->virtual_path, type, 0);
 +		WRITE_ONCE(rule->is_new, true);
 +	}
 +	zeromount_flush_dcache(rule->virtual_path);
