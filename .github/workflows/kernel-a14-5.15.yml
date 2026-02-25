@@ -5,47 +5,6 @@ permissions:
   actions: write
 
 on:
-  workflow_dispatch:
-    inputs:
-      ksu_variant:
-        description: "KernelSU variant"
-        type: choice
-        options:
-          - KernelSU-Next
-          - SukiSU
-          - MKSU
-          - ReSukiSU
-          - WKSU
-          - RKSU
-        default: "KernelSU-Next"
-      add_susfs:
-        description: "Add SUSFS (upstream)"
-        type: boolean
-        default: true
-      add_enhanced_susfs:
-        description: "Add enhanced SUSFS (custom injection)"
-        type: boolean
-        default: true
-      add_unicode_filter:
-        description: "Add Unicode filter"
-        type: boolean
-        default: true
-      add_zeromount:
-        description: "Add ZeroMount"
-        type: boolean
-        default: true
-      add_zram:
-        description: "Add ZRAM with LZ4K"
-        type: boolean
-        default: true
-      add_bbg:
-        description: "Add Baseband Guard"
-        type: boolean
-        default: true
-      add_kpm:
-        description: "Add KPM (SukiSU/ReSukiSU)"
-        type: boolean
-        default: false
   workflow_call:
     inputs:
       ksu_variant:
