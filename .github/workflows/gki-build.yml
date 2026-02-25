@@ -185,7 +185,7 @@ jobs:
         if [[ "$KSU_VARIANT" == "SukiSU" ]]; then
           echo "=== Adding SukiSU ==="
           BRANCH="main"
-          [[ "${{ inputs.add_susfs }}" == "true" ]] && BRANCH="susfs-dev"
+          [[ "${{ inputs.add_susfs }}" == "true" ]] && BRANCH="builtin"
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH"
         elif [[ "$KSU_VARIANT" == "MKSU" ]]; then
           echo "=== Adding MKSU ==="
@@ -303,8 +303,8 @@ jobs:
             bash "$INJECT_DIR/patch-gki.sh" "$SUSFS_PATCHES" "$KERNEL_ROOT/${{ env.KSU_DIR }}"
           else
             echo "=== Injecting custom features into upstream SUSFS (legacy path) ==="
-            [ -f "$INJECT_DIR/fix-susfs.sh" ] && bash "$INJECT_DIR/fix-susfs.sh" "$SUSFS_PATCHES" "$KERNEL_ROOT/${{ env.KSU_DIR }}"
-            [ -f "$INJECT_DIR/fix-safety.sh" ] && bash "$INJECT_DIR/fix-safety.sh" "$SUSFS_PATCHES" "$KERNEL_ROOT/${{ env.KSU_DIR }}"
+            [ -f "$INJECT_DIR/fix-susfs.sh" ] && bash "$INJECT_DIR/fix-susfs.sh" "$SUSFS_PATCHES" "$KERNEL_ROOT/${{ env.KSU_DIR }}" "${{ inputs.ksu_variant }}"
+            [ -f "$INJECT_DIR/fix-safety.sh" ] && bash "$INJECT_DIR/fix-safety.sh" "$SUSFS_PATCHES" "$KERNEL_ROOT/${{ env.KSU_DIR }}" "${{ inputs.ksu_variant }}"
             [ -f "$INJECT_DIR/inject-susfs-features.sh" ] && bash "$INJECT_DIR/inject-susfs-features.sh" "$SUSFS_PATCHES"
             [ -f "$INJECT_DIR/add-features.sh" ] && bash "$INJECT_DIR/add-features.sh" "$SUSFS_PATCHES"
             [ -f "$INJECT_DIR/fix-perf.sh" ] && bash "$INJECT_DIR/fix-perf.sh" "$KERNEL_ROOT/common" "$SUSFS_PATCHES" "$SUSFS_PATCH"

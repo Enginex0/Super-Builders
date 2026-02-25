@@ -6,12 +6,13 @@
 # Phase 2: KSU source (setuid_hook.c, ksud.c, sucompat.c) — off-by-one,
 #   early-boot guard, dead code, WRITE_ONCE barriers.
 #
-# Usage: ./fix-susfs.sh <SUSFS_DIR> <KSU_DIR>
+# Usage: ./fix-safety.sh <SUSFS_DIR> <KSU_DIR> [KSU_VARIANT]
 
 set -euo pipefail
 
-SUSFS_DIR="${1:?Usage: $0 <SUSFS_DIR> <KSU_DIR>}"
-KSU_DIR="${2:?Usage: $0 <SUSFS_DIR> <KSU_DIR>}"
+SUSFS_DIR="${1:?Usage: $0 <SUSFS_DIR> <KSU_DIR> [KSU_VARIANT]}"
+KSU_DIR="${2:?Usage: $0 <SUSFS_DIR> <KSU_DIR> [KSU_VARIANT]}"
+KSU_VARIANT="${3:-}"
 
 SUSFS_C="$SUSFS_DIR/fs/susfs.c"
 SUSFS_H="$SUSFS_DIR/include/linux/susfs.h"
@@ -741,7 +742,10 @@ if grep -q 'extern int ksu_handle_execveat_init' "$KSUD"; then
 fi
 
 # -- Dead return 0 in ksu_handle_faccessat (L8) --
-if awk '/ksu_handle_faccessat.*dfd.*filename_user.*mode/,/^}/ {
+# ReSukiSU/SukiSU rewrote faccessat — awk guard false-positives on their non-dead returns
+if [[ "$KSU_VARIANT" == "ReSukiSU" || "$KSU_VARIANT" == "SukiSU" ]]; then
+    echo "[-] Skipping faccessat dead-return fix (not applicable for $KSU_VARIANT)"
+elif awk '/ksu_handle_faccessat.*dfd.*filename_user.*mode/,/^}/ {
        if (/return 0;/) { count++ }
        if (/^}/ && count >= 2) { found=1; exit 0 }
    } END { exit !found }' "$SUCOMPAT"; then

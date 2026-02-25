@@ -21,7 +21,7 @@ on:
         options:
           - KernelSU-Next
           - SukiSU
-          - MKSU
+          # - MKSU  # no SUSFS branch exists — deferred
           - ReSukiSU
           - WKSU
           - RKSU
