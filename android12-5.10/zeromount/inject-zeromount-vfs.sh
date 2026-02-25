@@ -118,6 +118,7 @@ END { if (!injected) { print "INJECTION_FAILED" > "/dev/stderr"; exit 1 } }
     verify_symbol "$f" 'zeromount_build_absolute_path' || { mv "${f}.bak" "$f"; return 1; }
     verify_symbol "$f" 'zeromount_resolve_path' || { mv "${f}.bak" "$f"; return 1; }
 
+    rm -f "${f}.bak"
     echo "stat.c: injected"
 }
 
@@ -206,6 +207,7 @@ N
         return 1
     fi
 
+    rm -f "${f}.bak"
     echo "namei.c: injected"
 }
 
@@ -329,6 +331,7 @@ inject_readdir() {
         return 1
     fi
 
+    rm -f "${f}.bak"
     echo "readdir.c: injected"
 }
 
@@ -384,6 +387,7 @@ inject_dpath() {
         return 1
     fi
 
+    rm -f "${f}.bak"
     echo "d_path.c: injected"
 }
 
@@ -437,6 +441,7 @@ in_fn && /error = vfs_statfs\(&path, st\);/ && !call_injected {
         return 1
     fi
 
+    rm -f "${f}.bak"
     echo "statfs.c: injected"
 }
 
@@ -498,6 +503,7 @@ END { if (held_line != "") print held_line }
         return 1
     fi
 
+    rm -f "${f}.bak"
     echo "xattr.c: injected"
 }
 

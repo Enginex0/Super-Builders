@@ -119,9 +119,9 @@ sed -i '/^char \*zeromount_get_virtual_path_for_inode(struct inode \*inode) {$/,
 }' "$ZEROMOUNT_C"
 
 count=$(grep -c "susfs_is_current_proc_umounted" "$ZEROMOUNT_C" || echo "0")
-if [ "$count" -ge 7 ]; then
+if [ "$count" -ge 9 ]; then
     echo "SUSFS bypass: $count checks added"
 else
-    echo "Warning: only $count checks found (expected 7+)"
+    echo "Warning: only $count checks found (expected 9+)"
     exit 1
 fi

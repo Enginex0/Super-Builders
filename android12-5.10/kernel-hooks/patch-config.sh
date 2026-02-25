@@ -11,10 +11,12 @@ DEFCONFIG="${4:-$KERNEL_DIR/arch/arm64/configs/gki_defconfig}"
 [ -f "$DEFCONFIG" ] || { echo "FATAL: gki_defconfig not found at $DEFCONFIG"; exit 1; }
 
 validate_overlayfs() {
-    grep -q 'CONFIG_OVERLAY_FS=y' "$DEFCONFIG" || {
-        echo "FATAL: CONFIG_OVERLAY_FS not set in defconfig"
-        exit 1
-    }
+    if ! grep -q 'CONFIG_OVERLAY_FS=y' "$DEFCONFIG"; then
+        # Fragment appends CONFIG_OVERLAY_FS=y during Configure Kernel step,
+        # so we may arrive here before that runs. Add it now to unblock SUSFS config.
+        echo "[+] CONFIG_OVERLAY_FS not found, adding to defconfig"
+        echo "CONFIG_OVERLAY_FS=y" >> "$DEFCONFIG"
+    fi
 
     for sym in CONFIG_TMPFS_XATTR CONFIG_TMPFS_POSIX_ACL; do
         grep -q "^${sym}=" "$DEFCONFIG" || {
