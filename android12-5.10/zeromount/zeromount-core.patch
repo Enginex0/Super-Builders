@@ -49,7 +49,7 @@ new file mode 100644
 index 000000000..43ca3f0fa
 --- /dev/null
 +++ b/fs/zeromount.c
-@@ -0,0 +1,1365 @@
+@@ -0,0 +1,1418 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -1108,6 +1108,56 @@ index 000000000..43ca3f0fa
 +	return 0;
 +}
 +
++static void zeromount_cleanup_parent_dir(char *v_path)
++{
++	char *end = v_path + strlen(v_path);
++	char *last_slash, *p;
++	struct zeromount_dir_node *dir_node;
++	struct zeromount_child_name *child, *tmp_child;
++	u32 hash;
++	bool pruned;
++
++	do {
++		pruned = false;
++		last_slash = strrchr(v_path, '/');
++		if (!last_slash || last_slash == v_path)
++			break;
++
++		*last_slash = '\0';
++		hash = full_name_hash(NULL, v_path, strlen(v_path));
++
++		hash_for_each_possible(zeromount_dirs_ht, dir_node,
++				       node, hash) {
++			if (strcmp(dir_node->dir_path, v_path) != 0)
++				continue;
++
++			list_for_each_entry_safe(child, tmp_child,
++						 &dir_node->children_names,
++						 list) {
++				if (strcmp(child->name, last_slash + 1) == 0) {
++					list_del_rcu(&child->list);
++					call_rcu(&child->rcu,
++						 zeromount_free_child_rcu);
++					break;
++				}
++			}
++
++			if (list_empty(&dir_node->children_names)) {
++				hash_del_rcu(&dir_node->node);
++				atomic_dec(&zeromount_dirs_count);
++				call_rcu(&dir_node->rcu,
++					 zeromount_free_dir_node_rcu);
++				pruned = true;
++			}
++			break;
++		}
++	} while (pruned);
++
++	for (p = v_path; p < end; p++)
++		if (*p == '\0')
++			*p = '/';
++}
++
 +static int zeromount_ioctl_del_rule(unsigned long arg)
 +{
 +	struct zeromount_ioctl_data data;
@@ -1140,6 +1190,8 @@ index 000000000..43ca3f0fa
 +			break;
 +		}
 +	}
++	if (found)
++		zeromount_cleanup_parent_dir(v_path);
 +	spin_unlock(&zeromount_lock);
 +
 +	if (found && rule)
