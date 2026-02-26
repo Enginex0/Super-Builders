@@ -228,7 +228,7 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
-        echo "CONFIG_BBG=y" >> "$DEFCONFIG_FRAGMENT"
+        echo "CONFIG_BBG=y" >> "$DEFCONFIG"
         sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' common/security/Kconfig
 
     - name: Add LZ4K/LZ4KD Compression
