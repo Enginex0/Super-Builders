@@ -42,6 +42,10 @@ on:
         description: "Add KPM (SukiSU/ReSukiSU)"
         type: boolean
         default: false
+      sukisu_commit:
+        description: "SukiSU commit (empty = pinned default)"
+        type: string
+        default: ""
   workflow_call:
     inputs:
       ksu_variant:
@@ -65,6 +69,9 @@ on:
       add_kpm:
         type: boolean
         default: false
+      sukisu_commit:
+        type: string
+        default: ""
 
 jobs:
   download-dependencies:
@@ -94,6 +101,7 @@ jobs:
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
       add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
 
   build-ksu-next:
     needs: [download-dependencies]

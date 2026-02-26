@@ -37,6 +37,9 @@ on:
       add_kpm:
         type: boolean
         default: false
+      sukisu_commit:
+        type: string
+        default: ""
 
 jobs:
   build:
@@ -149,9 +152,19 @@ jobs:
 
     - name: Setup SukiSU
       working-directory: ${{ env.KERNEL_ROOT }}
+      env:
+        SUKISU_COMMIT: ${{ inputs.sukisu_commit }}
       run: |
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
         [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
+
+        PIN="${SUKISU_COMMIT:-$(cat "$GITHUB_WORKSPACE/$VERSION_DIR/sukisu-pin.txt" 2>/dev/null || true)}"
+        if [ -n "$PIN" ]; then
+          cd "$KERNEL_ROOT/$KSU_DIR"
+          git fetch origin
+          git checkout "$PIN"
+          echo "Pinned SukiSU to $(git rev-parse --short=7 HEAD)"
+        fi
 
     - name: Fix SukiSU Upstream Bugs
       working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}/kernel
