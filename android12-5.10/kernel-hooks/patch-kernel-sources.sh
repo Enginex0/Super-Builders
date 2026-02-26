@@ -1,6 +1,6 @@
 #!/bin/bash
 # Patches kernel C sources: supercall handlers, zeromount mount display,
-# VFS open redirect (all UIDs), and unicode filter.
+# and unicode filter.
 # Usage: ./patch-kernel-sources.sh KERNEL_DIR SUPERCALLS_PATH SUSFS_SOURCE
 set -e
 
@@ -10,7 +10,6 @@ SUSFS_SOURCE="${3:?SUSFS_SOURCE path required}"
 
 HANDLERS=(
     "susfs_add_sus_kstat_redirect|CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT|CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY|CONFIG_KSU_SUSFS_SUS_KSTAT|susfs_add_sus_kstat_redirect(arg)"
-    "susfs_add_open_redirect_all|CMD_SUSFS_ADD_OPEN_REDIRECT_ALL|CMD_SUSFS_ADD_OPEN_REDIRECT|CONFIG_KSU_SUSFS_OPEN_REDIRECT|susfs_add_open_redirect_all(arg)"
 )
 
 inject_supercall_handlers() {
@@ -87,87 +86,6 @@ inject_zeromount_mount_display() {
     echo "[+] Mount display: $count injections applied"
 }
 
-inject_vfs_open_redirect_all() {
-    local namei="$KERNEL_DIR/fs/namei.c"
-    [ -f "$namei" ] || { echo "FATAL: $namei not found"; exit 1; }
-
-    local count=0
-
-    if grep -q 'susfs_get_redirected_path_all' "$namei"; then
-        echo "[=] susfs_get_redirected_path_all extern already present"
-    else
-        echo "[+] Injecting susfs_get_redirected_path_all extern"
-        sed -i '/^extern struct filename\* susfs_get_redirected_path(unsigned long ino);/a extern struct filename* susfs_get_redirected_path_all(unsigned long ino);' "$namei"
-        ((count++)) || true
-    fi
-
-    if grep -q 'AS_FLAGS_OPEN_REDIRECT_ALL' "$namei"; then
-        echo "[=] AS_FLAGS_OPEN_REDIRECT_ALL check already present"
-    else
-        echo "[+] Replacing do_filp_open redirect block with two-branch check"
-        awk '
-        /^#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT/ {
-            block = $0 "\n"
-            is_redirect_block = 0
-            while ((getline line) > 0) {
-                block = block line "\n"
-                if (line ~ /AS_FLAGS_OPEN_REDIRECT|BIT_OPEN_REDIRECT/) is_redirect_block = 1
-                if (line ~ /^#endif/) break
-            }
-            if (is_redirect_block && !already_replaced) {
-                already_replaced = 1
-                print "#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT"
-                print "\tif (!IS_ERR(filp)) {"
-                print "\t\tif (unlikely(test_bit(AS_FLAGS_OPEN_REDIRECT_ALL, &filp->f_inode->i_mapping->flags))) {"
-                print "\t\t\tfake_pathname = susfs_get_redirected_path_all(filp->f_inode->i_ino);"
-                print "\t\t\tif (!IS_ERR(fake_pathname)) {"
-                print "\t\t\t\trestore_nameidata();"
-                print "\t\t\t\tfilp_close(filp, NULL);"
-                print "\t\t\t\tset_nameidata(&nd, dfd, fake_pathname);"
-                print "\t\t\t\tfilp = path_openat(&nd, op, flags | LOOKUP_RCU);"
-                print "\t\t\t\tif (unlikely(filp == ERR_PTR(-ECHILD)))"
-                print "\t\t\t\t\tfilp = path_openat(&nd, op, flags);"
-                print "\t\t\t\tif (unlikely(filp == ERR_PTR(-ESTALE)))"
-                print "\t\t\t\t\tfilp = path_openat(&nd, op, flags | LOOKUP_REVAL);"
-                print "\t\t\t\trestore_nameidata();"
-                print "\t\t\t\tputname(fake_pathname);"
-                print "\t\t\t\treturn filp;"
-                print "\t\t\t}"
-                print "\t\t} else if (unlikely(test_bit(AS_FLAGS_OPEN_REDIRECT, &filp->f_inode->i_mapping->flags) &&"
-                print "\t\t\tcurrent_uid().val < 2000))"
-                print "\t\t{"
-                print "\t\t\tfake_pathname = susfs_get_redirected_path(filp->f_inode->i_ino);"
-                print "\t\t\tif (!IS_ERR(fake_pathname)) {"
-                print "\t\t\t\trestore_nameidata();"
-                print "\t\t\t\tfilp_close(filp, NULL);"
-                print "\t\t\t\tset_nameidata(&nd, dfd, fake_pathname);"
-                print "\t\t\t\tfilp = path_openat(&nd, op, flags | LOOKUP_RCU);"
-                print "\t\t\t\tif (unlikely(filp == ERR_PTR(-ECHILD)))"
-                print "\t\t\t\t\tfilp = path_openat(&nd, op, flags);"
-                print "\t\t\t\tif (unlikely(filp == ERR_PTR(-ESTALE)))"
-                print "\t\t\t\t\tfilp = path_openat(&nd, op, flags | LOOKUP_REVAL);"
-                print "\t\t\t\trestore_nameidata();"
-                print "\t\t\t\tputname(fake_pathname);"
-                print "\t\t\t\treturn filp;"
-                print "\t\t\t}"
-                print "\t\t}"
-                print "\t}"
-                print "#endif"
-            } else {
-                printf "%s", block
-            }
-            next
-        }
-        { print }
-        ' "$namei" > "$namei.tmp" && mv "$namei.tmp" "$namei"
-        ((count++)) || true
-    fi
-
-    grep -q 'susfs_get_redirected_path_all' "$namei" || { echo "FATAL: susfs_get_redirected_path_all not found after injection"; exit 1; }
-    grep -q 'AS_FLAGS_OPEN_REDIRECT_ALL' "$namei" || { echo "FATAL: AS_FLAGS_OPEN_REDIRECT_ALL not found after injection"; exit 1; }
-
-    echo "[+] VFS open redirect: $count injections applied"
-}
 
 inject_susfs_include() {
     sed -i "/$1/a\\
@@ -377,7 +295,6 @@ extern bool susfs_is_hidden_name(const char *name, int namlen, uid_t caller_uid)
 
 inject_supercall_handlers
 inject_zeromount_mount_display
-inject_vfs_open_redirect_all
 patch_unicode_namei
 patch_unicode_open
 patch_unicode_stat

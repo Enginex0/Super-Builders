@@ -30,7 +30,6 @@ validate_overlayfs() {
 
 KCONFIG_ENTRIES=(
     "susfs_add_sus_kstat_redirect|KSU_SUSFS_SUS_KSTAT_REDIRECT|SUSFS kstat redirect|Redirects kstat lookups to real file metadata for spoofed paths.|KSU_SUSFS_SUS_KSTAT"
-    "susfs_add_open_redirect_all|KSU_SUSFS_OPEN_REDIRECT_ALL|SUSFS open redirect for all UIDs|Extends open redirect to all UIDs instead of only root/system.|KSU_SUSFS_OPEN_REDIRECT"
     "susfs_check_unicode_bypass|KSU_SUSFS_UNICODE_FILTER|Unicode Filter (blocks scoped storage bypass)|Blocks filesystem path attacks using unicode characters.|KSU_SUSFS"
 )
 

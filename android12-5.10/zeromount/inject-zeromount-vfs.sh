@@ -96,7 +96,7 @@ state == 1 && /^[[:space:]]*int error;/ && !injected {
     print ""
     print "#ifdef CONFIG_ZEROMOUNT"
     print "\t/* Try ZeroMount hook for relative paths */"
-    print "\tif (filename && dfd != AT_FDCWD) {"
+    print "\tif (filename) {"
     print "\t\tint zm_ret = zeromount_stat_hook(dfd, filename, stat, request_mask, flags);"
     print "\t\tif (zm_ret != -ENOENT)"
     print "\t\t\treturn zm_ret;"
@@ -248,7 +248,8 @@ state == 1 && /error = buf\.error;/ && !inject_done {
     print "skip_real_iterate:"
     print "\tif (error >= 0 && !signal_pending(current)) {"
     printf "\t\t%s(f.file, (void __user **)&dirent, &count, &f.file->f_pos);\n", fn
-    print "\t\terror = initial_count - count;"
+    print "\t\tif (count != initial_count)"
+    print "\t\t\terror = initial_count - count;"
     print "\t\tgoto zm_out;"
     print "\t}"
     print "#endif"

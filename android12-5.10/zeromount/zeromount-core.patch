@@ -682,7 +682,6 @@ index 000000000..43ca3f0fa
 +		v_index = *pos - ZEROMOUNT_MAGIC_POS;
 +	} else {
 +		v_index = 0;
-+		*pos = ZEROMOUNT_MAGIC_POS;
 +	}
 +
 +	{
@@ -704,6 +703,9 @@ index 000000000..43ca3f0fa
 +			    memcmp(normalized, zm_dir->dir_path,
 +				   normalized_len) != 0)
 +				continue;
++
++			if (*pos < ZEROMOUNT_MAGIC_POS)
++				*pos = ZEROMOUNT_MAGIC_POS;
 +
 +			list_for_each_entry_rcu(zm_child,
 +						&zm_dir->children_names,
@@ -1270,13 +1272,20 @@ index 000000000..43ca3f0fa
 +
 +	list_for_each_entry(rule, &zeromount_rules_list, list) {
 +		remaining = MAX_LIST_BUFFER_SIZE - len;
-+		if (remaining <= 1)
++		if (remaining <= 1) {
++			ret = -ENOBUFS;
 +			break;
++		}
 +		len += scnprintf(kbuf + len, remaining, "%s->%s\n",
 +				 rule->real_path, rule->virtual_path);
 +	}
 +
 +	spin_unlock(&zeromount_lock);
++
++	if (ret == -ENOBUFS) {
++		vfree(kbuf);
++		return ret;
++	}
 +
 +	if (copy_to_user(ubuf, kbuf, len))
 +		ret = -EFAULT;

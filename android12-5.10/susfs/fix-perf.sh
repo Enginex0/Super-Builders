@@ -222,7 +222,7 @@ if [ -f "$SUSFS_DEF_H" ]; then
     fi
     if [ -f "$SUSFS_C" ] && ! grep -q 'BUILD_BUG_ON.*AS_FLAGS_SUS_PATH_PARENT' "$SUSFS_C"; then
         echo "[+] P2a: Adding BUILD_BUG_ON for AS_FLAGS_SUS_PATH_PARENT"
-        sed -i '/BUILD_BUG_ON(AS_FLAGS_OPEN_REDIRECT_ALL >= BITS_PER_LONG);/a \\tBUILD_BUG_ON(AS_FLAGS_SUS_PATH_PARENT >= BITS_PER_LONG);' "$SUSFS_C"
+        sed -i '/BUILD_BUG_ON(AS_FLAGS_SUS_MAP >= BITS_PER_LONG);/a \\tBUILD_BUG_ON(AS_FLAGS_SUS_PATH_PARENT >= BITS_PER_LONG);' "$SUSFS_C"
     fi
 fi
 
