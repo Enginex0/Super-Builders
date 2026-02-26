@@ -115,27 +115,29 @@ jobs:
       if: inputs.add_susfs && inputs.add_enhanced_susfs
       working-directory: kernel
       run: |
-        VERSION_DIR="${ANDROID_VER}-${KERNEL_VER}"
-        INJECT_DIR="$GITHUB_WORKSPACE/${VERSION_DIR}/susfs"
-        SUSFS_PATCHES="susfs4ksu/kernel_patches"
-        KSU_DIR="KernelSU-Next"
+        INJECT_DIR="$GITHUB_WORKSPACE/${ANDROID_VER}-${KERNEL_VER}/susfs"
+        SUSFS_PATCHES="$GITHUB_WORKSPACE/kernel/susfs4ksu/kernel_patches"
 
         chmod +x "$INJECT_DIR/"*.sh
         if [ -f "$INJECT_DIR/patch-gki.sh" ]; then
-          bash "$INJECT_DIR/patch-gki.sh" "$SUSFS_PATCHES" "$PWD/$KSU_DIR"
+          bash "$INJECT_DIR/patch-gki.sh" "$SUSFS_PATCHES" "$PWD/KernelSU-Next"
         fi
 
     - name: Apply SUSFS to Kernel
       if: inputs.add_susfs
-      working-directory: kernel
+      working-directory: kernel/common
       run: |
-        SUSFS_PATCHES="susfs4ksu/kernel_patches"
-        cd common
+        SUSFS_PATCHES="$GITHUB_WORKSPACE/kernel/susfs4ksu/kernel_patches"
+
         cp "$SUSFS_PATCHES/fs/susfs.c" ./fs/
         cp "$SUSFS_PATCHES/include/linux/"*.h ./include/linux/
 
-        SUSFS_PATCH="$SUSFS_PATCHES/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
-        patch -p1 --no-backup-if-mismatch < "../$SUSFS_PATCH"
+        patch -p1 --no-backup-if-mismatch < "$SUSFS_PATCHES/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch" || true
+
+        # show_pad label doesn't exist on sublevel 209 — replace goto with return
+        if grep -q 'goto show_pad;' fs/proc/task_mmu.c && ! grep -q '^show_pad:' fs/proc/task_mmu.c; then
+          sed -i 's/goto show_pad;/return 0;/' fs/proc/task_mmu.c
+        fi
 
         cat >> arch/arm64/configs/gki_defconfig << 'EOF'
         CONFIG_KSU_SUSFS=y
