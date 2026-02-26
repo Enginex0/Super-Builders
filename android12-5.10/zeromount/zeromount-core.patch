@@ -11,9 +11,9 @@ Hooks are injected separately by the inject-zeromount-*.sh scripts.
 ---
  fs/Kconfig              |    7 +
  fs/Makefile             |    1 +
- fs/zeromount.c          | 1365 +++++++++++++++++++++++++++++++++++++++
- include/linux/zeromount.h | 187 ++++++
- 4 files changed, 1560 insertions(+)
+ fs/zeromount.c          | 1430 +++++++++++++++++++++++++++++++++++++++
+ include/linux/zeromount.h | 194 ++++++
+ 4 files changed, 1632 insertions(+)
  create mode 100644 fs/zeromount.c
  create mode 100644 include/linux/zeromount.h
 
@@ -49,7 +49,7 @@ new file mode 100644
 index 000000000..43ca3f0fa
 --- /dev/null
 +++ b/fs/zeromount.c
-@@ -0,0 +1,1418 @@
+@@ -0,0 +1,1430 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -1485,7 +1485,7 @@ new file mode 100644
 index 000000000..9e0fb1b21
 --- /dev/null
 +++ b/include/linux/zeromount.h
-@@ -0,0 +1,187 @@
+@@ -0,0 +1,194 @@
 +#ifndef _LINUX_ZEROMOUNT_H
 +#define _LINUX_ZEROMOUNT_H
 +

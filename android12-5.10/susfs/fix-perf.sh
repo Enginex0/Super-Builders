@@ -162,9 +162,10 @@ recalc_hunk_headers() {
     awk '
     function flush_hunk() {
         if (hunk_n == 0) return
+        sub(/^-/, "", hdr_parts[2])
+        sub(/^\+/, "", hdr_parts[3])
         split(hdr_parts[2], om, ",")
         split(hdr_parts[3], nm, ",")
-        # Apply accumulated line delta to correct the start offsets of this hunk
         old_start = om[1] + 0 + old_delta
         new_start = nm[1] + 0 + new_delta
         printf "@@ -%d,%d +%d,%d @@", old_start, old_count, new_start, new_count

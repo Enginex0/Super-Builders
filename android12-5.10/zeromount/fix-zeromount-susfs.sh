@@ -16,12 +16,12 @@ if [ ! -f "$ZEROMOUNT_C" ]; then
 fi
 
 existing=$(grep -c "susfs_is_current_proc_umounted" "$ZEROMOUNT_C" 2>/dev/null || echo 0)
-if [ "$existing" -eq 9 ]; then
-    echo "SUSFS bypass checks already present (9/9)"
+if [ "$existing" -eq 10 ]; then
+    echo "SUSFS bypass checks already present (10/10)"
     exit 0
 fi
-if [ "$existing" -gt 9 ]; then
-    echo "Error: $existing susfs_is_current_proc_umounted occurrences found (expected 0 or 9) — file may be double-injected"
+if [ "$existing" -gt 10 ]; then
+    echo "Error: $existing susfs_is_current_proc_umounted occurrences found (expected 1 or 10) — file may be double-injected"
     exit 1
 fi
 
@@ -33,118 +33,149 @@ if ! grep -q '#include <linux/susfs.h>' "$ZEROMOUNT_C"; then
 #endif' "$ZEROMOUNT_C"
 fi
 
-# zeromount_is_uid_blocked: umounted procs treated as blocked
-if ! grep -q 'susfs_is_current_proc_umounted.*return true' "$ZEROMOUNT_C"; then
-    sed -i '/^bool zeromount_is_uid_blocked(uid_t uid) {$/,/^}$/{
-        /if (ZEROMOUNT_DISABLED()) return false;/a\
-#ifdef CONFIG_KSU_SUSFS\
-    if (susfs_is_current_proc_umounted()) return true;\
-#endif
-}' "$ZEROMOUNT_C"
-fi
+# Single awk pass: inject susfs_is_current_proc_umounted() after the first
+# early-return guard in each target function. Uses function-entry detection
+# + a per-function "done" flag to inject exactly once.
+awk '
+BEGIN {
+    fn = ""
+    saw_guard = 0
+    injected["uid_blocked"] = 0
+    injected["traversal"] = 0
+    injected["injected_file"] = 0
+    injected["resolve_path"] = 0
+    injected["getname_hook"] = 0
+    injected["dents_common"] = 0
+    injected["spoof_statfs"] = 0
+    injected["spoof_xattr"] = 0
+    injected["vpath_inode"] = 0
+}
 
-# zeromount_is_traversal_allowed: deny traversal for umounted
-if ! grep -A3 'zeromount_is_uid_blocked(current_uid().val)) return false;' "$ZEROMOUNT_C" | grep -q 'susfs_is_current_proc_umounted.*return false'; then
-    sed -i '/^bool zeromount_is_traversal_allowed(struct inode \*inode, int mask) {$/,/^}$/{
-        /if (!inode || zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return false;/a\
-#ifdef CONFIG_KSU_SUSFS\
-    if (susfs_is_current_proc_umounted()) return false;\
-#endif
-}' "$ZEROMOUNT_C"
-fi
+/^bool zeromount_is_uid_blocked\(/          { fn = "uid_blocked"; saw_guard = 0 }
+/^bool zeromount_is_traversal_allowed\(/    { fn = "traversal"; saw_guard = 0 }
+/^bool zeromount_is_injected_file\(/        { fn = "injected_file"; saw_guard = 0 }
+/^char \*zeromount_resolve_path\(/          { fn = "resolve_path"; saw_guard = 0 }
+/^struct filename \*zeromount_getname_hook\(/ { fn = "getname_hook"; saw_guard = 0 }
+/^void zeromount_inject_dents_common\(/     { fn = "dents_common"; saw_guard = 0 }
+/^int zeromount_spoof_statfs\(/             { fn = "spoof_statfs"; saw_guard = 0 }
+/^ssize_t zeromount_spoof_xattr\(/          { fn = "spoof_xattr"; saw_guard = 0 }
+/^char \*zeromount_get_virtual_path_for_inode\(/ { fn = "vpath_inode"; saw_guard = 0 }
 
-# zeromount_is_injected_file: invisible to umounted
-if ! grep -A5 'zeromount_is_injected_file' "$ZEROMOUNT_C" | grep -q 'susfs_is_current_proc_umounted'; then
-    sed -i '/^bool zeromount_is_injected_file(struct inode \*inode) {$/,/^}$/{
-        /if (!inode || !inode->i_sb || zeromount_should_skip())$/,/return false;/{
-            /return false;/a\
-#ifdef CONFIG_KSU_SUSFS\
-    if (susfs_is_current_proc_umounted())\
-        return false;\
-#endif
-        }
-}' "$ZEROMOUNT_C"
-fi
+# Detect end of function — reset state
+/^}$/ { fn = ""; saw_guard = 0 }
 
-# zeromount_resolve_path: no redirection for umounted
-if ! grep -A5 'zeromount_resolve_path' "$ZEROMOUNT_C" | grep -q 'susfs_is_current_proc_umounted'; then
-    sed -i '/^char \*zeromount_resolve_path(const char \*pathname)$/,/^}$/{
-        /if (zeromount_is_critical_process())/,/return NULL;/{
-            /return NULL;/a\
-#ifdef CONFIG_KSU_SUSFS\
-    if (susfs_is_current_proc_umounted())\
-        return NULL;\
-#endif
-        }
-}' "$ZEROMOUNT_C"
-fi
+# uid_blocked: inject after ZEROMOUNT_DISABLED() guard return
+fn == "uid_blocked" && !injected["uid_blocked"] && /ZEROMOUNT_DISABLED/ { saw_guard = 1 }
+fn == "uid_blocked" && !injected["uid_blocked"] && saw_guard && /return false;/ {
+    print
+    print "#ifdef CONFIG_KSU_SUSFS"
+    print "\tif (susfs_is_current_proc_umounted()) return true;"
+    print "#endif"
+    injected["uid_blocked"] = 1
+    next
+}
 
-# zeromount_getname_hook: passthrough for umounted
-if ! grep -A5 'zeromount_getname_hook' "$ZEROMOUNT_C" | grep -q 'susfs_is_current_proc_umounted'; then
-    sed -i '/^struct filename \*zeromount_getname_hook(struct filename \*name)$/,/^}$/{
-        /if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val) || !name || name->name\[0\] != '"'"'\/'"'"')/,/return name;/{
-            /return name;/a\
-#ifdef CONFIG_KSU_SUSFS\
-    if (susfs_is_current_proc_umounted())\
-        return name;\
-#endif
-        }
-}' "$ZEROMOUNT_C"
-fi
+# traversal: inject after first guard block return false
+fn == "traversal" && !injected["traversal"] && /zeromount_is_uid_blocked/ { saw_guard = 1 }
+fn == "traversal" && !injected["traversal"] && saw_guard && /return false;/ {
+    print
+    print "#ifdef CONFIG_KSU_SUSFS"
+    print "\tif (susfs_is_current_proc_umounted()) return false;"
+    print "#endif"
+    injected["traversal"] = 1
+    next
+}
 
-# zeromount_inject_dents_common: no dir injection for umounted
-if ! grep -A3 'zeromount_inject_dents_common' "$ZEROMOUNT_C" | grep -q 'susfs_is_current_proc_umounted'; then
-    sed -i '/^void zeromount_inject_dents_common(struct file \*file/,/^}$/{
-        /if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;/a\
-#ifdef CONFIG_KSU_SUSFS\
-    if (susfs_is_current_proc_umounted()) return;\
-#endif
-}' "$ZEROMOUNT_C"
-fi
+# injected_file: inject after should_skip guard return false
+fn == "injected_file" && !injected["injected_file"] && /zeromount_should_skip/ { saw_guard = 1 }
+fn == "injected_file" && !injected["injected_file"] && saw_guard && /return false;/ {
+    print
+    print "#ifdef CONFIG_KSU_SUSFS"
+    print "\tif (susfs_is_current_proc_umounted())"
+    print "\t\treturn false;"
+    print "#endif"
+    injected["injected_file"] = 1
+    next
+}
 
-# zeromount_spoof_statfs: no spoofing for umounted
-if ! grep -A5 'zeromount_spoof_statfs' "$ZEROMOUNT_C" | grep -q 'susfs_is_current_proc_umounted'; then
-    sed -i '/^int zeromount_spoof_statfs(const char __user \*pathname/,/^}$/{
-        /if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val))$/,/return 0;/{
-            /return 0;/a\
-#ifdef CONFIG_KSU_SUSFS\
-    if (susfs_is_current_proc_umounted())\
-        return 0;\
-#endif
-        }
-}' "$ZEROMOUNT_C"
-fi
+# resolve_path: inject after zeromount_is_critical_process guard
+fn == "resolve_path" && !injected["resolve_path"] && /zeromount_is_critical_process/ { saw_guard = 1 }
+fn == "resolve_path" && !injected["resolve_path"] && saw_guard && /return NULL;/ {
+    print
+    print "#ifdef CONFIG_KSU_SUSFS"
+    print "\tif (susfs_is_current_proc_umounted())"
+    print "\t\treturn NULL;"
+    print "#endif"
+    injected["resolve_path"] = 1
+    next
+}
 
-# zeromount_spoof_xattr: no spoofing for umounted
-if ! grep -A5 'zeromount_spoof_xattr' "$ZEROMOUNT_C" | grep -q 'susfs_is_current_proc_umounted'; then
-    sed -i '/^ssize_t zeromount_spoof_xattr(struct dentry \*dentry/,/^}$/{
-        /if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val))$/,/return -EOPNOTSUPP;/{
-            /return -EOPNOTSUPP;/a\
-#ifdef CONFIG_KSU_SUSFS\
-    if (susfs_is_current_proc_umounted())\
-        return -EOPNOTSUPP;\
-#endif
-        }
-}' "$ZEROMOUNT_C"
-fi
+# getname_hook: inject after the multi-condition guard return name
+fn == "getname_hook" && !injected["getname_hook"] && /zeromount_should_skip/ { saw_guard = 1 }
+fn == "getname_hook" && !injected["getname_hook"] && saw_guard && /return name;/ {
+    print
+    print "#ifdef CONFIG_KSU_SUSFS"
+    print "\tif (susfs_is_current_proc_umounted())"
+    print "\t\treturn name;"
+    print "#endif"
+    injected["getname_hook"] = 1
+    next
+}
 
-# zeromount_get_virtual_path_for_inode: hidden from umounted
-if ! grep -A5 'zeromount_get_virtual_path_for_inode' "$ZEROMOUNT_C" | grep -q 'susfs_is_current_proc_umounted'; then
-    sed -i '/^char \*zeromount_get_virtual_path_for_inode(struct inode \*inode) {$/,/^}$/{
-        /if (zeromount_is_uid_blocked(current_uid().val))$/,/return NULL;/{
-            /return NULL;/a\
-#ifdef CONFIG_KSU_SUSFS\
-    if (susfs_is_current_proc_umounted())\
-        return NULL;\
-#endif
-        }
-}' "$ZEROMOUNT_C"
-fi
+# dents_common: inject after should_skip || uid_blocked guard return
+fn == "dents_common" && !injected["dents_common"] && /zeromount_is_uid_blocked/ { saw_guard = 1 }
+fn == "dents_common" && !injected["dents_common"] && saw_guard && /^\t\treturn;$/ {
+    print
+    print "#ifdef CONFIG_KSU_SUSFS"
+    print "\tif (susfs_is_current_proc_umounted()) return;"
+    print "#endif"
+    injected["dents_common"] = 1
+    next
+}
+
+# spoof_statfs: inject after uid_blocked guard return 0
+fn == "spoof_statfs" && !injected["spoof_statfs"] && /zeromount_is_uid_blocked/ { saw_guard = 1 }
+fn == "spoof_statfs" && !injected["spoof_statfs"] && saw_guard && /return 0;/ {
+    print
+    print "#ifdef CONFIG_KSU_SUSFS"
+    print "\tif (susfs_is_current_proc_umounted())"
+    print "\t\treturn 0;"
+    print "#endif"
+    injected["spoof_statfs"] = 1
+    next
+}
+
+# spoof_xattr: inject after uid_blocked guard return -EOPNOTSUPP
+fn == "spoof_xattr" && !injected["spoof_xattr"] && /zeromount_is_uid_blocked/ { saw_guard = 1 }
+fn == "spoof_xattr" && !injected["spoof_xattr"] && saw_guard && /return -EOPNOTSUPP;/ {
+    print
+    print "#ifdef CONFIG_KSU_SUSFS"
+    print "\tif (susfs_is_current_proc_umounted())"
+    print "\t\treturn -EOPNOTSUPP;"
+    print "#endif"
+    injected["spoof_xattr"] = 1
+    next
+}
+
+# get_virtual_path_for_inode: inject after uid_blocked guard return NULL
+fn == "vpath_inode" && !injected["vpath_inode"] && /zeromount_is_uid_blocked/ { saw_guard = 1 }
+fn == "vpath_inode" && !injected["vpath_inode"] && saw_guard && /return NULL;/ {
+    print
+    print "#ifdef CONFIG_KSU_SUSFS"
+    print "\tif (susfs_is_current_proc_umounted())"
+    print "\t\treturn NULL;"
+    print "#endif"
+    injected["vpath_inode"] = 1
+    next
+}
+
+{ print }
+' "$ZEROMOUNT_C" > "$ZEROMOUNT_C.tmp" && mv "$ZEROMOUNT_C.tmp" "$ZEROMOUNT_C"
 
 count=$(grep -c "susfs_is_current_proc_umounted" "$ZEROMOUNT_C" || echo "0")
-if [ "$count" -eq 9 ]; then
-    echo "SUSFS bypass: all 9 checks injected"
+if [ "$count" -eq 10 ]; then
+    echo "SUSFS bypass: all 10 checks present (1 pre-baked + 9 injected)"
 else
-    echo "Error: expected 9 checks, found $count"
+    echo "Error: expected 10 checks, found $count"
     exit 1
 fi
