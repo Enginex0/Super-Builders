@@ -25,6 +25,10 @@ on:
         description: "Add KernelSU-Next (no SUSFS)"
         type: boolean
         default: false
+      add_zeromount:
+        description: "Add ZeroMount"
+        type: boolean
+        default: false
 
 jobs:
   baseline:
@@ -86,6 +90,17 @@ jobs:
         curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
         echo "CONFIG_KSU=y" >> common/arch/arm64/configs/gki_defconfig
 
+    - name: Integrate ZeroMount
+      if: inputs.add_zeromount
+      working-directory: kernel/common
+      run: |
+        ZEROMOUNT_DIR="$GITHUB_WORKSPACE/${{ inputs.android_version }}-${{ inputs.kernel_version }}/zeromount"
+        patch -p1 -F3 --no-backup-if-mismatch < "$ZEROMOUNT_DIR/zeromount-core.patch"
+        chmod +x "$ZEROMOUNT_DIR/"*.sh
+        bash "$ZEROMOUNT_DIR/inject-zeromount-vfs.sh" .
+        bash "$ZEROMOUNT_DIR/inject-zeromount-proc.sh" .
+        echo "CONFIG_ZEROMOUNT=y" >> arch/arm64/configs/gki_defconfig
+
     - name: Minimal Build Prep
       working-directory: kernel
       run: |
@@ -126,6 +141,6 @@ jobs:
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: baseline-${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}${{ inputs.add_ksu && '-KSU-Next' || '' }}
+        name: baseline-${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}${{ inputs.add_ksu && '-KSU-Next' || '' }}${{ inputs.add_zeromount && '-ZeroMount' || '' }}
         path: ./AnyKernel3/**
         compression-level: 9
