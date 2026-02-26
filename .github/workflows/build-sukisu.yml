@@ -153,6 +153,12 @@ jobs:
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
         [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
 
+    - name: Fix SukiSU Upstream Bugs
+      working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}/kernel
+      run: |
+        sed -i 's/newcreds\.cap_/newcreds->cap_/g' app_profile.c
+        sed -i '/setup_groups.*profile.*cred)/{N;/newcreds/{s/setup_groups(\&profile, cred)/setup_groups(\&profile, newcreds)/}}' app_profile.c
+
     - name: Apply Enhanced SUSFS Patch
       if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common

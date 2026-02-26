@@ -30,20 +30,21 @@ $ADD_OVERLAYFS && extract_section "overlayfs" >> "$FRAGMENT_DST"
 $ADD_ZRAM && extract_section "zram" >> "$FRAGMENT_DST"
 $ADD_KPM && extract_section "kpm" >> "$FRAGMENT_DST"
 
-# dedup: last-wins per CONFIG_ key
+# dedup fragment: last-wins per CONFIG_ key
 tac "$FRAGMENT_DST" | awk -F= '/^CONFIG_/{if(seen[$1]++)next} {print}' | tac > "${FRAGMENT_DST}.tmp"
 mv "${FRAGMENT_DST}.tmp" "$FRAGMENT_DST"
 
 # GKI build.sh sources the fragment as bash but never merges it into .config.
-# Int/string Kconfig values AND their parent tristate must be in gki_defconfig
-# directly, otherwise make gki_defconfig can't resolve the dependency chain.
-grep -q '^CONFIG_IP_SET=' "$DEFCONFIG" || echo 'CONFIG_IP_SET=y' >> "$DEFCONFIG"
-grep -q '^CONFIG_IP_SET_MAX=' "$DEFCONFIG" || echo 'CONFIG_IP_SET_MAX=65534' >> "$DEFCONFIG"
+# All Kconfig values must also be in gki_defconfig for make gki_defconfig to
+# resolve them. Append fragment configs and dedup (last-wins).
+# Reference: ShirkNeko/GKI_KernelSU_SUSFS gki-kernel.yml
+cat "$FRAGMENT_DST" >> "$DEFCONFIG"
 
 if $ADD_ZRAM; then
   sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$DEFCONFIG" 2>/dev/null || true
   sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' "$DEFCONFIG" 2>/dev/null || true
-  grep -q '^CONFIG_ZRAM=' "$DEFCONFIG" || echo 'CONFIG_ZRAM=y' >> "$DEFCONFIG"
-  grep -q '^CONFIG_ZSMALLOC=' "$DEFCONFIG" || echo 'CONFIG_ZSMALLOC=y' >> "$DEFCONFIG"
-  grep -q '^CONFIG_ZRAM_DEF_COMP=' "$DEFCONFIG" || echo 'CONFIG_ZRAM_DEF_COMP="lz4kd"' >> "$DEFCONFIG"
 fi
+
+# dedup defconfig: last-wins per CONFIG_ key
+tac "$DEFCONFIG" | awk -F= '/^CONFIG_/{if(seen[$1]++)next} {print}' | tac > "${DEFCONFIG}.tmp"
+mv "${DEFCONFIG}.tmp" "$DEFCONFIG"
