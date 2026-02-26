@@ -157,7 +157,8 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}/kernel
       run: |
         sed -i 's/newcreds\.cap_/newcreds->cap_/g' app_profile.c
-        sed -i '/setup_groups.*profile.*cred)/{N;/newcreds/{s/setup_groups(\&profile, cred)/setup_groups(\&profile, newcreds)/}}' app_profile.c
+        sed -i 's/setup_groups(&profile, cred)/setup_groups(\&profile, newcreds)/g' app_profile.c
+        sed -i '/setup_groups(&profile, newcreds)/{N;s/setup_selinux(profile->selinux_domain, cred)/setup_selinux(profile.selinux_domain, newcreds)/}' app_profile.c
 
     - name: Apply Enhanced SUSFS Patch
       if: inputs.add_susfs
