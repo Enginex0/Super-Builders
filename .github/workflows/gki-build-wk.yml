@@ -383,7 +383,7 @@ jobs:
       run: |
         curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
         echo "CONFIG_BBG=y" >> "$DEFCONFIG_FRAGMENT"
-        sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
+        sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' common/security/Kconfig
 
     - name: Upgrade LZ4 to v1.10.0
       if: inputs.add_zram
