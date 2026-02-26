@@ -35,12 +35,15 @@ tac "$FRAGMENT_DST" | awk -F= '/^CONFIG_/{if(seen[$1]++)next} {print}' | tac > "
 mv "${FRAGMENT_DST}.tmp" "$FRAGMENT_DST"
 
 # GKI build.sh sources the fragment as bash but never merges it into .config.
-# Boolean configs propagate through Kconfig defaults; int/string values do not.
-# Write them directly to gki_defconfig where the Kconfig system processes them.
-grep -q 'CONFIG_IP_SET_MAX=' "$DEFCONFIG" || echo 'CONFIG_IP_SET_MAX=65534' >> "$DEFCONFIG"
+# Int/string Kconfig values AND their parent tristate must be in gki_defconfig
+# directly, otherwise make gki_defconfig can't resolve the dependency chain.
+grep -q '^CONFIG_IP_SET=' "$DEFCONFIG" || echo 'CONFIG_IP_SET=y' >> "$DEFCONFIG"
+grep -q '^CONFIG_IP_SET_MAX=' "$DEFCONFIG" || echo 'CONFIG_IP_SET_MAX=65534' >> "$DEFCONFIG"
 
 if $ADD_ZRAM; then
   sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$DEFCONFIG" 2>/dev/null || true
   sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' "$DEFCONFIG" 2>/dev/null || true
-  grep -q 'CONFIG_ZRAM_DEF_COMP=' "$DEFCONFIG" || echo 'CONFIG_ZRAM_DEF_COMP="lz4kd"' >> "$DEFCONFIG"
+  grep -q '^CONFIG_ZRAM=' "$DEFCONFIG" || echo 'CONFIG_ZRAM=y' >> "$DEFCONFIG"
+  grep -q '^CONFIG_ZSMALLOC=' "$DEFCONFIG" || echo 'CONFIG_ZSMALLOC=y' >> "$DEFCONFIG"
+  grep -q '^CONFIG_ZRAM_DEF_COMP=' "$DEFCONFIG" || echo 'CONFIG_ZRAM_DEF_COMP="lz4kd"' >> "$DEFCONFIG"
 fi
