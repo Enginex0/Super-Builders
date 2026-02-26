@@ -25,6 +25,10 @@ on:
         description: "Add KernelSU-Next (no SUSFS)"
         type: boolean
         default: false
+      add_susfs:
+        description: "Add SUSFS (upstream, no custom injection)"
+        type: boolean
+        default: false
       add_zeromount:
         description: "Add ZeroMount"
         type: boolean
@@ -87,8 +91,35 @@ jobs:
       if: inputs.add_ksu
       working-directory: kernel
       run: |
-        curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+        BRANCH="next"
+        [[ "${{ inputs.add_susfs }}" == "true" ]] && BRANCH="dev_susfs"
+        curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/${BRANCH}/kernel/setup.sh" | bash -s "$BRANCH"
         echo "CONFIG_KSU=y" >> common/arch/arm64/configs/gki_defconfig
+
+    - name: Apply Upstream SUSFS
+      if: inputs.add_susfs
+      working-directory: kernel
+      run: |
+        SUSFS_BRANCH="gki-${ANDROID_VER}-${KERNEL_VER}"
+        git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" susfs4ksu
+
+        cd common
+        cp ../susfs4ksu/kernel_patches/fs/susfs.c ./fs/
+        cp ../susfs4ksu/kernel_patches/include/linux/*.h ./include/linux/
+
+        SUSFS_PATCH="../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
+        patch -p1 --no-backup-if-mismatch < "$SUSFS_PATCH"
+
+        cat >> arch/arm64/configs/gki_defconfig << 'EOF'
+        CONFIG_KSU_SUSFS=y
+        CONFIG_KSU_SUSFS_SUS_PATH=y
+        CONFIG_KSU_SUSFS_SUS_MOUNT=y
+        CONFIG_KSU_SUSFS_SUS_KSTAT=y
+        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+        CONFIG_KSU_SUSFS_ENABLE_LOG=y
+        CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+        EOF
+        sed -i 's/^        //' arch/arm64/configs/gki_defconfig
 
     - name: Integrate ZeroMount
       if: inputs.add_zeromount
@@ -141,6 +172,6 @@ jobs:
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: baseline-${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}${{ inputs.add_ksu && '-KSU-Next' || '' }}${{ inputs.add_zeromount && '-ZeroMount' || '' }}
+        name: baseline-${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}${{ inputs.add_ksu && '-KSU-Next' || '' }}${{ inputs.add_susfs && '-SUSFS' || '' }}${{ inputs.add_zeromount && '-ZeroMount' || '' }}
         path: ./AnyKernel3/**
         compression-level: 9
