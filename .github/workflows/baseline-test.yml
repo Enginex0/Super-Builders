@@ -1,0 +1,120 @@
+name: "Baseline Test (Vanilla GKI)"
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      android_version:
+        description: "Android version"
+        type: choice
+        options: [android12, android13, android14, android15]
+        default: "android12"
+      kernel_version:
+        description: "Kernel version"
+        type: choice
+        options: ["5.10", "5.15", "6.1", "6.6"]
+        default: "5.10"
+      os_patch_level:
+        description: "OS patch level (e.g. 2024-05)"
+        required: true
+        default: "2024-05"
+
+jobs:
+  baseline:
+    name: "Vanilla ${{ inputs.kernel_version }} (${{ inputs.os_patch_level }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      ANDROID_VER: ${{ inputs.android_version }}
+      KERNEL_VER: ${{ inputs.kernel_version }}
+      PATCH_LEVEL: ${{ inputs.os_patch_level }}
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Free Disk Space
+      uses: endersonmenezes/free-disk-space@v3
+      with:
+        remove_android: true
+        remove_dotnet: true
+        remove_haskell: true
+        remove_tool_cache: true
+        remove_swap: true
+        remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+        remove_packages_one_command: true
+        remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell"
+        rm_cmd: "rmz"
+        rmz_version: "3.1.1"
+        testing: false
+
+    - name: Setup Repo Tool
+      run: |
+        mkdir -p ~/bin
+        curl -L https://storage.googleapis.com/git-repo-downloads/repo -o ~/bin/repo
+        chmod 0755 ~/bin/repo
+        echo "$HOME/bin" >> "$GITHUB_PATH"
+        git config --global user.name "builder"
+        git config --global user.email "builder@localhost"
+
+    - name: Sync Kernel Source
+      run: |
+        BRANCH="common-${ANDROID_VER}-${KERNEL_VER}-${PATCH_LEVEL}"
+        mkdir -p kernel && cd kernel
+
+        repo init -u https://android.googlesource.com/kernel/manifest -b "$BRANCH" --repo-rev=stable --depth=1
+
+        REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common "${ANDROID_VER}-${KERNEL_VER}-${PATCH_LEVEL}")
+        if grep -q deprecated <<< "$REMOTE_BRANCH"; then
+          sed -i "s|\"${ANDROID_VER}-${KERNEL_VER}-${PATCH_LEVEL}\"|\"deprecated/${ANDROID_VER}-${KERNEL_VER}-${PATCH_LEVEL}\"|g" .repo/manifests/default.xml
+        fi
+
+        repo --trace sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
+
+    - name: Minimal Build Prep
+      working-directory: kernel
+      run: |
+        sed -i 's/check_defconfig//' common/build.config.gki 2>/dev/null || true
+        rm -rf common/android/abi_gki_protected_exports_* 2>/dev/null || true
+        sed -i 's/-dirty//' common/scripts/setlocalversion 2>/dev/null || true
+
+        SUBLEVEL=$(grep '^SUBLEVEL = ' common/Makefile | awk '{print $3}')
+        echo "Building: ${KERNEL_VER}.${SUBLEVEL}"
+        echo "SUBLEVEL=$SUBLEVEL" >> $GITHUB_ENV
+
+    - name: Build Kernel
+      working-directory: kernel
+      run: |
+        if [ -f "build/build.sh" ]; then
+          KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=ld.lld LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+        else
+          tools/bazel build --config=fast --config=stamp --lto=thin --nokmi_symbol_list_strict_mode //common:kernel_aarch64_dist
+        fi
+
+    - name: Package AnyKernel3
+      run: |
+        git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1
+        rm -rf AnyKernel3/.git
+
+        if [ -f "kernel/out/${ANDROID_VER}-${KERNEL_VER}/dist/Image" ]; then
+          cp "kernel/out/${ANDROID_VER}-${KERNEL_VER}/dist/Image" AnyKernel3/Image
+        elif [ -f "kernel/bazel-bin/common/kernel_aarch64/Image" ]; then
+          cp "kernel/bazel-bin/common/kernel_aarch64/Image" AnyKernel3/Image
+        else
+          echo "ERROR: No kernel Image found"
+          find kernel -name "Image" -type f 2>/dev/null
+          exit 1
+        fi
+
+        ls -la AnyKernel3/Image
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: baseline-${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}
+        path: ./AnyKernel3/**
+        compression-level: 9
