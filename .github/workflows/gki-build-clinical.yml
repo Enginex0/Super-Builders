@@ -253,9 +253,9 @@ jobs:
         awk '/^# \[zram\]/{found=1; next} /^# \[/{found=0} found && NF' "$FRAGMENT" >> "$DEFCONFIG_FRAGMENT"
 
         cat >> "$DEFCONFIG_FRAGMENT" << 'FRAGEOF'
-CONFIG_KALLSYMS=y
-CONFIG_KALLSYMS_ALL=y
-FRAGEOF
+        CONFIG_KALLSYMS=y
+        CONFIG_KALLSYMS_ALL=y
+        FRAGEOF
 
         tac "$DEFCONFIG_FRAGMENT" | awk -F= '/^CONFIG_/{if(seen[$1]++)next} {print}' | tac > "${DEFCONFIG_FRAGMENT}.tmp"
         mv "${DEFCONFIG_FRAGMENT}.tmp" "$DEFCONFIG_FRAGMENT"
