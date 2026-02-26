@@ -622,7 +622,7 @@ jobs:
         fi
 
         if [ -f "build/build.sh" ]; then
-          GKI_DEFCONFIG_FRAGMENT="$DEFCONFIG_FRAGMENT" LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
+          KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=ld.lld GKI_DEFCONFIG_FRAGMENT="$DEFCONFIG_FRAGMENT" LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
         else
           if [[ "$ANDROID_VER" == "android14" ]]; then
             tools/bazel build --config=fast --lto=thin --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment //common:kernel_aarch64_dist || exit 1
