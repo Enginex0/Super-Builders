@@ -21,6 +21,10 @@ on:
         description: "OS patch level (e.g. 2024-05)"
         required: true
         default: "2024-05"
+      add_ksu:
+        description: "Add KernelSU-Next (no SUSFS)"
+        type: boolean
+        default: false
 
 jobs:
   baseline:
@@ -75,6 +79,13 @@ jobs:
 
         repo --trace sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
 
+    - name: Setup KernelSU-Next
+      if: inputs.add_ksu
+      working-directory: kernel
+      run: |
+        curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+        echo "CONFIG_KSU=y" >> common/arch/arm64/configs/gki_defconfig
+
     - name: Minimal Build Prep
       working-directory: kernel
       run: |
@@ -115,6 +126,6 @@ jobs:
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: baseline-${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}
+        name: baseline-${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}${{ inputs.add_ksu && '-KSU-Next' || '' }}
         path: ./AnyKernel3/**
         compression-level: 9
