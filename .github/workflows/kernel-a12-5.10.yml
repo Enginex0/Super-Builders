@@ -19,15 +19,7 @@ on:
           # - RKSU  # no SUSFS integration — deferred
         default: "KernelSU-Next"
       add_susfs:
-        description: "Add SUSFS (upstream only)"
-        type: boolean
-        default: true
-      add_enhanced_susfs:
-        description: "Add enhanced SUSFS (custom injection scripts)"
-        type: boolean
-        default: true
-      add_unicode_filter:
-        description: "Add Unicode filter"
+        description: "Add SUSFS"
         type: boolean
         default: true
       add_zeromount:
@@ -56,12 +48,6 @@ on:
         type: string
         default: "KernelSU-Next"
       add_susfs:
-        type: boolean
-        default: true
-      add_enhanced_susfs:
-        type: boolean
-        default: true
-      add_unicode_filter:
         type: boolean
         default: true
       add_zeromount:
@@ -103,8 +89,6 @@ jobs:
       sub_level: ${{ matrix.sub_level }}
       os_patch_level: ${{ matrix.os_patch_level }}
       add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
       add_zeromount: ${{ inputs.add_zeromount }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}

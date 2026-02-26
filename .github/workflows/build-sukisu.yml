@@ -22,12 +22,6 @@ on:
       add_susfs:
         type: boolean
         default: true
-      add_enhanced_susfs:
-        type: boolean
-        default: true
-      add_unicode_filter:
-        type: boolean
-        default: true
       add_zeromount:
         type: boolean
         default: true
@@ -78,12 +72,6 @@ jobs:
         name: anykernel3
         path: AnyKernel3
 
-    - name: Download Kernel Patches Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: kernel-patches
-        path: kernel_patches
-
     - name: Download Git Repo Tool Artifact
       uses: actions/download-artifact@v4
       with:
@@ -120,8 +108,6 @@ jobs:
           echo "VERSION_DIR=$VERSION_DIR"
           echo "DEFCONFIG=$KERNEL_ROOT/common/arch/arm64/configs/gki_defconfig"
           echo "DEFCONFIG_FRAGMENT=$KERNEL_ROOT/common/arch/arm64/configs/sukisu_gki.fragment"
-          echo "SUSFS4KSU=$GITHUB_WORKSPACE/susfs4ksu"
-          echo "KERNEL_PATCHES=$GITHUB_WORKSPACE/kernel_patches"
           echo "ANYKERNEL3=$GITHUB_WORKSPACE/AnyKernel3"
         } >> "$GITHUB_ENV"
 
@@ -167,84 +153,23 @@ jobs:
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
         [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
 
-    - name: Clone SUSFS
-      if: inputs.add_susfs
-      run: |
-        SUSFS_BRANCH="gki-${ANDROID_VER}-${KERNEL_VER}"
-        SUSFS_PIN_FILE="$GITHUB_WORKSPACE/$VERSION_DIR/susfs-pin.txt"
-
-        if [ -f "$SUSFS_PIN_FILE" ] && [ -s "$SUSFS_PIN_FILE" ]; then
-          SUSFS_PIN=$(tr -d '[:space:]' < "$SUSFS_PIN_FILE")
-          git clone "https://gitlab.com/simonpunk/susfs4ksu.git" -b "$SUSFS_BRANCH" "$SUSFS4KSU"
-          git -C "$SUSFS4KSU" checkout "$SUSFS_PIN" 2>/dev/null || true
-        else
-          git clone --depth 1 "https://gitlab.com/simonpunk/susfs4ksu.git" -b "$SUSFS_BRANCH" "$SUSFS4KSU"
-        fi
-
-    - name: Enhanced SUSFS Pre-Patch
-      if: inputs.add_susfs && inputs.add_enhanced_susfs
-      run: |
-        INJECT_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/susfs"
-        SUSFS_PATCHES="$SUSFS4KSU/kernel_patches"
-        SUSFS_PATCH="$SUSFS_PATCHES/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
-        chmod +x "$INJECT_DIR/"*.sh
-
-        [ -f "$INJECT_DIR/fix-safety.sh" ] && bash "$INJECT_DIR/fix-safety.sh" "$SUSFS_PATCHES" "$KERNEL_ROOT/$KSU_DIR" "$KSU_VARIANT"
-        [ -f "$INJECT_DIR/add-features.sh" ] && bash "$INJECT_DIR/add-features.sh" "$SUSFS_PATCHES" "$KSU_VARIANT"
-        [ -f "$INJECT_DIR/fix-perf.sh" ] && bash "$INJECT_DIR/fix-perf.sh" "$KERNEL_ROOT/common" "$SUSFS_PATCHES" "$SUSFS_PATCH"
-
-    - name: Apply SUSFS to Kernel
+    - name: Apply Enhanced SUSFS Patch
       if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
-        SUSFS_PATCHES="$SUSFS4KSU/kernel_patches"
-        cp "$SUSFS_PATCHES/fs/"* ./fs/
-        cp "$SUSFS_PATCHES/include/linux/"*.h ./include/linux/
-        patch -p1 --no-backup-if-mismatch < "$SUSFS_PATCHES/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch" || true
+        patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/50_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
 
-    - name: Apply SUSFS Version-Specific Fixes
+    - name: Apply KSU Safety Patch
       if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
+      working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}
       run: |
-        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
-        chmod +x "$HELPERS/"*.sh
-        bash "$HELPERS/fix-susfs-version-compat.sh" . "$SUBLEVEL" "$ANDROID_VER" "$KERNEL_VER" "$KERNEL_PATCHES"
+        patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/70_ksu_safety-sukisu-${KERNEL_VER}.patch"
 
-    - name: Enhanced SUSFS Post-Patch
-      if: inputs.add_susfs && inputs.add_enhanced_susfs
-      run: |
-        HOOKS_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/kernel-hooks"
-
-        [ -x "$HOOKS_DIR/patch-fdinfo-compat.sh" ] && bash "$HOOKS_DIR/patch-fdinfo-compat.sh" "$KERNEL_ROOT/common"
-
-        bash "$HOOKS_DIR/patch-kernel-sources.sh" \
-          "$KERNEL_ROOT/common" \
-          "$KERNEL_ROOT/$KSU_DIR/kernel/supercalls.c" \
-          "$KERNEL_ROOT/common/fs/susfs.c"
-
-        bash "$HOOKS_DIR/patch-config.sh" \
-          "$KERNEL_ROOT/common" \
-          "$KERNEL_ROOT/common/fs/susfs.c" \
-          "$KERNEL_ROOT/$KSU_DIR/kernel/Kconfig" \
-          "$DEFCONFIG"
-
-    - name: Integrate ZeroMount
-      if: inputs.add_zeromount
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        ZEROMOUNT_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/zeromount"
-        patch -p1 -F3 --no-backup-if-mismatch < "$ZEROMOUNT_DIR/zeromount-core.patch"
-        chmod +x "$ZEROMOUNT_DIR/"*.sh
-        bash "$ZEROMOUNT_DIR/inject-zeromount-vfs.sh" .
-        bash "$ZEROMOUNT_DIR/inject-zeromount-proc.sh" .
-        echo "CONFIG_ZEROMOUNT=y" >> arch/arm64/configs/gki_defconfig
-
-    - name: Fix ZeroMount SUSFS Coupling
+    - name: Apply ZeroMount Patch
       if: inputs.add_zeromount && inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
-        FIX="$GITHUB_WORKSPACE/$VERSION_DIR/zeromount/fix-zeromount-susfs.sh"
-        [ -x "$FIX" ] && bash "$FIX" fs/zeromount.c
+        patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
 
     - name: Setup Baseband Guard
       if: inputs.add_bbg
