@@ -46,6 +46,10 @@ on:
         description: "SukiSU commit (empty = pinned default)"
         type: string
         default: ""
+      susfs_commit:
+        description: "SUSFS commit (empty = pinned default)"
+        type: string
+        default: ""
   workflow_call:
     inputs:
       ksu_variant:
@@ -70,6 +74,9 @@ on:
         type: boolean
         default: false
       sukisu_commit:
+        type: string
+        default: ""
+      susfs_commit:
         type: string
         default: ""
 
