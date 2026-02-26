@@ -29,6 +29,10 @@ on:
         description: "Add SUSFS (upstream, no custom injection)"
         type: boolean
         default: false
+      add_enhanced_susfs:
+        description: "Add enhanced SUSFS (custom injection scripts)"
+        type: boolean
+        default: false
       add_zeromount:
         description: "Add ZeroMount"
         type: boolean
@@ -96,19 +100,42 @@ jobs:
         curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/${BRANCH}/kernel/setup.sh" | bash -s "$BRANCH"
         echo "CONFIG_KSU=y" >> common/arch/arm64/configs/gki_defconfig
 
-    - name: Apply Upstream SUSFS
+    - name: Clone SUSFS
       if: inputs.add_susfs
       working-directory: kernel
       run: |
         SUSFS_BRANCH="gki-${ANDROID_VER}-${KERNEL_VER}"
-        git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" susfs4ksu
+        if [[ "${{ inputs.add_enhanced_susfs }}" == "true" ]]; then
+          git clone https://github.com/Enginex0/susfs4ksu.git -b "$SUSFS_BRANCH" susfs4ksu
+        else
+          git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" susfs4ksu
+        fi
 
+    - name: Enhanced SUSFS Injection
+      if: inputs.add_susfs && inputs.add_enhanced_susfs
+      working-directory: kernel
+      run: |
+        VERSION_DIR="${ANDROID_VER}-${KERNEL_VER}"
+        INJECT_DIR="$GITHUB_WORKSPACE/${VERSION_DIR}/susfs"
+        SUSFS_PATCHES="susfs4ksu/kernel_patches"
+        KSU_DIR="KernelSU-Next"
+
+        chmod +x "$INJECT_DIR/"*.sh
+        if [ -f "$INJECT_DIR/patch-gki.sh" ]; then
+          bash "$INJECT_DIR/patch-gki.sh" "$SUSFS_PATCHES" "$PWD/$KSU_DIR"
+        fi
+
+    - name: Apply SUSFS to Kernel
+      if: inputs.add_susfs
+      working-directory: kernel
+      run: |
+        SUSFS_PATCHES="susfs4ksu/kernel_patches"
         cd common
-        cp ../susfs4ksu/kernel_patches/fs/susfs.c ./fs/
-        cp ../susfs4ksu/kernel_patches/include/linux/*.h ./include/linux/
+        cp "$SUSFS_PATCHES/fs/susfs.c" ./fs/
+        cp "$SUSFS_PATCHES/include/linux/"*.h ./include/linux/
 
-        SUSFS_PATCH="../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
-        patch -p1 --no-backup-if-mismatch < "$SUSFS_PATCH"
+        SUSFS_PATCH="$SUSFS_PATCHES/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
+        patch -p1 --no-backup-if-mismatch < "../$SUSFS_PATCH"
 
         cat >> arch/arm64/configs/gki_defconfig << 'EOF'
         CONFIG_KSU_SUSFS=y
@@ -120,6 +147,26 @@ jobs:
         CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         EOF
         sed -i 's/^        //' arch/arm64/configs/gki_defconfig
+
+    - name: Enhanced Kernel Source Injection
+      if: inputs.add_susfs && inputs.add_enhanced_susfs
+      working-directory: kernel
+      run: |
+        VERSION_DIR="${ANDROID_VER}-${KERNEL_VER}"
+        HOOKS_DIR="$GITHUB_WORKSPACE/${VERSION_DIR}/kernel-hooks"
+
+        [ -x "$HOOKS_DIR/patch-fdinfo-compat.sh" ] && bash "$HOOKS_DIR/patch-fdinfo-compat.sh" common
+
+        bash "$HOOKS_DIR/patch-kernel-sources.sh" \
+          common \
+          KernelSU-Next/kernel/supercalls.c \
+          common/fs/susfs.c
+
+        bash "$HOOKS_DIR/patch-config.sh" \
+          common \
+          common/fs/susfs.c \
+          KernelSU-Next/kernel/Kconfig \
+          common/arch/arm64/configs/gki_defconfig
 
     - name: Integrate ZeroMount
       if: inputs.add_zeromount
@@ -172,6 +219,6 @@ jobs:
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: baseline-${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}${{ inputs.add_ksu && '-KSU-Next' || '' }}${{ inputs.add_susfs && '-SUSFS' || '' }}${{ inputs.add_zeromount && '-ZeroMount' || '' }}
+        name: baseline-${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}${{ inputs.add_ksu && '-KSU-Next' || '' }}${{ inputs.add_susfs && '-SUSFS' || '' }}${{ inputs.add_enhanced_susfs && '-Enhanced' || '' }}${{ inputs.add_zeromount && '-ZeroMount' || '' }}
         path: ./AnyKernel3/**
         compression-level: 9
