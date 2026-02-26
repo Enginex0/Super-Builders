@@ -95,19 +95,9 @@ jobs:
         include:
           - sub_level: "209"
             os_patch_level: "2024-05"
-    uses: ./.github/workflows/gki-build-wk.yml
+    uses: ./.github/workflows/gki-build-clinical.yml
     with:
       android_version: android12
       kernel_version: "5.10"
       sub_level: ${{ matrix.sub_level }}
       os_patch_level: ${{ matrix.os_patch_level }}
-      ksu_variant: ${{ inputs.ksu_variant }}
-      add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
-      add_zeromount: ${{ inputs.add_zeromount }}
-      add_zram: ${{ inputs.add_zram }}
-      add_bbg: ${{ inputs.add_bbg }}
-      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
-      add_kpm: ${{ inputs.add_kpm }}
-      device_codename: "generic"
