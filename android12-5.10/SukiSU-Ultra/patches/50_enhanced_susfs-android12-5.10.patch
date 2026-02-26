@@ -3236,7 +3236,7 @@ index 000000000..9d698bf47
 +void susfs_get_enabled_features(void __user **user_info) {
 +	struct st_susfs_enabled_features *info = (struct st_susfs_enabled_features *)kzalloc(sizeof(struct st_susfs_enabled_features), GFP_KERNEL);
 +	char *buf_ptr = NULL;
-+	size_t copied_size = 0;
++	size_t __maybe_unused copied_size = 0;
 +
 +	if (!info) {
 +		SUSFS_LOGE("Failed to allocate memory\n");

@@ -34,7 +34,13 @@ $ADD_KPM && extract_section "kpm" >> "$FRAGMENT_DST"
 tac "$FRAGMENT_DST" | awk -F= '/^CONFIG_/{if(seen[$1]++)next} {print}' | tac > "${FRAGMENT_DST}.tmp"
 mv "${FRAGMENT_DST}.tmp" "$FRAGMENT_DST"
 
+# GKI build.sh sources the fragment as bash but never merges it into .config.
+# Boolean configs propagate through Kconfig defaults; int/string values do not.
+# Write them directly to gki_defconfig where the Kconfig system processes them.
+grep -q 'CONFIG_IP_SET_MAX=' "$DEFCONFIG" || echo 'CONFIG_IP_SET_MAX=65534' >> "$DEFCONFIG"
+
 if $ADD_ZRAM; then
   sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$DEFCONFIG" 2>/dev/null || true
   sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' "$DEFCONFIG" 2>/dev/null || true
+  grep -q 'CONFIG_ZRAM_DEF_COMP=' "$DEFCONFIG" || echo 'CONFIG_ZRAM_DEF_COMP="lz4kd"' >> "$DEFCONFIG"
 fi
