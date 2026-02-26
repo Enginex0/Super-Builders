@@ -252,10 +252,10 @@ inject_access_hide() {
 
     echo "[+] $f"
 
-    # ksu_handle_faccessat spans two lines — consume both before appending
     sed -i '/extern int ksu_handle_faccessat/{
         N
         a\
+extern bool susfs_is_current_proc_umounted(void);\
 extern bool susfs_is_hidden_name(const char *name, int namlen, uid_t caller_uid);
     }' "$f"
 
