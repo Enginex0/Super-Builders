@@ -1,0 +1,356 @@
+name: Build SukiSU
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_call:
+    inputs:
+      android_version:
+        type: string
+        required: true
+      kernel_version:
+        type: string
+        required: true
+      sub_level:
+        type: string
+        required: true
+      os_patch_level:
+        type: string
+        required: true
+      add_susfs:
+        type: boolean
+        default: true
+      add_enhanced_susfs:
+        type: boolean
+        default: true
+      add_unicode_filter:
+        type: boolean
+        default: true
+      add_zeromount:
+        type: boolean
+        default: true
+      add_zram:
+        type: boolean
+        default: true
+      add_bbg:
+        type: boolean
+        default: false
+      add_overlayfs_support:
+        type: boolean
+        default: true
+      add_kpm:
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    name: "SukiSU ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      KSU_VARIANT: SukiSU
+      KSU_DIR: KernelSU
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Free Disk Space
+      uses: endersonmenezes/free-disk-space@v3
+      with:
+        remove_android: true
+        remove_dotnet: true
+        remove_haskell: true
+        remove_tool_cache: true
+        remove_swap: true
+        remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+        remove_packages_one_command: true
+        remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+        rm_cmd: "rmz"
+        rmz_version: "3.1.1"
+        testing: false
+
+    - name: Download AnyKernel3 Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: anykernel3
+        path: AnyKernel3
+
+    - name: Download Kernel Patches Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: kernel-patches
+        path: kernel_patches
+
+    - name: Download Git Repo Tool Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: git-repo-tool
+        path: git-repo
+
+    - name: Download SukiSU Patch
+      uses: actions/download-artifact@v4
+      with:
+        name: sukisu-patch
+        path: SukiSU_patch
+
+    - name: Setup Build Environment
+      env:
+        ANDROID_VER: ${{ inputs.android_version }}
+        KERNEL_VER: ${{ inputs.kernel_version }}
+        SUB_LEVEL: ${{ inputs.sub_level }}
+        OS_PATCH: ${{ inputs.os_patch_level }}
+      run: |
+        CONFIG="${ANDROID_VER}-${KERNEL_VER}-${SUB_LEVEL}"
+        KERNEL_ROOT="$GITHUB_WORKSPACE/$CONFIG"
+        VERSION_DIR="${ANDROID_VER}-${KERNEL_VER}"
+        mkdir -p "$KERNEL_ROOT"
+
+        chmod +x "$GITHUB_WORKSPACE/git-repo/repo"
+        echo "$GITHUB_WORKSPACE/git-repo" >> "$GITHUB_PATH"
+
+        {
+          echo "ANDROID_VER=$ANDROID_VER"
+          echo "KERNEL_VER=$KERNEL_VER"
+          echo "OS_PATCH=$OS_PATCH"
+          echo "CONFIG=$CONFIG"
+          echo "KERNEL_ROOT=$KERNEL_ROOT"
+          echo "VERSION_DIR=$VERSION_DIR"
+          echo "DEFCONFIG=$KERNEL_ROOT/common/arch/arm64/configs/gki_defconfig"
+          echo "DEFCONFIG_FRAGMENT=$KERNEL_ROOT/common/arch/arm64/configs/sukisu_gki.fragment"
+          echo "SUSFS4KSU=$GITHUB_WORKSPACE/susfs4ksu"
+          echo "KERNEL_PATCHES=$GITHUB_WORKSPACE/kernel_patches"
+          echo "ANYKERNEL3=$GITHUB_WORKSPACE/AnyKernel3"
+        } >> "$GITHUB_ENV"
+
+    - name: Sync Kernel Source
+      working-directory: ${{ env.KERNEL_ROOT }}
+      env:
+        ANDROID_VER: ${{ inputs.android_version }}
+        KERNEL_VER: ${{ inputs.kernel_version }}
+        OS_PATCH: ${{ inputs.os_patch_level }}
+      run: |
+        FORMATTED_BRANCH="${ANDROID_VER}-${KERNEL_VER}-${OS_PATCH}"
+
+        repo init -u https://android.googlesource.com/kernel/manifest \
+          -b "common-${FORMATTED_BRANCH}" --depth=1
+
+        REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common "${FORMATTED_BRANCH}")
+        if grep -q deprecated <<< "$REMOTE_BRANCH"; then
+          sed -i "s/\"${FORMATTED_BRANCH}\"/\"deprecated\/${FORMATTED_BRANCH}\"/g" .repo/manifests/default.xml
+        fi
+
+        repo --trace sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
+
+    - name: Extract Sublevel
+      env:
+        INPUT_SUB_LEVEL: ${{ inputs.sub_level }}
+      run: |
+        SUBLEVEL="$INPUT_SUB_LEVEL"
+        if [[ -f "$KERNEL_ROOT/common/Makefile" ]]; then
+          EXTRACTED=$(grep '^SUBLEVEL = ' "$KERNEL_ROOT/common/Makefile" | awk '{print $3}')
+          [[ -n "$EXTRACTED" ]] && SUBLEVEL="$EXTRACTED"
+        fi
+
+        ARTIFACT_BASE="${KERNEL_VER}.${SUBLEVEL}-${ANDROID_VER}-${OS_PATCH}-SukiSU"
+        {
+          echo "SUBLEVEL=$SUBLEVEL"
+          echo "ARTIFACT_BASE=$ARTIFACT_BASE"
+          echo "FILE_NAME=$ARTIFACT_BASE"
+        } >> "$GITHUB_ENV"
+
+    - name: Setup SukiSU
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+        [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
+
+    - name: Clone SUSFS
+      if: inputs.add_susfs
+      run: |
+        SUSFS_BRANCH="gki-${ANDROID_VER}-${KERNEL_VER}"
+        SUSFS_PIN_FILE="$GITHUB_WORKSPACE/$VERSION_DIR/susfs-pin.txt"
+
+        if [ -f "$SUSFS_PIN_FILE" ] && [ -s "$SUSFS_PIN_FILE" ]; then
+          SUSFS_PIN=$(tr -d '[:space:]' < "$SUSFS_PIN_FILE")
+          git clone "https://github.com/Enginex0/susfs4ksu.git" -b "$SUSFS_BRANCH" "$SUSFS4KSU"
+          git -C "$SUSFS4KSU" checkout "$SUSFS_PIN" 2>/dev/null || true
+        else
+          git clone --depth 1 "https://github.com/Enginex0/susfs4ksu.git" -b "$SUSFS_BRANCH" "$SUSFS4KSU"
+        fi
+
+    - name: Enhanced SUSFS Pre-Patch
+      if: inputs.add_susfs && inputs.add_enhanced_susfs
+      run: |
+        INJECT_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/susfs"
+        SUSFS_PATCHES="$SUSFS4KSU/kernel_patches"
+        SUSFS_PATCH="$SUSFS_PATCHES/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
+        chmod +x "$INJECT_DIR/"*.sh
+
+        [ -f "$INJECT_DIR/fix-safety.sh" ] && bash "$INJECT_DIR/fix-safety.sh" "$SUSFS_PATCHES" "$KERNEL_ROOT/$KSU_DIR" "$KSU_VARIANT"
+        [ -f "$INJECT_DIR/add-features.sh" ] && bash "$INJECT_DIR/add-features.sh" "$SUSFS_PATCHES" "$KSU_VARIANT"
+        [ -f "$INJECT_DIR/fix-perf.sh" ] && bash "$INJECT_DIR/fix-perf.sh" "$KERNEL_ROOT/common" "$SUSFS_PATCHES" "$SUSFS_PATCH"
+
+    - name: Apply SUSFS to Kernel
+      if: inputs.add_susfs
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        SUSFS_PATCHES="$SUSFS4KSU/kernel_patches"
+        cp "$SUSFS_PATCHES/fs/"* ./fs/
+        cp "$SUSFS_PATCHES/include/linux/"*.h ./include/linux/
+        patch -p1 --no-backup-if-mismatch < "$SUSFS_PATCHES/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch" || true
+
+    - name: Apply SUSFS Version-Specific Fixes
+      if: inputs.add_susfs
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
+        chmod +x "$HELPERS/"*.sh
+        bash "$HELPERS/fix-susfs-version-compat.sh" . "$SUBLEVEL" "$ANDROID_VER" "$KERNEL_VER" "$KERNEL_PATCHES"
+
+    - name: Enhanced SUSFS Post-Patch
+      if: inputs.add_susfs && inputs.add_enhanced_susfs
+      run: |
+        HOOKS_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/kernel-hooks"
+
+        [ -x "$HOOKS_DIR/patch-fdinfo-compat.sh" ] && bash "$HOOKS_DIR/patch-fdinfo-compat.sh" "$KERNEL_ROOT/common"
+
+        bash "$HOOKS_DIR/patch-kernel-sources.sh" \
+          "$KERNEL_ROOT/common" \
+          "$KERNEL_ROOT/$KSU_DIR/kernel/supercalls.c" \
+          "$KERNEL_ROOT/common/fs/susfs.c"
+
+        bash "$HOOKS_DIR/patch-config.sh" \
+          "$KERNEL_ROOT/common" \
+          "$KERNEL_ROOT/common/fs/susfs.c" \
+          "$KERNEL_ROOT/$KSU_DIR/kernel/Kconfig" \
+          "$DEFCONFIG"
+
+    - name: Integrate ZeroMount
+      if: inputs.add_zeromount
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        ZEROMOUNT_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/zeromount"
+        patch -p1 -F3 --no-backup-if-mismatch < "$ZEROMOUNT_DIR/zeromount-core.patch"
+        chmod +x "$ZEROMOUNT_DIR/"*.sh
+        bash "$ZEROMOUNT_DIR/inject-zeromount-vfs.sh" .
+        bash "$ZEROMOUNT_DIR/inject-zeromount-proc.sh" .
+        echo "CONFIG_ZEROMOUNT=y" >> arch/arm64/configs/gki_defconfig
+
+    - name: Fix ZeroMount SUSFS Coupling
+      if: inputs.add_zeromount && inputs.add_susfs
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        FIX="$GITHUB_WORKSPACE/$VERSION_DIR/zeromount/fix-zeromount-susfs.sh"
+        [ -x "$FIX" ] && bash "$FIX" fs/zeromount.c
+
+    - name: Setup Baseband Guard
+      if: inputs.add_bbg
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
+        bash "$HELPERS/setup-bbg.sh" . "$DEFCONFIG"
+
+    - name: Add LZ4K/LZ4KD Compression
+      if: inputs.add_zram
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        SUKISU="$GITHUB_WORKSPACE/SukiSU_patch"
+        cp -r "$SUKISU/other/zram/lz4k/include/linux/"* ./include/linux/
+        cp -r "$SUKISU/other/zram/lz4k/lib/"* ./lib/
+        cp -r "$SUKISU/other/zram/lz4k/crypto/"* ./crypto/
+        cp -r "$SUKISU/other/zram/lz4k_oplus" ./lib/
+        [ -f "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch" ] && patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch" || true
+        [ -f "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch" ] && patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch" || true
+
+    - name: Configure Kernel
+      working-directory: ${{ env.KERNEL_ROOT }}
+      env:
+        ADD_SUSFS: ${{ inputs.add_susfs }}
+        ADD_OVERLAYFS: ${{ inputs.add_overlayfs_support }}
+        ADD_ZRAM: ${{ inputs.add_zram }}
+        ADD_KPM: ${{ inputs.add_kpm }}
+      run: |
+        FRAGMENT="$GITHUB_WORKSPACE/$VERSION_DIR/defconfig.fragment"
+        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
+
+        ASSEMBLE_FLAGS=""
+        [[ "$ADD_SUSFS" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --susfs"
+        [[ "$ADD_OVERLAYFS" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --overlayfs"
+        [[ "$ADD_ZRAM" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --zram"
+        [[ "$ADD_KPM" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --kpm"
+
+        bash "$HELPERS/assemble-defconfig.sh" "$FRAGMENT" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG" $ASSEMBLE_FLAGS
+        bash "$HELPERS/bypass-abi-check.sh" . "$ANDROID_VER" "$KERNEL_VER"
+
+    - name: Clean Module Lists
+      if: inputs.add_zram
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
+        bash "$HELPERS/clean-module-list.sh" .
+
+    - name: Clean Build Flags
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
+        bash "$HELPERS/clean-build-flags.sh" . "$KERNEL_VER" "SukiSU"
+
+    - name: Build Kernel
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        if [ -f "build/build.sh" ]; then
+          KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=ld.lld GKI_DEFCONFIG_FRAGMENT="$DEFCONFIG_FRAGMENT" LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
+        else
+          tools/bazel build --config=fast --lto=thin --defconfig_fragment=//common:arch/arm64/configs/sukisu_gki.fragment //common:kernel_aarch64_dist || exit 1
+        fi
+
+    - name: Prepare AnyKernel3
+      run: |
+        if [ -f "$KERNEL_ROOT/out/${ANDROID_VER}-${KERNEL_VER}/dist/Image" ]; then
+          cp "$KERNEL_ROOT/out/${ANDROID_VER}-${KERNEL_VER}/dist/Image" "$ANYKERNEL3/Image"
+        elif [ -f "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" ]; then
+          cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" "$ANYKERNEL3/Image"
+        else
+          echo "FATAL: Image not found"
+          find "$KERNEL_ROOT" -name "Image" -type f 2>/dev/null
+          exit 1
+        fi
+
+    - name: Scan Patch Rejects
+      if: always()
+      run: |
+        REJECTS_DIR="$GITHUB_WORKSPACE/patch-rejects"
+        mkdir -p "$REJECTS_DIR"
+        mapfile -t REJS < <(find "$KERNEL_ROOT" -type f -name '*.rej')
+        REJ_COUNT=${#REJS[@]}
+        echo "REJ_COUNT=$REJ_COUNT" >> "$GITHUB_ENV"
+        if [ "$REJ_COUNT" -gt 0 ]; then
+          for REJ in "${REJS[@]}"; do
+            REL="${REJ#"$KERNEL_ROOT"/}"
+            DEST="$REJECTS_DIR/$REL"
+            mkdir -p "$(dirname "$DEST")"
+            cp "$REJ" "$DEST"
+            ORIG="${REJ%.rej}"
+            [ -f "$ORIG" ] && cp "$ORIG" "$REJECTS_DIR/${REL%.rej}"
+          done
+        fi
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.FILE_NAME }}-AnyKernel3
+        path: ./AnyKernel3/**
+        if-no-files-found: error
+        compression-level: 9
+
+    - name: Upload Rejects
+      if: always() && env.REJ_COUNT > 0
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.FILE_NAME }}-Rejects
+        path: patch-rejects/
+        if-no-files-found: ignore
+        compression-level: 9

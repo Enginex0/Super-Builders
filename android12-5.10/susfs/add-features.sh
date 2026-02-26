@@ -8,11 +8,12 @@
 #   - zeromount coupling (extern + inline wrapper + uid exclusion)
 #   - supercall dispatch handler for kstat_redirect
 #
-# Usage: ./inject-susfs-features.sh <SUSFS_DIR>
+# Usage: ./inject-susfs-features.sh <SUSFS_DIR> [KSU_VARIANT]
 
 set -euo pipefail
 
-SUSFS_DIR="${1:?Usage: $0 <SUSFS_DIR>}"
+SUSFS_DIR="${1:?Usage: $0 <SUSFS_DIR> [KSU_VARIANT]}"
+KSU_VARIANT="${2:-}"
 
 SUSFS_DEF_H="$SUSFS_DIR/include/linux/susfs_def.h"
 SUSFS_H="$SUSFS_DIR/include/linux/susfs.h"
@@ -389,6 +390,12 @@ static inline bool susfs_is_uid_zeromount_excluded(uid_t uid) { return false; }\
 
 inject_supercall_dispatch() {
     echo "=== supercall dispatch ==="
+
+    # Built-in SUSFS variants wire dispatch in supercalls.c directly; the KSU patch doesn't exist
+    if [[ "$KSU_VARIANT" == "SukiSU" || "$KSU_VARIANT" == "ReSukiSU" ]]; then
+        echo "[-] Skipping supercall dispatch patch (built-in SUSFS variant)"
+        return 0
+    fi
 
     local ksu_patch="$SUSFS_DIR/KernelSU/10_enable_susfs_for_ksu.patch"
     [ -f "$ksu_patch" ] || { echo "FATAL: missing $ksu_patch"; exit 1; }

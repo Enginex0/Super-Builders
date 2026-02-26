@@ -87,8 +87,33 @@ jobs:
       contents: read
       actions: write
 
-  build:
+  build-sukisu:
     needs: [download-dependencies]
+    if: inputs.ksu_variant == 'SukiSU'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sub_level: "209"
+            os_patch_level: "2024-05"
+    uses: ./.github/workflows/build-sukisu.yml
+    with:
+      android_version: android12
+      kernel_version: "5.10"
+      sub_level: ${{ matrix.sub_level }}
+      os_patch_level: ${{ matrix.os_patch_level }}
+      add_susfs: ${{ inputs.add_susfs }}
+      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
+      add_unicode_filter: ${{ inputs.add_unicode_filter }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_kpm: ${{ inputs.add_kpm }}
+
+  build-ksu-next:
+    needs: [download-dependencies]
+    if: inputs.ksu_variant == 'KernelSU-Next'
     strategy:
       fail-fast: false
       matrix:
