@@ -40,6 +40,9 @@ on:
       sukisu_commit:
         type: string
         default: ""
+      device_codename:
+        type: string
+        default: ""
 
 jobs:
   build:
@@ -245,6 +248,69 @@ jobs:
         HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
         bash "$HELPERS/clean-build-flags.sh" . "$KERNEL_VER" "SukiSU"
 
+    - name: Set Stock Build Identity
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      env:
+        INPUT_CODENAME: ${{ inputs.device_codename }}
+        KERNEL_VER: ${{ inputs.kernel_version }}
+      run: |
+        PROFILE_FILE="$GITHUB_WORKSPACE/device-profiles.json"
+
+        if [ ! -f "$PROFILE_FILE" ] || ! command -v jq &>/dev/null; then
+          echo "IDENTITY_STATUS=Generic" >> "$GITHUB_ENV"
+          exit 0
+        fi
+
+        if [ -n "$INPUT_CODENAME" ] && [ "$INPUT_CODENAME" != "generic" ]; then
+          DEVICE_CODENAME="$INPUT_CODENAME"
+        else
+          DEVICE_CODENAME=$(jq -r --arg kv "$KERNEL_VER" --arg sl "$SUBLEVEL" \
+            '[.devices | to_entries[] | select(.value.kernel_version == $kv and .value.sub_level == $sl) | .key] | first // empty' \
+            "$PROFILE_FILE")
+        fi
+
+        if [ -z "$DEVICE_CODENAME" ]; then
+          echo "IDENTITY_STATUS=Generic" >> "$GITHUB_ENV"
+          exit 0
+        fi
+
+        DEVICE_EXISTS=$(jq -r ".devices.${DEVICE_CODENAME} // empty" "$PROFILE_FILE")
+        if [ -z "$DEVICE_EXISTS" ]; then
+          echo "IDENTITY_STATUS=Generic" >> "$GITHUB_ENV"
+          exit 0
+        fi
+
+        STOCK_RELEASE=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.release" "$PROFILE_FILE")
+        STOCK_VERSION=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.version_string" "$PROFILE_FILE")
+        STOCK_BUILD_USER=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.build_user" "$PROFILE_FILE")
+        STOCK_BUILD_HOST=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.build_host" "$PROFILE_FILE")
+        STOCK_COMPILER=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.compiler_info // empty" "$PROFILE_FILE")
+
+        if grep -q 'filechk_kernel.release.*KERNELVERSION' Makefile; then
+          RELEASE_FMT="${STOCK_RELEASE}"
+        else
+          RELEASE_FMT="\${KERNELVERSION}${STOCK_RELEASE}"
+        fi
+        printf '#!/bin/sh\nprintf "%%s" "%s"\n' "$RELEASE_FMT" > scripts/setlocalversion
+        chmod +x scripts/setlocalversion
+
+        if [ -f "scripts/mkcompile_h" ]; then
+          sed -i "s|UTS_VERSION=.*|UTS_VERSION=\"${STOCK_VERSION}\"|" scripts/mkcompile_h
+          if grep -q "LINUX_COMPILE_BY=" scripts/mkcompile_h; then
+            sed -i "s|LINUX_COMPILE_BY=.*|LINUX_COMPILE_BY=\"${STOCK_BUILD_USER}\"|" scripts/mkcompile_h
+            sed -i "s|LINUX_COMPILE_HOST=.*|LINUX_COMPILE_HOST=\"${STOCK_BUILD_HOST}\"|" scripts/mkcompile_h
+          fi
+          if [ -n "$STOCK_COMPILER" ] && grep -q "LINUX_COMPILER=" scripts/mkcompile_h; then
+            sed -i "s|LINUX_COMPILER=.*|LINUX_COMPILER=\"${STOCK_COMPILER}\"|" scripts/mkcompile_h
+          fi
+        fi
+
+        {
+          echo "KBUILD_BUILD_USER=$STOCK_BUILD_USER"
+          echo "KBUILD_BUILD_HOST=$STOCK_BUILD_HOST"
+          echo "IDENTITY_STATUS=Applied ($DEVICE_CODENAME)"
+        } >> "$GITHUB_ENV"
+
     - name: Build Kernel
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
@@ -301,3 +367,16 @@ jobs:
         path: patch-rejects/
         if-no-files-found: ignore
         compression-level: 9
+
+    - name: Job Summary
+      if: always()
+      run: |
+        {
+          echo "## SukiSU Build: ${KERNEL_VER}.${SUBLEVEL} (${ANDROID_VER})"
+          echo ""
+          echo "| Property | Value |"
+          echo "|----------|-------|"
+          echo "| **Identity** | ${IDENTITY_STATUS:-Generic} |"
+          echo "| **Rejects** | ${REJ_COUNT:-0} |"
+          echo "| **Artifact** | ${FILE_NAME} |"
+        } >> "$GITHUB_STEP_SUMMARY"

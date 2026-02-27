@@ -50,6 +50,13 @@ on:
         description: "SUSFS commit (empty = pinned default)"
         type: string
         default: ""
+      device_codename:
+        description: "Device profile (generic = no identity spoofing)"
+        type: choice
+        options:
+          - generic
+          - lake
+        default: "lake"
   workflow_call:
     inputs:
       ksu_variant:
@@ -79,6 +86,9 @@ on:
       susfs_commit:
         type: string
         default: ""
+      device_codename:
+        type: string
+        default: "lake"
 
 jobs:
   download-dependencies:
@@ -109,6 +119,7 @@ jobs:
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
       add_kpm: ${{ inputs.add_kpm }}
       sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: ${{ inputs.device_codename }}
 
   build-ksu-next:
     needs: [download-dependencies]
