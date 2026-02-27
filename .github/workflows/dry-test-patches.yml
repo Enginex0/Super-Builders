@@ -272,10 +272,11 @@ jobs:
 
         CLANG_BIN=$(grep '^CLANG_PREBUILT_BIN=' build.config.common | cut -d= -f2)
         TOOLS_BIN=$(grep '^BUILDTOOLS_PREBUILT_BIN=' build.config.common | cut -d= -f2)
-        export PATH="$ROOT_DIR/$CLANG_BIN:$ROOT_DIR/$TOOLS_BIN:$PATH"
+        GAS_BIN=$(grep '^LINUX_GCC_CROSS_COMPILE_PREBUILTS_BIN=' build.config.aarch64 | cut -d= -f2)
+        export PATH="$ROOT_DIR/$CLANG_BIN:$ROOT_DIR/$TOOLS_BIN:$ROOT_DIR/$GAS_BIN:$PATH"
 
         mkdir -p ../out
-        MAKE="make ARCH=arm64 LLVM=1 LLVM_IAS=1 O=../out"
+        MAKE="make ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- O=../out"
 
         echo "::group::make gki_defconfig"
         $MAKE gki_defconfig -j$(nproc) 2>&1
