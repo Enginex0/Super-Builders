@@ -32,7 +32,7 @@ on:
       ksu_variant:
         description: "KernelSU variant"
         type: choice
-        options: [SukiSU, ReSukiSU]
+        options: [SukiSU, ReSukiSU, KernelSU-Next]
         default: "SukiSU"
       sukisu_commit:
         description: "SukiSU commit (empty = pinned default)"
@@ -184,6 +184,12 @@ jobs:
             curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s susfs-ksud
             PIN_FILE="resukisu-pin.txt"
             ;;
+          KernelSU-Next)
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev_susfs/kernel/setup.sh" | bash
+            KSU_DIR="KernelSU-Next"
+            echo "KSU_DIR=$KSU_DIR" >> "$GITHUB_ENV"
+            PIN_FILE="kernelsu-next-pin.txt"
+            ;;
           *)
             curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
             PIN_FILE="sukisu-pin.txt"
@@ -205,6 +211,8 @@ jobs:
         case "$KSU_VARIANT" in
           ReSukiSU)
             ;;
+          KernelSU-Next)
+            ;;
           *)
             sed -i 's/newcreds\.cap_/newcreds->cap_/g' app_profile.c
             sed -i 's/profile->selinux_domain/profile.selinux_domain/g' app_profile.c
@@ -218,6 +226,7 @@ jobs:
       run: |
         case "$KSU_VARIANT" in
           ReSukiSU) PATCH_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/ReSukiSU/patches" ;;
+          KernelSU-Next) PATCH_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches" ;;
           *)        PATCH_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches" ;;
         esac
         RESULTS=""
