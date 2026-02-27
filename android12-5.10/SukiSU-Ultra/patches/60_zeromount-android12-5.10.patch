@@ -2012,7 +2012,7 @@ new file mode 100644
 index 000000000..01fd6aca0
 --- /dev/null
 +++ b/include/linux/zeromount.h
-@@ -0,0 +1,200 @@
+@@ -0,0 +1,205 @@
 +#ifndef _LINUX_ZEROMOUNT_H
 +#define _LINUX_ZEROMOUNT_H
 +
@@ -2030,6 +2030,12 @@ index 000000000..01fd6aca0
 +#include <linux/sched.h>
 +#include <linux/bitops.h>
 +#include <linux/bitmap.h>
++
++struct inode;
++struct dentry;
++struct kstatfs;
++struct file;
++struct filename;
 +
 +#define ZM_BLOOM_BITS     4096
 +#define ZM_BLOOM_SHIFT    12
