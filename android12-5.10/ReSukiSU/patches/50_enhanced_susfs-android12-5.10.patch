@@ -398,7 +398,7 @@ index 83ef3d7ff..3dfde472b 100644
  
  	return walk_component(nd, WALK_TRAILING);
  }
-@@ -3170,15 +3279,37 @@ static struct dentry *lookup_open(struct nameidata *nd, struct file *file,
+@@ -3170,15 +3279,39 @@ static struct dentry *lookup_open(struct nameidata *nd, struct file *file,
  	int error, create_error = 0;
  	umode_t mode = op->mode;
  	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wq);
@@ -417,6 +417,8 @@ index 83ef3d7ff..3dfde472b 100644
 +		susfs_is_inode_sus_path(dentry->d_inode))
 +	{
 +		dput(dentry);
++		if (op->open_flag & (O_CREAT | O_TRUNC | O_EXCL))
++			return ERR_PTR(-ENOENT);
 +		dentry = NULL;
 +		found_sus_path = true;
 +	}
