@@ -399,6 +399,7 @@ jobs:
           echo "| **ZeroMount** | $(S "$ADD_ZEROMOUNT") |"
           echo "| **ZRAM (LZ4K/LZ4KD)** | $(S "$ADD_ZRAM") |"
           echo "| **Overlayfs Support** | $(S "$ADD_OVERLAYFS") |"
+          echo "| **Unicode Filter** | Enabled |"
           echo "| **Baseband Guard** | $(S "$ADD_BBG") |"
           echo "| **KPM** | $(S "$ADD_KPM") |"
           echo "| **Device Profile** | ${IDENTITY_STATUS:-Generic} |"
