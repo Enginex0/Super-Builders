@@ -206,6 +206,20 @@ jobs:
         HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
         bash "$HELPERS/setup-bbg.sh" . "$DEFCONFIG"
 
+    - name: Upgrade LZ4 to v1.10.0
+      if: inputs.add_zram
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      env:
+        KERNEL_VER: ${{ inputs.kernel_version }}
+      run: |
+        ZRAM_DIR="$GITHUB_WORKSPACE/zram"
+        if [ -d "$ZRAM_DIR" ]; then
+          rm -f lib/lz4/lz4_compress.c lib/lz4/lz4_decompress.c lib/lz4/lz4defs.h lib/lz4/lz4hc_compress.c
+          cp -r "$ZRAM_DIR/lz4/"* ./lib/lz4/ 2>/dev/null || true
+          cp -r "$ZRAM_DIR/include/linux/"* ./include/linux/ 2>/dev/null || true
+          [ -f "$ZRAM_DIR/$KERNEL_VER/lz4_1.10.0.patch" ] && patch -p1 -F3 < "$ZRAM_DIR/$KERNEL_VER/lz4_1.10.0.patch" || true
+        fi
+
     - name: Add LZ4K/LZ4KD Compression
       if: inputs.add_zram
       working-directory: ${{ env.KERNEL_ROOT }}/common
@@ -393,6 +407,7 @@ jobs:
           echo "| **ZeroMount** | $(S "$ADD_ZEROMOUNT") |"
           echo "| **USB Debugging Stealth** | $(S "$ADD_USB_STEALTH") |"
           echo "| **ZRAM (LZ4K/LZ4KD)** | $(S "$ADD_ZRAM") |"
+          echo "| **LZ4 v1.10.0** | $(S "$ADD_ZRAM") |"
           echo "| **Overlayfs Support** | $(S "$ADD_OVERLAYFS") |"
           echo "| **Unicode Filter** | Enabled |"
           echo "| **Baseband Guard** | $(S "$ADD_BBG") |"
