@@ -32,7 +32,7 @@ index aaaaaaaaa..bbbbbbbbb 100644
  #include <linux/slab.h>
  #include <linux/device.h>
  #include <linux/nls.h>
-@@ -689,1 +693,14 @@
+@@ -689,1 +693,17 @@
 -GS_STRINGS_RW(gadget_config_name, configuration);
 +GS_STRINGS_W(gadget_config_name, configuration);
 +#ifdef CONFIG_ZEROMOUNT
@@ -51,7 +51,7 @@ index aaaaaaaaa..bbbbbbbbb 100644
 +GS_STRINGS_R(gadget_config_name, configuration);
 +#endif
 +CONFIGFS_ATTR(gadget_config_name_, configuration);
-@@ -1753,7 +1757,16 @@ static ssize_t state_show(struct device *pdev, struct device_attribute *attr,
+@@ -1753,5 +1757,14 @@ static ssize_t state_show(struct device *pdev, struct device_attribute *attr,
  	char *state = "DISCONNECTED";
  	unsigned long flags;
 
