@@ -489,7 +489,7 @@ index 8d7151492..e21419bd7 100644
  EXPORT_SYMBOL_NS_GPL(vfs_getxattr, ANDROID_GKI_VFS_EXPORT_ONLY);
 diff --git a/fs/zeromount.c b/fs/zeromount.c
 new file mode 100644
-index 000000000..000000000
+index 000000000..0b596ea48
 --- /dev/null
 +++ b/fs/zeromount.c
 @@ -0,0 +1,1514 @@
@@ -2009,7 +2009,7 @@ index 000000000..000000000
 +
 diff --git a/include/linux/zeromount.h b/include/linux/zeromount.h
 new file mode 100644
-index 000000000..000000000
+index 000000000..01fd6aca0
 --- /dev/null
 +++ b/include/linux/zeromount.h
 @@ -0,0 +1,200 @@
