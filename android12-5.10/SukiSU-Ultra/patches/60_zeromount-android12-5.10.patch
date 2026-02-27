@@ -492,7 +492,7 @@ new file mode 100644
 index 000000000..0b596ea48
 --- /dev/null
 +++ b/fs/zeromount.c
-@@ -0,0 +1,1514 @@
+@@ -0,0 +1,1513 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -519,6 +519,7 @@ index 000000000..0b596ea48
 +#include <linux/susfs.h>
 +#endif
 +#include <linux/reboot.h>
++#include <linux/bitmap.h>
 +
 +int zeromount_debug_level = 0;
 +
@@ -831,6 +832,9 @@ index 000000000..0b596ea48
 +
 +	key = inode->i_ino ^ inode->i_sb->s_dev;
 +
++	if (atomic_read(&zeromount_rule_count) == 0)
++		return NULL;
++
 +	rcu_read_lock();
 +	hash_for_each_possible_rcu(zeromount_ino_ht, rule, ino_node, key) {
 +		if (rule->real_ino == inode->i_ino &&
@@ -857,9 +861,6 @@ index 000000000..0b596ea48
 +		return NULL;
 +
 +	key = inode->i_ino ^ inode->i_sb->s_dev;
-+
-+	if (atomic_read(&zeromount_rule_count) == 0)
-+		return NULL;
 +
 +	rcu_read_lock();
 +	hash_for_each_possible_rcu(zeromount_ino_ht, rule, ino_node, key) {
@@ -1007,7 +1008,6 @@ index 000000000..0b596ea48
 +	if (atomic_read(&zeromount_rule_count) == 0)
 +		return NULL;
 +
-+	/* Bloom filter: fast rejection for paths not in any rule */
 +	if (!zm_bloom_test(hash))
 +		return NULL;
 +
@@ -1776,7 +1776,6 @@ index 000000000..0b596ea48
 +
 +	atomic_set(&zeromount_rule_count, 0);
 +	bitmap_zero(zm_bloom, ZM_BLOOM_BITS);
-+	ZM_DBG("bloom: cleared\n");
 +	spin_unlock(&zeromount_lock);
 +	return 0;
 +}
@@ -2012,7 +2011,7 @@ new file mode 100644
 index 000000000..01fd6aca0
 --- /dev/null
 +++ b/include/linux/zeromount.h
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,199 @@
 +#ifndef _LINUX_ZEROMOUNT_H
 +#define _LINUX_ZEROMOUNT_H
 +
@@ -2029,13 +2028,6 @@ index 000000000..01fd6aca0
 +#include <linux/printk.h>
 +#include <linux/sched.h>
 +#include <linux/bitops.h>
-+#include <linux/bitmap.h>
-+
-+struct inode;
-+struct dentry;
-+struct kstatfs;
-+struct file;
-+struct filename;
 +
 +#define ZM_BLOOM_BITS     4096
 +#define ZM_BLOOM_SHIFT    12

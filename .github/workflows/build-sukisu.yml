@@ -200,6 +200,12 @@ jobs:
           patch -p1 -F3 --no-backup-if-mismatch < "$ADB_FILTER"
         fi
 
+    - name: Apply ZeroMount ADB Filter
+      if: inputs.add_zeromount && inputs.add_susfs
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        patch -p1 --fuzz=3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/65_zeromount-adb-filter-${ANDROID_VER}-${KERNEL_VER}.patch"
+
     - name: Setup Baseband Guard
       if: inputs.add_bbg
       working-directory: ${{ env.KERNEL_ROOT }}
@@ -393,6 +399,7 @@ jobs:
           echo "| **ZeroMount** | $(S "$ADD_ZEROMOUNT") |"
           echo "| **ZRAM (LZ4K/LZ4KD)** | $(S "$ADD_ZRAM") |"
           echo "| **Overlayfs Support** | $(S "$ADD_OVERLAYFS") |"
+          echo "| **Unicode Filter** | Enabled |"
           echo "| **Baseband Guard** | $(S "$ADD_BBG") |"
           echo "| **KPM** | $(S "$ADD_KPM") |"
           echo "| **Device Profile** | ${IDENTITY_STATUS:-Generic} |"

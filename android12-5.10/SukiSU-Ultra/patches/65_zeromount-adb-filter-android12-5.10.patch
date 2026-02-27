@@ -11,11 +11,11 @@ Root (uid 0), system (1000), shell (2000) always see real values.
 ---
  drivers/usb/gadget/configfs.c |  30 +++++++++++++
  fs/zeromount.c                |  30 +++++++++++++
- include/linux/zeromount.h     |   1 +
+ include/linux/zeromount.h     |   7 +++++++
  net/ipv4/tcp_ipv4.c           |  22 ++++++++++
  net/ipv6/tcp_ipv6.c           |  22 ++++++++++
  net/unix/af_unix.c            |  29 +++++++++++++
- 6 files changed, 134 insertions(+)
+ 6 files changed, 140 insertions(+)
 
 diff --git a/drivers/usb/gadget/configfs.c b/drivers/usb/gadget/configfs.c
 index aaaaaaaaa..bbbbbbbbb 100644
@@ -51,14 +51,13 @@ index aaaaaaaaa..bbbbbbbbb 100644
 +GS_STRINGS_R(gadget_config_name, configuration);
 +#endif
 +CONFIGFS_ATTR(gadget_config_name_, configuration);
-@@ -1753,5 +1757,14 @@ static ssize_t state_show(struct device *pdev, struct device_attribute *attr,
+@@ -1753,5 +1773,13 @@ static ssize_t state_show(struct device *pdev, struct device_attribute *attr,
  	char *state = "DISCONNECTED";
  	unsigned long flags;
-
+ 
 +#ifdef CONFIG_ZEROMOUNT
 +	if (atomic_read(&zeromount_hide_adb)) {
 +		uid_t uid = from_kuid_munged(&init_user_ns, current_uid());
-+		/* untrusted_app reads always see DISCONNECTED -- hides USB debug state */
 +		if (uid >= 10000)
 +			return sprintf(buf, "DISCONNECTED\n");
 +	}
@@ -66,8 +65,6 @@ index aaaaaaaaa..bbbbbbbbb 100644
 +
  	if (!dev)
  		goto out;
-
- 	cdev = &dev->cdev;
 diff --git a/fs/zeromount.c b/fs/zeromount.c
 index aaaaaaaaa..bbbbbbbbb 100644
 --- a/fs/zeromount.c
@@ -115,7 +112,17 @@ diff --git a/include/linux/zeromount.h b/include/linux/zeromount.h
 index aaaaaaaaa..bbbbbbbbb 100644
 --- a/include/linux/zeromount.h
 +++ b/include/linux/zeromount.h
-@@ -149,5 +149,6 @@ extern spinlock_t zeromount_lock;
+@@ -16,3 +16,9 @@
+ #include <linux/bitops.h>
+ 
++struct inode;
++struct dentry;
++struct kstatfs;
++struct file;
++struct filename;
++
+ #define ZM_BLOOM_BITS     4096
+@@ -149,5 +155,6 @@ extern spinlock_t zeromount_lock;
  #ifdef CONFIG_ZEROMOUNT
  extern atomic_t zeromount_enabled;
 +extern atomic_t zeromount_hide_adb;
@@ -136,7 +143,7 @@ index aaaaaaaaa..bbbbbbbbb 100644
  #include <linux/types.h>
  #include <linux/fcntl.h>
  #include <linux/module.h>
-@@ -2653,15 +2656,34 @@ static int tcp4_seq_show(struct seq_file *seq, void *v)
+@@ -2653,15 +2656,33 @@ static int tcp4_seq_show(struct seq_file *seq, void *v)
  {
  	struct tcp_iter_state *st;
  	struct sock *sk = v;
@@ -157,7 +164,6 @@ index aaaaaaaaa..bbbbbbbbb 100644
 +	if (atomic_read(&zeromount_hide_adb)) {
 +		zm_uid = from_kuid_munged(&init_user_ns, current_uid());
 +		if (zm_uid >= 10000) {
-+			/* filter ADB listener row from untrusted_app reads */
 +			if (sk->sk_state == TCP_TIME_WAIT) {
 +				if (inet_twsk(sk)->tw_num == 5555)
 +					return 0;
@@ -185,7 +191,7 @@ index aaaaaaaaa..bbbbbbbbb 100644
  #include <linux/types.h>
  #include <linux/socket.h>
  #include <linux/sockios.h>
-@@ -2070,17 +2073,36 @@ static int tcp6_seq_show(struct seq_file *seq, void *v)
+@@ -2070,17 +2073,35 @@ static int tcp6_seq_show(struct seq_file *seq, void *v)
  {
  	struct tcp_iter_state *st;
  	struct sock *sk = v;
@@ -208,7 +214,6 @@ index aaaaaaaaa..bbbbbbbbb 100644
 +	if (atomic_read(&zeromount_hide_adb)) {
 +		zm_uid = from_kuid_munged(&init_user_ns, current_uid());
 +		if (zm_uid >= 10000) {
-+			/* filter ADB listener row from untrusted_app reads */
 +			if (sk->sk_state == TCP_TIME_WAIT) {
 +				if (inet_twsk(sk)->tw_num == 5555)
 +					return 0;
@@ -236,7 +241,7 @@ index aaaaaaaaa..bbbbbbbbb 100644
  
  struct hlist_head unix_socket_table[2 * UNIX_HASH_SIZE];
  EXPORT_SYMBOL_GPL(unix_socket_table);
-@@ -2896,7 +2899,27 @@ static int unix_seq_show(struct seq_file *seq, void *v)
+@@ -2896,6 +2899,24 @@ static int unix_seq_show(struct seq_file *seq, void *v)
  	else {
  		struct sock *s = v;
  		struct unix_sock *u = unix_sk(s);
@@ -247,12 +252,10 @@ index aaaaaaaaa..bbbbbbbbb 100644
 +
 +			if (uid >= 10000 && u->addr) {
 +				const char *path = u->addr->name->sun_path;
-+				/* len excludes leading null for abstract sockets */
 +				int len = u->addr->len - sizeof(short);
 +
 +				if (!UNIX_ABSTRACT(s) && len > 0)
 +					len--;
-+				/* filter adbd and jdwp socket entries from untrusted_app */
 +				if (strnstr(path, "adbd", len) ||
 +				    strnstr(path, "jdwp", len))
 +					return 0;
@@ -263,4 +266,3 @@ index aaaaaaaaa..bbbbbbbbb 100644
  		unix_state_lock(s);
  
  		seq_printf(seq, "%pK: %08X %08X %08X %04X %02X %5lu",
- 
