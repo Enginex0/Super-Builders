@@ -32,23 +32,6 @@ index aaaaaaaaa..bbbbbbbbb 100644
  #include <linux/slab.h>
  #include <linux/device.h>
  #include <linux/nls.h>
-@@ -1753,7 +1757,16 @@ static ssize_t state_show(struct device *pdev, struct device_attribute *attr,
- 	char *state = "DISCONNECTED";
- 	unsigned long flags;
- 
-+#ifdef CONFIG_ZEROMOUNT
-+	if (atomic_read(&zeromount_hide_adb)) {
-+		uid_t uid = from_kuid_munged(&init_user_ns, current_uid());
-+		/* untrusted_app reads always see DISCONNECTED -- hides USB debug state */
-+		if (uid >= 10000)
-+			return sprintf(buf, "DISCONNECTED\n");
-+	}
-+#endif
-+
- 	if (!dev)
- 		goto out;
- 
- 	cdev = &dev->cdev;
 @@ -689,1 +693,14 @@
 -GS_STRINGS_RW(gadget_config_name, configuration);
 +GS_STRINGS_W(gadget_config_name, configuration);
@@ -68,6 +51,23 @@ index aaaaaaaaa..bbbbbbbbb 100644
 +GS_STRINGS_R(gadget_config_name, configuration);
 +#endif
 +CONFIGFS_ATTR(gadget_config_name_, configuration);
+@@ -1753,7 +1757,16 @@ static ssize_t state_show(struct device *pdev, struct device_attribute *attr,
+ 	char *state = "DISCONNECTED";
+ 	unsigned long flags;
+
++#ifdef CONFIG_ZEROMOUNT
++	if (atomic_read(&zeromount_hide_adb)) {
++		uid_t uid = from_kuid_munged(&init_user_ns, current_uid());
++		/* untrusted_app reads always see DISCONNECTED -- hides USB debug state */
++		if (uid >= 10000)
++			return sprintf(buf, "DISCONNECTED\n");
++	}
++#endif
++
+ 	if (!dev)
+ 		goto out;
+
+ 	cdev = &dev->cdev;
 diff --git a/fs/zeromount.c b/fs/zeromount.c
 index aaaaaaaaa..bbbbbbbbb 100644
 --- a/fs/zeromount.c
