@@ -2037,6 +2037,7 @@ index 000000000..01fd6aca0
 +
 +#define ZM_DBG(fmt, ...)  ZM_LOG(2, fmt, ##__VA_ARGS__)
 +#define ZM_INFO(fmt, ...) ZM_LOG(1, fmt, ##__VA_ARGS__)
++#define ZM_ERR(fmt, ...)  pr_err("ZeroMount: " fmt, ##__VA_ARGS__)
 +
 +#define ZEROMOUNT_MAGIC_CODE	0x5A
 +#define ZEROMOUNT_VERSION	1
