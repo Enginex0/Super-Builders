@@ -16,3 +16,7 @@ evidence_*.png
 **/add-stock-overlay-proc-filter.sh
 **/add-stock-overlay-stat-filter.sh
 **/add-stock-overlay-hide.sh
+
+# Local docs and module source
+android12-5.10/docs/
+android12-5.10/zeromount/
