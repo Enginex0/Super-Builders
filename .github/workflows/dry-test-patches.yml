@@ -237,9 +237,25 @@ jobs:
           RESULTS="${RESULTS}60_zeromount|skipped (no patch)\n"
         fi
 
+        PATCH_65="$PATCH_DIR/65_zeromount-adb-filter-${ANDROID_VER}-${KERNEL_VER}.patch"
+        if [ -f "$PATCH_65" ]; then
+          if patch -p1 --no-backup-if-mismatch -d "$KERNEL_ROOT/common" < "$PATCH_65"; then
+            RESULTS="${RESULTS}65_zeromount_adb_filter|applied\n"
+          else
+            RESULTS="${RESULTS}65_zeromount_adb_filter|FAILED\n"
+          fi
+        else
+          RESULTS="${RESULTS}65_zeromount_adb_filter|skipped (no patch)\n"
+        fi
+
         echo "PATCH_RESULTS<<EOF" >> "$GITHUB_ENV"
         echo -e "$RESULTS" >> "$GITHUB_ENV"
         echo "EOF" >> "$GITHUB_ENV"
+
+        if echo -e "$RESULTS" | grep -q "|FAILED"; then
+          echo "::error::One or more patches failed to apply"
+          exit 1
+        fi
 
     - name: Scan Patch Rejects
       if: always()
