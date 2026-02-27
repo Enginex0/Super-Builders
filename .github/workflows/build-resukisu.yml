@@ -172,11 +172,6 @@ jobs:
           echo "Pinned ReSukiSU to $(git rev-parse --short=7 HEAD)"
         fi
 
-    - name: Fix ReSukiSU Upstream Bugs
-      working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}/kernel
-      run: |
-        sed -i 's/profile->selinux_domain/profile.selinux_domain/g' app_profile.c
-
     - name: Apply Enhanced SUSFS Patch
       if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common

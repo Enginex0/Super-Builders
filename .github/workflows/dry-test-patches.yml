@@ -204,7 +204,6 @@ jobs:
       run: |
         case "$KSU_VARIANT" in
           ReSukiSU)
-            sed -i 's/profile->selinux_domain/profile.selinux_domain/g' app_profile.c
             ;;
           *)
             sed -i 's/newcreds\.cap_/newcreds->cap_/g' app_profile.c
