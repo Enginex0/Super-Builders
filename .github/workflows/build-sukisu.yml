@@ -25,6 +25,9 @@ on:
       add_zeromount:
         type: boolean
         default: true
+      add_usb_debugging_stealth:
+        type: boolean
+        default: true
       add_zram:
         type: boolean
         default: true
@@ -195,6 +198,11 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
         patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
+
+    - name: Apply USB Debugging Stealth
+      if: inputs.add_usb_debugging_stealth && inputs.add_zeromount && inputs.add_susfs
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
         ADB_FILTER="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/65_zeromount-adb-filter-${ANDROID_VER}-${KERNEL_VER}.patch"
         if [ -f "$ADB_FILTER" ]; then
           patch -p1 -F3 --no-backup-if-mismatch < "$ADB_FILTER"
@@ -375,6 +383,7 @@ jobs:
       env:
         ADD_SUSFS: ${{ inputs.add_susfs }}
         ADD_ZEROMOUNT: ${{ inputs.add_zeromount }}
+        ADD_USB_STEALTH: ${{ inputs.add_usb_debugging_stealth }}
         ADD_ZRAM: ${{ inputs.add_zram }}
         ADD_BBG: ${{ inputs.add_bbg }}
         ADD_OVERLAYFS: ${{ inputs.add_overlayfs_support }}
@@ -391,6 +400,7 @@ jobs:
           echo "| **OS Patch Level** | ${OS_PATCH} |"
           echo "| **Enhanced SUSFS** | $(S "$ADD_SUSFS") |"
           echo "| **ZeroMount** | $(S "$ADD_ZEROMOUNT") |"
+          echo "| **USB Debugging Stealth** | $(S "$ADD_USB_STEALTH") |"
           echo "| **ZRAM (LZ4K/LZ4KD)** | $(S "$ADD_ZRAM") |"
           echo "| **Overlayfs Support** | $(S "$ADD_OVERLAYFS") |"
           echo "| **Unicode Filter** | Enabled |"
