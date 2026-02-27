@@ -195,6 +195,10 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
         patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
+        ADB_FILTER="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/65_zeromount-adb-filter-${ANDROID_VER}-${KERNEL_VER}.patch"
+        if [ -f "$ADB_FILTER" ]; then
+          patch -p1 -F3 --no-backup-if-mismatch < "$ADB_FILTER"
+        fi
 
     - name: Setup Baseband Guard
       if: inputs.add_bbg
@@ -262,20 +266,19 @@ jobs:
         fi
 
         if [ -n "$INPUT_CODENAME" ] && [ "$INPUT_CODENAME" != "generic" ]; then
-          DEVICE_CODENAME="$INPUT_CODENAME"
-        else
+          PROFILE_SL=$(jq -r ".devices.${INPUT_CODENAME}.sub_level // empty" "$PROFILE_FILE")
+          if [ "$PROFILE_SL" = "$SUBLEVEL" ]; then
+            DEVICE_CODENAME="$INPUT_CODENAME"
+          fi
+        fi
+
+        if [ -z "$DEVICE_CODENAME" ]; then
           DEVICE_CODENAME=$(jq -r --arg kv "$KERNEL_VER" --arg sl "$SUBLEVEL" \
             '[.devices | to_entries[] | select(.value.kernel_version == $kv and .value.sub_level == $sl) | .key] | first // empty' \
             "$PROFILE_FILE")
         fi
 
         if [ -z "$DEVICE_CODENAME" ]; then
-          echo "IDENTITY_STATUS=Generic" >> "$GITHUB_ENV"
-          exit 0
-        fi
-
-        DEVICE_EXISTS=$(jq -r ".devices.${DEVICE_CODENAME} // empty" "$PROFILE_FILE")
-        if [ -z "$DEVICE_EXISTS" ]; then
           echo "IDENTITY_STATUS=Generic" >> "$GITHUB_ENV"
           exit 0
         fi
@@ -369,13 +372,30 @@ jobs:
 
     - name: Job Summary
       if: always()
+      env:
+        ADD_SUSFS: ${{ inputs.add_susfs }}
+        ADD_ZEROMOUNT: ${{ inputs.add_zeromount }}
+        ADD_ZRAM: ${{ inputs.add_zram }}
+        ADD_BBG: ${{ inputs.add_bbg }}
+        ADD_OVERLAYFS: ${{ inputs.add_overlayfs_support }}
+        ADD_KPM: ${{ inputs.add_kpm }}
       run: |
+        S() { [[ "$1" == "true" ]] && echo "Enabled" || echo "Disabled"; }
         {
-          echo "## SukiSU Build: ${KERNEL_VER}.${SUBLEVEL} (${ANDROID_VER})"
+          echo "## SukiSU | ${KERNEL_VER}.${SUBLEVEL}"
           echo ""
-          echo "| Property | Value |"
-          echo "|----------|-------|"
-          echo "| **Identity** | ${IDENTITY_STATUS:-Generic} |"
+          echo "| Feature | Status |"
+          echo "|---------|--------|"
+          echo "| **Kernel** | ${KERNEL_VER}.${SUBLEVEL} |"
+          echo "| **Android** | ${ANDROID_VER} |"
+          echo "| **OS Patch Level** | ${OS_PATCH} |"
+          echo "| **SUSFS** | $(S "$ADD_SUSFS") |"
+          echo "| **ZeroMount** | $(S "$ADD_ZEROMOUNT") |"
+          echo "| **ZRAM (LZ4K/LZ4KD)** | $(S "$ADD_ZRAM") |"
+          echo "| **Overlayfs Support** | $(S "$ADD_OVERLAYFS") |"
+          echo "| **Baseband Guard** | $(S "$ADD_BBG") |"
+          echo "| **KPM** | $(S "$ADD_KPM") |"
+          echo "| **Device Profile** | ${IDENTITY_STATUS:-Generic} |"
           echo "| **Rejects** | ${REJ_COUNT:-0} |"
           echo "| **Artifact** | ${FILE_NAME} |"
         } >> "$GITHUB_STEP_SUMMARY"
