@@ -1,0 +1,248 @@
+name: "Dry Test Patches"
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      android_version:
+        description: "Android version"
+        type: choice
+        options: [android12, android13, android14, android15, android16]
+        default: "android12"
+      kernel_version:
+        description: "Kernel version"
+        type: choice
+        options: ["5.10", "5.15", "6.1", "6.6", "6.12"]
+        default: "5.10"
+      sub_level:
+        description: "Kernel sublevel"
+        type: string
+        required: true
+        default: "209"
+      os_patch_level:
+        description: "OS patch level (e.g. 2024-05)"
+        type: string
+        required: true
+        default: "2024-05"
+      ksu_variant:
+        description: "KernelSU variant"
+        type: choice
+        options: [SukiSU, ReSukiSU]
+        default: "SukiSU"
+      sukisu_commit:
+        description: "SukiSU commit (empty = pinned default)"
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      android_version:
+        type: string
+        required: true
+      kernel_version:
+        type: string
+        required: true
+      sub_level:
+        type: string
+        required: true
+      os_patch_level:
+        type: string
+        required: true
+      ksu_variant:
+        type: string
+        default: "SukiSU"
+      sukisu_commit:
+        type: string
+        default: ""
+
+jobs:
+  dry-test:
+    name: "Dry Test ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KSU_VARIANT: ${{ inputs.ksu_variant }}
+      KSU_DIR: KernelSU
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Repo Tool
+      run: |
+        mkdir -p ~/bin
+        curl -L https://storage.googleapis.com/git-repo-downloads/repo -o ~/bin/repo
+        chmod 0755 ~/bin/repo
+        echo "$HOME/bin" >> "$GITHUB_PATH"
+        git config --global user.name "builder"
+        git config --global user.email "builder@localhost"
+
+    - name: Setup Environment
+      env:
+        ANDROID_VER: ${{ inputs.android_version }}
+        KERNEL_VER: ${{ inputs.kernel_version }}
+        SUB_LEVEL: ${{ inputs.sub_level }}
+        OS_PATCH: ${{ inputs.os_patch_level }}
+      run: |
+        CONFIG="${ANDROID_VER}-${KERNEL_VER}-${SUB_LEVEL}"
+        KERNEL_ROOT="$GITHUB_WORKSPACE/$CONFIG"
+        VERSION_DIR="${ANDROID_VER}-${KERNEL_VER}"
+        mkdir -p "$KERNEL_ROOT"
+
+        {
+          echo "ANDROID_VER=$ANDROID_VER"
+          echo "KERNEL_VER=$KERNEL_VER"
+          echo "OS_PATCH=$OS_PATCH"
+          echo "CONFIG=$CONFIG"
+          echo "KERNEL_ROOT=$KERNEL_ROOT"
+          echo "VERSION_DIR=$VERSION_DIR"
+        } >> "$GITHUB_ENV"
+
+    - name: Sync Kernel Source
+      working-directory: ${{ env.KERNEL_ROOT }}
+      env:
+        ANDROID_VER: ${{ inputs.android_version }}
+        KERNEL_VER: ${{ inputs.kernel_version }}
+        OS_PATCH: ${{ inputs.os_patch_level }}
+      run: |
+        FORMATTED_BRANCH="${ANDROID_VER}-${KERNEL_VER}-${OS_PATCH}"
+
+        repo init -u https://android.googlesource.com/kernel/manifest \
+          -b "common-${FORMATTED_BRANCH}" --depth=1
+
+        REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common "${FORMATTED_BRANCH}")
+        if grep -q deprecated <<< "$REMOTE_BRANCH"; then
+          sed -i "s/\"${FORMATTED_BRANCH}\"/\"deprecated\/${FORMATTED_BRANCH}\"/g" .repo/manifests/default.xml
+        fi
+
+        repo --trace sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
+
+    - name: Extract Sublevel
+      env:
+        INPUT_SUB_LEVEL: ${{ inputs.sub_level }}
+      run: |
+        SUBLEVEL="$INPUT_SUB_LEVEL"
+        if [[ -f "$KERNEL_ROOT/common/Makefile" ]]; then
+          EXTRACTED=$(grep '^SUBLEVEL = ' "$KERNEL_ROOT/common/Makefile" | awk '{print $3}')
+          [[ -n "$EXTRACTED" ]] && SUBLEVEL="$EXTRACTED"
+        fi
+        echo "SUBLEVEL=$SUBLEVEL" >> "$GITHUB_ENV"
+
+    - name: Setup SukiSU
+      working-directory: ${{ env.KERNEL_ROOT }}
+      env:
+        SUKISU_COMMIT: ${{ inputs.sukisu_commit }}
+      run: |
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+        [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
+
+        PIN="${SUKISU_COMMIT:-$(cat "$GITHUB_WORKSPACE/$VERSION_DIR/sukisu-pin.txt" 2>/dev/null || true)}"
+        if [ -n "$PIN" ]; then
+          cd "$KERNEL_ROOT/$KSU_DIR"
+          git fetch origin
+          git checkout "$PIN"
+          echo "Pinned SukiSU to $(git rev-parse --short=7 HEAD)"
+        fi
+
+    - name: Fix SukiSU Upstream Bugs
+      working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}/kernel
+      run: |
+        sed -i 's/newcreds\.cap_/newcreds->cap_/g' app_profile.c
+        sed -i 's/profile->selinux_domain/profile.selinux_domain/g' app_profile.c
+        sed -i '/setup_groups(&profile, cred)/{N;/newcreds/{s/setup_groups(&profile, cred)/setup_groups(\&profile, newcreds)/}}' app_profile.c
+        sed -i 's/KSU_IOCTL(KSU_IOCTL_NEW_GET_/KSU_IOCTL(NEW_GET_/g' supercalls.c
+        grep -q 'syscall_handler\.o' Kbuild || sed -i '/^ksu_obj-y += supercalls\.o/a ksu_obj-y += syscall_handler.o' Kbuild
+        if ! grep -q 'syscall_handler\.h' syscall_handler.c; then
+          sed -i '1i\#include "syscall_handler.h"' syscall_handler.c
+          sed -i '2i\#include "allowlist.h"' syscall_handler.c
+          sed -i '3i\#include "selinux/selinux.h"' syscall_handler.c
+        fi
+
+    - name: Apply Patches
+      run: |
+        PATCH_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches"
+        RESULTS=""
+
+        PATCH_50="$PATCH_DIR/50_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
+        if [ -f "$PATCH_50" ]; then
+          if patch -p1 --no-backup-if-mismatch -d "$KERNEL_ROOT/common" < "$PATCH_50"; then
+            RESULTS="${RESULTS}50_enhanced_susfs|applied\n"
+          else
+            RESULTS="${RESULTS}50_enhanced_susfs|FAILED\n"
+          fi
+        else
+          RESULTS="${RESULTS}50_enhanced_susfs|skipped (no patch)\n"
+        fi
+
+        PATCH_70="$PATCH_DIR/70_ksu_safety-${KSU_VARIANT,,}-${KERNEL_VER}.patch"
+        if [ -f "$PATCH_70" ]; then
+          if patch -p1 --no-backup-if-mismatch -d "$KERNEL_ROOT/$KSU_DIR" < "$PATCH_70"; then
+            RESULTS="${RESULTS}70_ksu_safety|applied\n"
+          else
+            RESULTS="${RESULTS}70_ksu_safety|FAILED\n"
+          fi
+        else
+          RESULTS="${RESULTS}70_ksu_safety|skipped (no patch)\n"
+        fi
+
+        PATCH_60="$PATCH_DIR/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
+        if [ -f "$PATCH_60" ]; then
+          if patch -p1 --no-backup-if-mismatch -d "$KERNEL_ROOT/common" < "$PATCH_60"; then
+            RESULTS="${RESULTS}60_zeromount|applied\n"
+          else
+            RESULTS="${RESULTS}60_zeromount|FAILED\n"
+          fi
+        else
+          RESULTS="${RESULTS}60_zeromount|skipped (no patch)\n"
+        fi
+
+        echo "PATCH_RESULTS<<EOF" >> "$GITHUB_ENV"
+        echo -e "$RESULTS" >> "$GITHUB_ENV"
+        echo "EOF" >> "$GITHUB_ENV"
+
+    - name: Scan Patch Rejects
+      if: always()
+      run: |
+        REJECTS_DIR="$GITHUB_WORKSPACE/patch-rejects"
+        mkdir -p "$REJECTS_DIR"
+        mapfile -t REJS < <(find "$KERNEL_ROOT" -type f -name '*.rej')
+        REJ_COUNT=${#REJS[@]}
+        echo "REJ_COUNT=$REJ_COUNT" >> "$GITHUB_ENV"
+        if [ "$REJ_COUNT" -gt 0 ]; then
+          for REJ in "${REJS[@]}"; do
+            REL="${REJ#"$KERNEL_ROOT"/}"
+            DEST="$REJECTS_DIR/$REL"
+            mkdir -p "$(dirname "$DEST")"
+            cp "$REJ" "$DEST"
+            ORIG="${REJ%.rej}"
+            [ -f "$ORIG" ] && cp "$ORIG" "$REJECTS_DIR/${REL%.rej}"
+          done
+        fi
+
+    - name: Upload Rejects
+      if: always() && env.REJ_COUNT > 0
+      uses: actions/upload-artifact@v4
+      with:
+        name: dry-test-${{ inputs.kernel_version }}.${{ env.SUBLEVEL }}-rejects
+        path: patch-rejects/
+        if-no-files-found: ignore
+        compression-level: 9
+
+    - name: Job Summary
+      if: always()
+      run: |
+        {
+          echo "## Dry Test: ${ANDROID_VER} ${KERNEL_VER}.${SUBLEVEL} (${OS_PATCH})"
+          echo ""
+          echo "| Patch | Result |"
+          echo "|-------|--------|"
+          echo -e "$PATCH_RESULTS" | while IFS='|' read -r name result; do
+            [ -z "$name" ] && continue
+            echo "| $name | $result |"
+          done
+          echo ""
+          echo "**Rejects:** ${REJ_COUNT:-0}"
+          echo ""
+          echo "**SukiSU variant:** $KSU_VARIANT"
+        } >> "$GITHUB_STEP_SUMMARY"
