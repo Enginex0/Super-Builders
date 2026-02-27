@@ -196,6 +196,12 @@ jobs:
       run: |
         patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
 
+    - name: Apply ZeroMount ADB Filter
+      if: inputs.add_zeromount && inputs.add_susfs
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        patch -p1 --fuzz=3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/65_zeromount-adb-filter-${ANDROID_VER}-${KERNEL_VER}.patch"
+
     - name: Setup Baseband Guard
       if: inputs.add_bbg
       working-directory: ${{ env.KERNEL_ROOT }}

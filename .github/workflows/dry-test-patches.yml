@@ -237,6 +237,17 @@ jobs:
           RESULTS="${RESULTS}60_zeromount|skipped (no patch)\n"
         fi
 
+        PATCH_65="$PATCH_DIR/65_zeromount-adb-filter-${ANDROID_VER}-${KERNEL_VER}.patch"
+        if [ -f "$PATCH_65" ]; then
+          if patch -p1 --fuzz=3 --no-backup-if-mismatch -d "$KERNEL_ROOT/common" < "$PATCH_65"; then
+            RESULTS="${RESULTS}65_zeromount_adb|applied\n"
+          else
+            RESULTS="${RESULTS}65_zeromount_adb|FAILED\n"
+          fi
+        else
+          RESULTS="${RESULTS}65_zeromount_adb|skipped (no patch)\n"
+        fi
+
         echo "PATCH_RESULTS<<EOF" >> "$GITHUB_ENV"
         echo -e "$RESULTS" >> "$GITHUB_ENV"
         echo "EOF" >> "$GITHUB_ENV"
