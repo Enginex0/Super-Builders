@@ -97,6 +97,8 @@ jobs:
           echo "CONFIG=$CONFIG"
           echo "KERNEL_ROOT=$KERNEL_ROOT"
           echo "VERSION_DIR=$VERSION_DIR"
+          echo "DEFCONFIG=$KERNEL_ROOT/common/arch/arm64/configs/gki_defconfig"
+          echo "DEFCONFIG_FRAGMENT=$KERNEL_ROOT/common/arch/arm64/configs/sukisu_gki.fragment"
         } >> "$GITHUB_ENV"
 
     - name: Sync Kernel Source
@@ -128,6 +130,13 @@ jobs:
           [[ -n "$EXTRACTED" ]] && SUBLEVEL="$EXTRACTED"
         fi
         echo "SUBLEVEL=$SUBLEVEL" >> "$GITHUB_ENV"
+
+    - name: Save Pre-Patch State
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        git add .
+        git commit -m "pre-patch baseline" --allow-empty || true
+        echo "PRE_PATCH_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
     - name: Setup SukiSU
       working-directory: ${{ env.KERNEL_ROOT }}
@@ -215,6 +224,80 @@ jobs:
           done
         fi
 
+    - name: Configure Kernel
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        FRAGMENT="$GITHUB_WORKSPACE/$VERSION_DIR/defconfig.fragment"
+        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
+
+        ASSEMBLE_FLAGS="--susfs --overlayfs"
+        bash "$HELPERS/assemble-defconfig.sh" "$FRAGMENT" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG" $ASSEMBLE_FLAGS
+        bash "$HELPERS/bypass-abi-check.sh" . "$ANDROID_VER" "$KERNEL_VER"
+
+    - name: Clean Module Lists
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
+        [ -f "$HELPERS/clean-module-list.sh" ] && bash "$HELPERS/clean-module-list.sh" .
+
+    - name: Clean Build Flags
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
+        bash "$HELPERS/clean-build-flags.sh" . "$KERNEL_VER" "SukiSU"
+
+    - name: Compile Patched Files
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        cd common
+
+        # discover patched .c files by diffing against pre-patch baseline
+        CHANGED_C=$(git diff --name-only "$PRE_PATCH_SHA" HEAD -- '*.c' || true)
+        NEW_C=$(git ls-files --others --exclude-standard -- '*.c' || true)
+        ALL_C=$(echo -e "${CHANGED_C}\n${NEW_C}" | sort -u | grep '\.c$' || true)
+
+        if [ -z "$ALL_C" ]; then
+          echo "No .c files changed by patches, skipping compile check"
+          echo "COMPILE_STATUS=skipped (no .c changes)" >> "$GITHUB_ENV"
+          exit 0
+        fi
+
+        OBJ_TARGETS=$(echo "$ALL_C" | sed 's/\.c$/.o/' | tr '\n' ' ')
+        echo "=== Compile targets: $OBJ_TARGETS"
+
+        # toolchain from kernel tree
+        export ROOT_DIR="$KERNEL_ROOT"
+        export KERNEL_DIR=common
+
+        CLANG_BIN=$(grep '^CLANG_PREBUILT_BIN=' build.config.common | cut -d= -f2)
+        TOOLS_BIN=$(grep '^BUILDTOOLS_PREBUILT_BIN=' build.config.common | cut -d= -f2)
+        export PATH="$ROOT_DIR/$CLANG_BIN:$ROOT_DIR/$TOOLS_BIN:$PATH"
+
+        mkdir -p ../out
+
+        make ARCH=arm64 LLVM=1 LLVM_IAS=1 O=../out gki_defconfig -j$(nproc) 2>&1
+
+        COMPILE_FAIL=""
+        for obj in $OBJ_TARGETS; do
+          echo "--- Compiling: $obj"
+          if make ARCH=arm64 LLVM=1 LLVM_IAS=1 O=../out "$obj" -j$(nproc) 2>&1; then
+            echo "    OK: $obj"
+          else
+            echo "    FAIL: $obj"
+            COMPILE_FAIL="${COMPILE_FAIL}${obj}\n"
+          fi
+        done
+
+        if [ -n "$COMPILE_FAIL" ]; then
+          echo "COMPILE_STATUS=FAILED" >> "$GITHUB_ENV"
+          echo ""
+          echo "=== COMPILE FAILURES ==="
+          echo -e "$COMPILE_FAIL"
+          exit 1
+        fi
+
+        echo "COMPILE_STATUS=passed ($(echo "$ALL_C" | wc -l) files)" >> "$GITHUB_ENV"
+
     - name: Upload Rejects
       if: always() && env.REJ_COUNT > 0
       uses: actions/upload-artifact@v4
@@ -230,12 +313,13 @@ jobs:
         {
           echo "## Dry Test: ${ANDROID_VER} ${KERNEL_VER}.${SUBLEVEL} (${OS_PATCH})"
           echo ""
-          echo "| Patch | Result |"
+          echo "| Check | Result |"
           echo "|-------|--------|"
           echo -e "$PATCH_RESULTS" | while IFS='|' read -r name result; do
             [ -z "$name" ] && continue
             echo "| $name | $result |"
           done
+          echo "| **compile** | ${COMPILE_STATUS:-not run} |"
           echo ""
           echo "**Rejects:** ${REJ_COUNT:-0}"
           echo ""
