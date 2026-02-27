@@ -251,7 +251,6 @@ jobs:
       run: |
         cd common
 
-        # discover patched .c files by diffing against pre-patch baseline
         CHANGED_C=$(git diff --name-only "$PRE_PATCH_SHA" HEAD -- '*.c' || true)
         NEW_C=$(git ls-files --others --exclude-standard -- '*.c' || true)
         ALL_C=$(echo -e "${CHANGED_C}\n${NEW_C}" | sort -u | grep '\.c$' || true)
@@ -262,10 +261,12 @@ jobs:
           exit 0
         fi
 
+        FILE_COUNT=$(echo "$ALL_C" | wc -l)
         OBJ_TARGETS=$(echo "$ALL_C" | sed 's/\.c$/.o/' | tr '\n' ' ')
-        echo "=== Compile targets: $OBJ_TARGETS"
+        echo "::group::Compile targets ($FILE_COUNT files)"
+        echo "$ALL_C"
+        echo "::endgroup::"
 
-        # toolchain from kernel tree
         export ROOT_DIR="$KERNEL_ROOT"
         export KERNEL_DIR=common
 
@@ -274,29 +275,50 @@ jobs:
         export PATH="$ROOT_DIR/$CLANG_BIN:$ROOT_DIR/$TOOLS_BIN:$PATH"
 
         mkdir -p ../out
+        MAKE="make ARCH=arm64 LLVM=1 LLVM_IAS=1 O=../out"
 
-        make ARCH=arm64 LLVM=1 LLVM_IAS=1 O=../out gki_defconfig -j$(nproc) 2>&1
+        echo "::group::make gki_defconfig"
+        $MAKE gki_defconfig -j$(nproc) 2>&1
+        echo "::endgroup::"
 
+        ERRORS_DIR="$(mktemp -d)"
         COMPILE_FAIL=""
+        PASS_COUNT=0
+
+        # -j1: sequential so errors are never interleaved
         for obj in $OBJ_TARGETS; do
-          echo "--- Compiling: $obj"
-          if make ARCH=arm64 LLVM=1 LLVM_IAS=1 O=../out "$obj" -j$(nproc) 2>&1; then
-            echo "    OK: $obj"
+          echo "::group::$obj"
+          if $MAKE "$obj" -j1 V=1 2>&1 | tee "$ERRORS_DIR/$(basename "$obj").log"; then
+            echo "::endgroup::"
+            PASS_COUNT=$((PASS_COUNT + 1))
           else
-            echo "    FAIL: $obj"
+            echo "::endgroup::"
+            echo "::error file=${obj%.o}.c::Compile FAILED: $obj"
             COMPILE_FAIL="${COMPILE_FAIL}${obj}\n"
           fi
         done
 
+        echo ""
+        echo "========================================"
+        echo "  COMPILE RESULTS: $PASS_COUNT/$FILE_COUNT passed"
+        echo "========================================"
+
         if [ -n "$COMPILE_FAIL" ]; then
-          echo "COMPILE_STATUS=FAILED" >> "$GITHUB_ENV"
           echo ""
-          echo "=== COMPILE FAILURES ==="
-          echo -e "$COMPILE_FAIL"
+          echo "FAILED FILES:"
+          echo -e "$COMPILE_FAIL" | while read -r f; do
+            [ -z "$f" ] && continue
+            echo "  ✗ $f"
+            echo "  --- error output ---"
+            cat "$ERRORS_DIR/$(basename "$f").log" | grep -E 'error:|warning:|undefined|undeclared|unterminated|redefinition|incompatible|implicit' | head -20
+            echo "  ---"
+          done
+          echo ""
+          echo "COMPILE_STATUS=FAILED ($PASS_COUNT/$FILE_COUNT)" >> "$GITHUB_ENV"
           exit 1
         fi
 
-        echo "COMPILE_STATUS=passed ($(echo "$ALL_C" | wc -l) files)" >> "$GITHUB_ENV"
+        echo "COMPILE_STATUS=passed ($FILE_COUNT files)" >> "$GITHUB_ENV"
 
     - name: Upload Rejects
       if: always() && env.REJ_COUNT > 0
