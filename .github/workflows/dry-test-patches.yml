@@ -174,34 +174,53 @@ jobs:
         git commit -m "pre-patch baseline" --allow-empty || true
         echo "PRE_PATCH_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
-    - name: Setup SukiSU
+    - name: Setup KSU Variant
       working-directory: ${{ env.KERNEL_ROOT }}
       env:
         SUKISU_COMMIT: ${{ inputs.sukisu_commit }}
       run: |
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+        case "$KSU_VARIANT" in
+          ReSukiSU)
+            curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s susfs-ksud
+            PIN_FILE="resukisu-pin.txt"
+            ;;
+          *)
+            curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+            PIN_FILE="sukisu-pin.txt"
+            ;;
+        esac
         [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
 
-        PIN="${SUKISU_COMMIT:-$(cat "$GITHUB_WORKSPACE/$VERSION_DIR/sukisu-pin.txt" 2>/dev/null || true)}"
+        PIN="${SUKISU_COMMIT:-$(cat "$GITHUB_WORKSPACE/$VERSION_DIR/$PIN_FILE" 2>/dev/null || true)}"
         if [ -n "$PIN" ]; then
           cd "$KERNEL_ROOT/$KSU_DIR"
           git fetch origin
           git checkout "$PIN"
-          echo "Pinned SukiSU to $(git rev-parse --short=7 HEAD)"
+          echo "Pinned $KSU_VARIANT to $(git rev-parse --short=7 HEAD)"
         fi
 
-    - name: Fix SukiSU Upstream Bugs
+    - name: Fix KSU Upstream Bugs
       working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}/kernel
       run: |
-        sed -i 's/newcreds\.cap_/newcreds->cap_/g' app_profile.c
-        sed -i 's/profile->selinux_domain/profile.selinux_domain/g' app_profile.c
-        sed -i '/setup_groups(&profile, cred)/{N;/newcreds/{s/setup_groups(&profile, cred)/setup_groups(\&profile, newcreds)/}}' app_profile.c
-        sed -i 's/KSU_IOCTL(KSU_IOCTL_NEW_GET_/KSU_IOCTL(NEW_GET_/g' supercalls.c
-        sed -i '/ksu_persistent_allow_list/{n;s/^\(\s*\)ksu_mark_running_process/\1\/*ksu_mark_running_process/;s/();$/();*\//}' supercalls.c
+        case "$KSU_VARIANT" in
+          ReSukiSU)
+            sed -i 's/profile->selinux_domain/profile.selinux_domain/g' app_profile.c
+            ;;
+          *)
+            sed -i 's/newcreds\.cap_/newcreds->cap_/g' app_profile.c
+            sed -i 's/profile->selinux_domain/profile.selinux_domain/g' app_profile.c
+            sed -i '/setup_groups(&profile, cred)/{N;/newcreds/{s/setup_groups(&profile, cred)/setup_groups(\&profile, newcreds)/}}' app_profile.c
+            sed -i 's/KSU_IOCTL(KSU_IOCTL_NEW_GET_/KSU_IOCTL(NEW_GET_/g' supercalls.c
+            sed -i '/ksu_persistent_allow_list/{n;s/^\(\s*\)ksu_mark_running_process/\1\/*ksu_mark_running_process/;s/();$/();*\//}' supercalls.c
+            ;;
+        esac
 
     - name: Apply Patches
       run: |
-        PATCH_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches"
+        case "$KSU_VARIANT" in
+          ReSukiSU) PATCH_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/ReSukiSU/patches" ;;
+          *)        PATCH_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches" ;;
+        esac
         RESULTS=""
 
         PATCH_50="$PATCH_DIR/50_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
@@ -291,7 +310,7 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
-        bash "$HELPERS/clean-build-flags.sh" . "$KERNEL_VER" "SukiSU"
+        bash "$HELPERS/clean-build-flags.sh" . "$KERNEL_VER" "$KSU_VARIANT"
 
     - name: Compile Patched Files
       working-directory: ${{ env.KERNEL_ROOT }}

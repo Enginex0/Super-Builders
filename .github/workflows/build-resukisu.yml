@@ -1,4 +1,4 @@
-name: Build SukiSU
+name: Build ReSukiSU
 
 permissions:
   contents: write
@@ -46,11 +46,11 @@ on:
 
 jobs:
   build:
-    name: "SukiSU ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
+    name: "ReSukiSU ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      KSU_VARIANT: SukiSU
+      KSU_VARIANT: ReSukiSU
       KSU_DIR: KernelSU
 
     steps:
@@ -146,56 +146,52 @@ jobs:
           [[ -n "$EXTRACTED" ]] && SUBLEVEL="$EXTRACTED"
         fi
 
-        ARTIFACT_BASE="${KERNEL_VER}.${SUBLEVEL}-${ANDROID_VER}-${OS_PATCH}-SukiSU"
+        ARTIFACT_BASE="${KERNEL_VER}.${SUBLEVEL}-${ANDROID_VER}-${OS_PATCH}-ReSukiSU"
         {
           echo "SUBLEVEL=$SUBLEVEL"
           echo "ARTIFACT_BASE=$ARTIFACT_BASE"
           echo "FILE_NAME=$ARTIFACT_BASE"
         } >> "$GITHUB_ENV"
 
-    - name: Setup SukiSU
+    - name: Setup ReSukiSU
       working-directory: ${{ env.KERNEL_ROOT }}
       env:
         SUKISU_COMMIT: ${{ inputs.sukisu_commit }}
       run: |
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+        curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s susfs-ksud
         [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
 
-        PIN="${SUKISU_COMMIT:-$(cat "$GITHUB_WORKSPACE/$VERSION_DIR/sukisu-pin.txt" 2>/dev/null || true)}"
+        PIN="${SUKISU_COMMIT:-$(cat "$GITHUB_WORKSPACE/$VERSION_DIR/resukisu-pin.txt" 2>/dev/null || true)}"
         if [ -n "$PIN" ]; then
           cd "$KERNEL_ROOT/$KSU_DIR"
           git fetch origin
           git checkout "$PIN"
-          echo "Pinned SukiSU to $(git rev-parse --short=7 HEAD)"
+          echo "Pinned ReSukiSU to $(git rev-parse --short=7 HEAD)"
         fi
 
-    - name: Fix SukiSU Upstream Bugs
+    - name: Fix ReSukiSU Upstream Bugs
       working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}/kernel
       run: |
-        sed -i 's/newcreds\.cap_/newcreds->cap_/g' app_profile.c
         sed -i 's/profile->selinux_domain/profile.selinux_domain/g' app_profile.c
-        sed -i '/setup_groups(&profile, cred)/{N;/newcreds/{s/setup_groups(&profile, cred)/setup_groups(\&profile, newcreds)/}}' app_profile.c
-        sed -i 's/KSU_IOCTL(KSU_IOCTL_NEW_GET_/KSU_IOCTL(NEW_GET_/g' supercalls.c
-        sed -i '/ksu_persistent_allow_list/{n;s/^\(\s*\)ksu_mark_running_process/\1\/*ksu_mark_running_process/;s/();$/();*\//}' supercalls.c
 
     - name: Apply Enhanced SUSFS Patch
       if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
-        patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/50_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
+        patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/ReSukiSU/patches/50_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
 
     - name: Apply KSU Safety Patch
       if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}
       run: |
-        patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/70_ksu_safety-sukisu-${KERNEL_VER}.patch"
+        patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/ReSukiSU/patches/70_ksu_safety-resukisu-${KERNEL_VER}.patch"
 
     - name: Apply ZeroMount Patch
       if: inputs.add_zeromount && inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
-        patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
-        ADB_FILTER="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/65_zeromount-adb-filter-${ANDROID_VER}-${KERNEL_VER}.patch"
+        patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/ReSukiSU/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
+        ADB_FILTER="$GITHUB_WORKSPACE/$VERSION_DIR/ReSukiSU/patches/65_zeromount-adb-filter-${ANDROID_VER}-${KERNEL_VER}.patch"
         if [ -f "$ADB_FILTER" ]; then
           patch -p1 -F3 --no-backup-if-mismatch < "$ADB_FILTER"
         fi
@@ -250,7 +246,7 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
-        bash "$HELPERS/clean-build-flags.sh" . "$KERNEL_VER" "SukiSU"
+        bash "$HELPERS/clean-build-flags.sh" . "$KERNEL_VER" "ReSukiSU"
 
     - name: Set Stock Build Identity
       working-directory: ${{ env.KERNEL_ROOT }}/common
@@ -382,7 +378,7 @@ jobs:
       run: |
         S() { [[ "$1" == "true" ]] && echo "Enabled" || echo "Disabled"; }
         {
-          echo "## SukiSU | ${KERNEL_VER}.${SUBLEVEL}"
+          echo "## ReSukiSU | ${KERNEL_VER}.${SUBLEVEL}"
           echo ""
           echo "| Feature | Status |"
           echo "|---------|--------|"
