@@ -492,7 +492,7 @@ new file mode 100644
 index 000000000..0b596ea48
 --- /dev/null
 +++ b/fs/zeromount.c
-@@ -0,0 +1,1463 @@
+@@ -0,0 +1,1513 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -519,6 +519,7 @@ index 000000000..0b596ea48
 +#include <linux/susfs.h>
 +#endif
 +#include <linux/reboot.h>
++#include <linux/bitmap.h>
 +
 +int zeromount_debug_level = 0;
 +
@@ -531,7 +532,37 @@ index 000000000..0b596ea48
 +
 +atomic_t zeromount_enabled = ATOMIC_INIT(0);
 +static atomic_t zeromount_dirs_count = ATOMIC_INIT(0);
++static atomic_t zeromount_rule_count = ATOMIC_INIT(0);
++static DECLARE_BITMAP(zm_bloom, ZM_BLOOM_BITS);
 +#define ZEROMOUNT_DISABLED() (atomic_read(&zeromount_enabled) == 0)
++
++static inline void zm_bloom_add(u32 hash)
++{
++	set_bit(hash & ZM_BLOOM_MASK, zm_bloom);
++	set_bit((hash >> 10) & ZM_BLOOM_MASK, zm_bloom);
++	set_bit((hash >> 20) & ZM_BLOOM_MASK, zm_bloom);
++}
++
++static inline bool zm_bloom_test(u32 hash)
++{
++	return test_bit(hash & ZM_BLOOM_MASK, zm_bloom) &&
++	       test_bit((hash >> 10) & ZM_BLOOM_MASK, zm_bloom) &&
++	       test_bit((hash >> 20) & ZM_BLOOM_MASK, zm_bloom);
++}
++
++static void zm_bloom_rebuild(void)
++{
++	struct zeromount_rule *rule;
++	int count = 0;
++
++	bitmap_zero(zm_bloom, ZM_BLOOM_BITS);
++	list_for_each_entry(rule, &zeromount_rules_list, list) {
++		u32 h = full_name_hash(NULL, rule->virtual_path, rule->vp_len);
++		zm_bloom_add(h);
++		count++;
++	}
++	ZM_DBG("bloom: rebuilt (%d rules)\n", count);
++}
 +
 +struct linux_dirent {
 +	unsigned long	d_ino;
@@ -801,6 +832,9 @@ index 000000000..0b596ea48
 +
 +	key = inode->i_ino ^ inode->i_sb->s_dev;
 +
++	if (atomic_read(&zeromount_rule_count) == 0)
++		return NULL;
++
 +	rcu_read_lock();
 +	hash_for_each_possible_rcu(zeromount_ino_ht, rule, ino_node, key) {
 +		if (rule->real_ino == inode->i_ino &&
@@ -934,6 +968,9 @@ index 000000000..0b596ea48
 +
 +	key = inode->i_ino ^ inode->i_sb->s_dev;
 +
++	if (atomic_read(&zeromount_rule_count) == 0)
++		return false;
++
 +	rcu_read_lock();
 +	hash_for_each_possible_rcu(zeromount_ino_ht, rule, ino_node, key) {
 +		if (rule->real_ino == inode->i_ino &&
@@ -967,6 +1004,12 @@ index 000000000..0b596ea48
 +
 +	zeromount_normalize_inline(pathname, &normalized, &norm_len);
 +	hash = full_name_hash(NULL, normalized, norm_len);
++
++	if (atomic_read(&zeromount_rule_count) == 0)
++		return NULL;
++
++	if (!zm_bloom_test(hash))
++		return NULL;
 +
 +	rcu_read_lock();
 +	hash_for_each_possible_rcu(zeromount_rules_ht, rule, node, hash) {
@@ -1567,12 +1610,14 @@ index 000000000..0b596ea48
 +
 +	spin_lock(&zeromount_lock);
 +	hash_add_rcu(zeromount_rules_ht, &rule->node, hash);
++	zm_bloom_add(hash);
 +	if (rule->real_ino != 0) {
 +		unsigned long ino_key = rule->real_ino ^ rule->real_dev;
 +
 +		hash_add_rcu(zeromount_ino_ht, &rule->ino_node, ino_key);
 +	}
 +	list_add_tail(&rule->list, &zeromount_rules_list);
++	atomic_inc(&zeromount_rule_count);
 +	spin_unlock(&zeromount_lock);
 +
 +	type = DT_REG;
@@ -1673,6 +1718,9 @@ index 000000000..0b596ea48
 +	}
 +	if (found)
 +		zeromount_cleanup_parent_dir(v_path);
++	if (found)
++		atomic_dec(&zeromount_rule_count);
++	zm_bloom_rebuild();
 +	spin_unlock(&zeromount_lock);
 +
 +	if (found && rule)
@@ -1726,6 +1774,8 @@ index 000000000..0b596ea48
 +		}
 +	}
 +
++	atomic_set(&zeromount_rule_count, 0);
++	bitmap_zero(zm_bloom, ZM_BLOOM_BITS);
 +	spin_unlock(&zeromount_lock);
 +	return 0;
 +}
@@ -1961,7 +2011,7 @@ new file mode 100644
 index 000000000..01fd6aca0
 --- /dev/null
 +++ b/include/linux/zeromount.h
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,199 @@
 +#ifndef _LINUX_ZEROMOUNT_H
 +#define _LINUX_ZEROMOUNT_H
 +
@@ -1978,6 +2028,10 @@ index 000000000..01fd6aca0
 +#include <linux/printk.h>
 +#include <linux/sched.h>
 +#include <linux/bitops.h>
++
++#define ZM_BLOOM_BITS     4096
++#define ZM_BLOOM_SHIFT    12
++#define ZM_BLOOM_MASK     (ZM_BLOOM_BITS - 1)
 +
 +/* Per-task recursion guard using android_oem_data1 bit 0.
 + * Survives CPU migration -- no preemption constraints needed. */
