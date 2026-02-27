@@ -11,11 +11,11 @@ Root (uid 0), system (1000), shell (2000) always see real values.
 ---
  drivers/usb/gadget/configfs.c |  30 +++++++++++++
  fs/zeromount.c                |  30 +++++++++++++
- include/linux/zeromount.h     |   1 +
+ include/linux/zeromount.h     |   7 +++++++
  net/ipv4/tcp_ipv4.c           |  22 ++++++++++
  net/ipv6/tcp_ipv6.c           |  22 ++++++++++
  net/unix/af_unix.c            |  29 +++++++++++++
- 6 files changed, 134 insertions(+)
+ 6 files changed, 140 insertions(+)
 
 diff --git a/drivers/usb/gadget/configfs.c b/drivers/usb/gadget/configfs.c
 index aaaaaaaaa..bbbbbbbbb 100644
@@ -112,7 +112,17 @@ diff --git a/include/linux/zeromount.h b/include/linux/zeromount.h
 index aaaaaaaaa..bbbbbbbbb 100644
 --- a/include/linux/zeromount.h
 +++ b/include/linux/zeromount.h
-@@ -149,5 +149,6 @@ extern spinlock_t zeromount_lock;
+@@ -16,3 +16,9 @@
+ #include <linux/bitops.h>
+ 
++struct inode;
++struct dentry;
++struct kstatfs;
++struct file;
++struct filename;
++
+ #define ZM_BLOOM_BITS     4096
+@@ -149,5 +155,6 @@ extern spinlock_t zeromount_lock;
  #ifdef CONFIG_ZEROMOUNT
  extern atomic_t zeromount_enabled;
 +extern atomic_t zeromount_hide_adb;
