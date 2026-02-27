@@ -16,15 +16,18 @@ on:
         type: choice
         options: ["5.10", "5.15", "6.1", "6.6", "6.12"]
         default: "5.10"
+      mode:
+        description: "single = one sublevel, matrix = all sublevels"
+        type: choice
+        options: [single, matrix]
+        default: "single"
       sub_level:
-        description: "Kernel sublevel"
+        description: "Kernel sublevel (single mode only)"
         type: string
-        required: true
         default: "209"
       os_patch_level:
-        description: "OS patch level (e.g. 2024-05)"
+        description: "OS patch level (single mode only)"
         type: string
-        required: true
         default: "2024-05"
       ksu_variant:
         description: "KernelSU variant"
@@ -57,8 +60,41 @@ on:
         default: ""
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.resolve.outputs.result }}
+    steps:
+    - id: resolve
+      env:
+        MODE: ${{ inputs.mode }}
+        ANDROID_VER: ${{ inputs.android_version }}
+        KERNEL_VER: ${{ inputs.kernel_version }}
+        SUB_LEVEL: ${{ inputs.sub_level }}
+        OS_PATCH: ${{ inputs.os_patch_level }}
+      run: |
+        if [ "$MODE" != "matrix" ]; then
+          echo "result=[{\"sub_level\":\"$SUB_LEVEL\",\"os_patch_level\":\"$OS_PATCH\"}]" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        case "${ANDROID_VER}-${KERNEL_VER}" in
+          android12-5.10)
+            echo 'result=[{"sub_level":"107","os_patch_level":"2022-11"},{"sub_level":"149","os_patch_level":"2023-01"},{"sub_level":"157","os_patch_level":"2023-03"},{"sub_level":"168","os_patch_level":"2023-05"},{"sub_level":"177","os_patch_level":"2023-07"},{"sub_level":"186","os_patch_level":"2023-09"},{"sub_level":"189","os_patch_level":"2023-11"},{"sub_level":"198","os_patch_level":"2024-01"},{"sub_level":"205","os_patch_level":"2024-03"},{"sub_level":"209","os_patch_level":"2024-05"},{"sub_level":"218","os_patch_level":"2024-08"},{"sub_level":"226","os_patch_level":"2024-11"},{"sub_level":"233","os_patch_level":"2025-02"},{"sub_level":"236","os_patch_level":"2025-05"},{"sub_level":"237","os_patch_level":"2025-06"},{"sub_level":"240","os_patch_level":"2025-09"},{"sub_level":"246","os_patch_level":"2025-12"}]' >> "$GITHUB_OUTPUT"
+            ;;
+          *)
+            echo "::error::No sublevel map for ${ANDROID_VER}-${KERNEL_VER} in matrix mode"
+            exit 1
+            ;;
+        esac
+
   dry-test:
-    name: "Dry Test ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
+    needs: [setup]
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    name: "Dry Test ${{ inputs.kernel_version }}.${{ matrix.sub_level }}"
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -82,8 +118,8 @@ jobs:
       env:
         ANDROID_VER: ${{ inputs.android_version }}
         KERNEL_VER: ${{ inputs.kernel_version }}
-        SUB_LEVEL: ${{ inputs.sub_level }}
-        OS_PATCH: ${{ inputs.os_patch_level }}
+        SUB_LEVEL: ${{ matrix.sub_level }}
+        OS_PATCH: ${{ matrix.os_patch_level }}
       run: |
         CONFIG="${ANDROID_VER}-${KERNEL_VER}-${SUB_LEVEL}"
         KERNEL_ROOT="$GITHUB_WORKSPACE/$CONFIG"
@@ -106,7 +142,7 @@ jobs:
       env:
         ANDROID_VER: ${{ inputs.android_version }}
         KERNEL_VER: ${{ inputs.kernel_version }}
-        OS_PATCH: ${{ inputs.os_patch_level }}
+        OS_PATCH: ${{ matrix.os_patch_level }}
       run: |
         FORMATTED_BRANCH="${ANDROID_VER}-${KERNEL_VER}-${OS_PATCH}"
 
@@ -122,7 +158,7 @@ jobs:
 
     - name: Extract Sublevel
       env:
-        INPUT_SUB_LEVEL: ${{ inputs.sub_level }}
+        INPUT_SUB_LEVEL: ${{ matrix.sub_level }}
       run: |
         SUBLEVEL="$INPUT_SUB_LEVEL"
         if [[ -f "$KERNEL_ROOT/common/Makefile" ]]; then
@@ -286,7 +322,6 @@ jobs:
         COMPILE_FAIL=""
         PASS_COUNT=0
 
-        # -j1: sequential so errors are never interleaved
         for obj in $OBJ_TARGETS; do
           echo "::group::$obj"
           if $MAKE "$obj" -j1 V=1 2>&1 | tee "$ERRORS_DIR/$(basename "$obj").log"; then
