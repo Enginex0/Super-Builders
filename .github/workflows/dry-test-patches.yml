@@ -32,7 +32,7 @@ on:
       ksu_variant:
         description: "KernelSU variant"
         type: choice
-        options: [SukiSU, ReSukiSU, KernelSU-Next]
+        options: [SukiSU, ReSukiSU, KernelSU-Next, WKSU]
         default: "SukiSU"
       sukisu_commit:
         description: "SukiSU commit (empty = pinned default)"
@@ -190,6 +190,12 @@ jobs:
             echo "KSU_DIR=$KSU_DIR" >> "$GITHUB_ENV"
             PIN_FILE="kernelsu-next-pin.txt"
             ;;
+          WKSU)
+            curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/stable/kernel/setup.sh" | bash -s canary
+            KSU_DIR="Wild_KSU"
+            echo "KSU_DIR=$KSU_DIR" >> "$GITHUB_ENV"
+            PIN_FILE="wksu-pin.txt"
+            ;;
           *)
             curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
             PIN_FILE="sukisu-pin.txt"
@@ -213,6 +219,8 @@ jobs:
             ;;
           KernelSU-Next)
             ;;
+          WKSU)
+            ;;
           *)
             sed -i 's/newcreds\.cap_/newcreds->cap_/g' app_profile.c
             sed -i 's/profile->selinux_domain/profile.selinux_domain/g' app_profile.c
@@ -227,6 +235,7 @@ jobs:
         case "$KSU_VARIANT" in
           ReSukiSU) PATCH_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/ReSukiSU/patches" ;;
           KernelSU-Next) PATCH_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches" ;;
+          WKSU) PATCH_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/WildKSU/patches" ;;
           *)        PATCH_DIR="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches" ;;
         esac
         RESULTS=""
