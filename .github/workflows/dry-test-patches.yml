@@ -233,6 +233,11 @@ jobs:
             ;;
         esac
 
+    - name: Fix Old Kernel Compatibility
+      run: |
+        FIX_SCRIPT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-old-kernel-compat.sh"
+        [ -f "$FIX_SCRIPT" ] && bash "$FIX_SCRIPT" "$KERNEL_ROOT/common" "$SUBLEVEL" || true
+
     - name: Apply Patches
       run: |
         case "$KSU_VARIANT" in
@@ -290,6 +295,11 @@ jobs:
         echo "PATCH_RESULTS<<EOF" >> "$GITHUB_ENV"
         echo -e "$RESULTS" >> "$GITHUB_ENV"
         echo "EOF" >> "$GITHUB_ENV"
+
+        if echo -e "$RESULTS" | grep -q "FAILED"; then
+          echo "::error::One or more patches failed to apply"
+          exit 1
+        fi
 
     - name: Scan Patch Rejects
       if: always()

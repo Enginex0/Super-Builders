@@ -184,6 +184,12 @@ jobs:
         sed -i 's/KSU_IOCTL(KSU_IOCTL_NEW_GET_/KSU_IOCTL(NEW_GET_/g' supercalls.c
         sed -i '/ksu_persistent_allow_list/{n;s/^\(\s*\)ksu_mark_running_process/\1\/*ksu_mark_running_process/;s/();$/();*\//}' supercalls.c
 
+    - name: Fix Old Kernel Compatibility
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        FIX_SCRIPT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-old-kernel-compat.sh"
+        [ -f "$FIX_SCRIPT" ] && bash "$FIX_SCRIPT" "$KERNEL_ROOT/common" "$SUBLEVEL" || true
+
     - name: Apply Enhanced SUSFS Patch
       if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common

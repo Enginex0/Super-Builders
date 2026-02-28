@@ -175,6 +175,12 @@ jobs:
           echo "Pinned ReSukiSU to $(git rev-parse --short=7 HEAD)"
         fi
 
+    - name: Fix Old Kernel Compatibility
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        FIX_SCRIPT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-old-kernel-compat.sh"
+        [ -f "$FIX_SCRIPT" ] && bash "$FIX_SCRIPT" "$KERNEL_ROOT/common" "$SUBLEVEL" || true
+
     - name: Apply Enhanced SUSFS Patch
       if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common
