@@ -1,0 +1,62 @@
+diff -ruN wksu-clean/kernel/ksud.c wksu-modified/kernel/ksud.c
+--- wksu-clean/kernel/ksud.c	2026-02-27 23:21:14.832059076 +0100
++++ wksu-modified/kernel/ksud.c	2026-02-27 23:22:10.323663458 +0100
+@@ -462,7 +462,7 @@
+ 					int *value)
+ {
+ #ifdef CONFIG_KSU_SUSFS
+-    if (!ksu_input_hook) {
++    if (!READ_ONCE(ksu_input_hook)) {
+         return 0;
+     }
+ #endif // #ifdef CONFIG_KSU_SUSFS
+@@ -665,7 +665,7 @@
+ 	bool ret = schedule_work(&stop_init_rc_hook_work);
+ 	pr_info("unregister init_rc_hook kprobe: %d!\n", ret);
+ #else
+-    ksu_init_rc_hook = false;
++    WRITE_ONCE(ksu_init_rc_hook, false);
+     pr_info("stop init_rc_hook\n");
+ #endif // #ifndef CONFIG_KSU_SUSFS
+ 
+@@ -677,7 +677,7 @@
+ 	bool ret = schedule_work(&stop_execve_hook_work);
+ 	pr_info("unregister execve kprobe: %d!\n", ret);
+ #else
+-    ksu_execveat_hook = false;
++    WRITE_ONCE(ksu_execveat_hook, false);
+     pr_info("stop execve_hook\n");
+ #endif // #ifndef CONFIG_KSU_SUSFS
+ }
+@@ -693,7 +693,7 @@
+ 	bool ret = schedule_work(&stop_input_hook_work);
+ 	pr_info("unregister input kprobe: %d!\n", ret);
+ #else
+-    ksu_input_hook = false;
++    WRITE_ONCE(ksu_input_hook, false);
+     pr_info("stop input_hook\n");
+ #endif // #ifndef CONFIG_KSU_SUSFS
+ }
+diff -ruN wksu-clean/kernel/setuid_hook.c wksu-modified/kernel/setuid_hook.c
+--- wksu-clean/kernel/setuid_hook.c	2026-02-27 23:21:14.833895812 +0100
++++ wksu-modified/kernel/setuid_hook.c	2026-02-27 23:22:10.369106872 +0100
+@@ -37,7 +37,7 @@
+ static inline bool is_zygote_normal_app_uid(uid_t uid)
+ {
+     uid %= 100000;
+-    return (uid >= 10000 && uid < 19999);
++    return (uid >= 10000 && uid < 20000);
+ }
+ 
+ extern u32 susfs_zygote_sid;
+@@ -101,6 +101,10 @@
+     uid_t old_uid = current_uid().val;
+ 
+     // We only interest in process spwaned by zygote
++    if (susfs_zygote_sid == 0) {
++        return 0;
++    }
++
+     if (!susfs_is_sid_equal(current_cred(), susfs_zygote_sid)) {
+         return 0;
+     }
