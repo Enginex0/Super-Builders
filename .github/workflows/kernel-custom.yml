@@ -27,15 +27,7 @@ on:
           # - RKSU  # no SUSFS integration — deferred
         default: "KernelSU-Next"
       add_susfs:
-        description: "Add SUSFS (upstream only)"
-        type: boolean
-        default: true
-      add_enhanced_susfs:
-        description: "Add enhanced SUSFS (custom injection scripts)"
-        type: boolean
-        default: true
-      add_unicode_filter:
-        description: "Add Unicode filter"
+        description: "Add Enhanced SUSFS"
         type: boolean
         default: true
       add_zeromount:
@@ -43,7 +35,7 @@ on:
         type: boolean
         default: true
       add_zram:
-        description: "Add ZRAM with LZ4K"
+        description: "Add ZRAM with LZ4K/LZ4KD"
         type: boolean
         default: true
       add_bbg:
@@ -54,10 +46,25 @@ on:
         description: "Add overlayfs support (CONFIG_TMPFS_XATTR + POSIX ACL)"
         type: boolean
         default: true
+      add_usb_debugging_stealth:
+        description: "Add USB Debugging Stealth (ADB filter)"
+        type: boolean
+        default: true
       add_kpm:
         description: "Add KPM (SukiSU/ReSukiSU)"
         type: boolean
         default: false
+      sukisu_commit:
+        description: "SukiSU commit (empty = pinned default)"
+        type: string
+        default: ""
+      device_codename:
+        description: "Device profile (generic = no identity spoofing)"
+        type: choice
+        options:
+          - generic
+          - lake
+        default: "lake"
   workflow_call:
     inputs:
       device:
@@ -69,12 +76,6 @@ on:
       add_susfs:
         type: boolean
         default: true
-      add_enhanced_susfs:
-        type: boolean
-        default: true
-      add_unicode_filter:
-        type: boolean
-        default: true
       add_zeromount:
         type: boolean
         default: true
@@ -87,9 +88,18 @@ on:
       add_overlayfs_support:
         type: boolean
         default: true
+      add_usb_debugging_stealth:
+        type: boolean
+        default: true
       add_kpm:
         type: boolean
         default: false
+      sukisu_commit:
+        type: string
+        default: ""
+      device_codename:
+        type: string
+        default: "lake"
 
 jobs:
   download-dependencies:
@@ -98,44 +108,154 @@ jobs:
       contents: read
       actions: write
 
-  build-lake:
-    if: ${{ inputs.device == 'all' || inputs.device == 'lake' }}
+  build-lake-sukisu:
+    if: ${{ (inputs.device == 'all' || inputs.device == 'lake') && inputs.ksu_variant == 'SukiSU' }}
     needs: [download-dependencies]
-    uses: ./.github/workflows/gki-build.yml
-    secrets: inherit
+    uses: ./.github/workflows/build-sukisu.yml
     with:
-      android_version: "android12"
+      android_version: android12
       kernel_version: "5.10"
       sub_level: "209"
       os_patch_level: "2024-05"
-      ksu_variant: ${{ inputs.ksu_variant }}
       add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
       add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
       add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
       device_codename: "lake"
 
-  build-lake-a15:
-    if: ${{ inputs.device == 'all' || inputs.device == 'lake_a15' }}
+  build-lake-ksu-next:
+    if: ${{ (inputs.device == 'all' || inputs.device == 'lake') && inputs.ksu_variant == 'KernelSU-Next' }}
     needs: [download-dependencies]
-    uses: ./.github/workflows/gki-build.yml
-    secrets: inherit
+    uses: ./.github/workflows/build-ksu-next.yml
     with:
-      android_version: "android15"
+      android_version: android12
+      kernel_version: "5.10"
+      sub_level: "209"
+      os_patch_level: "2024-05"
+      add_susfs: ${{ inputs.add_susfs }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: "lake"
+
+  build-lake-resukisu:
+    if: ${{ (inputs.device == 'all' || inputs.device == 'lake') && inputs.ksu_variant == 'ReSukiSU' }}
+    needs: [download-dependencies]
+    uses: ./.github/workflows/build-resukisu.yml
+    with:
+      android_version: android12
+      kernel_version: "5.10"
+      sub_level: "209"
+      os_patch_level: "2024-05"
+      add_susfs: ${{ inputs.add_susfs }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: "lake"
+
+  build-lake-wksu:
+    if: ${{ (inputs.device == 'all' || inputs.device == 'lake') && inputs.ksu_variant == 'WKSU' }}
+    needs: [download-dependencies]
+    uses: ./.github/workflows/build-wksu.yml
+    with:
+      android_version: android12
+      kernel_version: "5.10"
+      sub_level: "209"
+      os_patch_level: "2024-05"
+      add_susfs: ${{ inputs.add_susfs }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: "lake"
+
+  build-lake-a15-sukisu:
+    if: ${{ (inputs.device == 'all' || inputs.device == 'lake_a15') && inputs.ksu_variant == 'SukiSU' }}
+    needs: [download-dependencies]
+    uses: ./.github/workflows/build-sukisu.yml
+    with:
+      android_version: android15
       kernel_version: "6.6"
       sub_level: "58"
       os_patch_level: "2025-01"
-      ksu_variant: ${{ inputs.ksu_variant }}
       add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
       add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
       add_kpm: ${{ inputs.add_kpm }}
-      device_codename: "lake_a15"
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: "lake"
+
+  build-lake-a15-ksu-next:
+    if: ${{ (inputs.device == 'all' || inputs.device == 'lake_a15') && inputs.ksu_variant == 'KernelSU-Next' }}
+    needs: [download-dependencies]
+    uses: ./.github/workflows/build-ksu-next.yml
+    with:
+      android_version: android15
+      kernel_version: "6.6"
+      sub_level: "58"
+      os_patch_level: "2025-01"
+      add_susfs: ${{ inputs.add_susfs }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: "lake"
+
+  build-lake-a15-resukisu:
+    if: ${{ (inputs.device == 'all' || inputs.device == 'lake_a15') && inputs.ksu_variant == 'ReSukiSU' }}
+    needs: [download-dependencies]
+    uses: ./.github/workflows/build-resukisu.yml
+    with:
+      android_version: android15
+      kernel_version: "6.6"
+      sub_level: "58"
+      os_patch_level: "2025-01"
+      add_susfs: ${{ inputs.add_susfs }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: "lake"
+
+  build-lake-a15-wksu:
+    if: ${{ (inputs.device == 'all' || inputs.device == 'lake_a15') && inputs.ksu_variant == 'WKSU' }}
+    needs: [download-dependencies]
+    uses: ./.github/workflows/build-wksu.yml
+    with:
+      android_version: android15
+      kernel_version: "6.6"
+      sub_level: "58"
+      os_patch_level: "2025-01"
+      add_susfs: ${{ inputs.add_susfs }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: "lake"

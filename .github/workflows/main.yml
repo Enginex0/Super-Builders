@@ -192,10 +192,11 @@ jobs:
     with:
       ksu_variant: ${{ inputs.ksu_variant }}
       add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: true
-      add_unicode_filter: true
       add_zeromount: ${{ inputs.add_zeromount }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: ${{ inputs.device_codename }}
