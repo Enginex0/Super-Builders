@@ -208,6 +208,19 @@ jobs:
           patch -p1 -F3 --no-backup-if-mismatch < "$ADB_FILTER"
         fi
 
+    - name: Fix show_pad for old sublevels
+      if: inputs.add_susfs
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      env:
+        SL: ${{ matrix.sub_level }}
+      run: |
+        if [[ "$SL" -lt 218 ]]; then
+          if grep -q 'goto show_pad;' ./fs/proc/task_mmu.c && ! grep -q '^show_pad:' ./fs/proc/task_mmu.c; then
+            sed -i '/show_smap_vma_flags(m, vma);/{n;/^$/a\show_pad:
+}' ./fs/proc/task_mmu.c
+          fi
+        fi
+
     - name: Setup Baseband Guard
       if: inputs.add_bbg
       working-directory: ${{ env.KERNEL_ROOT }}

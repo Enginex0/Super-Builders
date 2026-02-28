@@ -559,7 +559,7 @@
  		goto put_both;
  
 --- clean/fs/namespace.c	2026-02-27 17:08:27.058021703 +0100
-+++ fresh/fs/namespace.c	2026-02-28 14:18:56.683252310 +0100
++++ fresh/fs/namespace.c	2026-02-28 16:10:25.809152161 +0100
 @@ -30,10 +30,21 @@
  #include <uapi/linux/mount.h>
  #include <linux/fs_context.h>
@@ -803,6 +803,14 @@
  	new = copy_tree(old, old->mnt.mnt_root, copy_flags);
  	if (IS_ERR(new)) {
  		namespace_unlock();
+@@ -4140,3 +4334,7 @@
+ 	.install	= mntns_install,
+ 	.owner		= mntns_owner,
+ };
++
++#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++void susfs_reorder_mnt_id(void) {}
++#endif
 --- clean/fs/notify/fdinfo.c	2026-02-27 17:08:27.058306706 +0100
 +++ fresh/fs/notify/fdinfo.c	2026-02-28 14:18:56.683616366 +0100
 @@ -12,6 +12,9 @@
@@ -1166,7 +1174,7 @@
  	show_fd_locks(m, file, files);
  	if (seq_has_overflowed(m))
 --- clean/fs/proc/task_mmu.c	2026-02-27 17:54:47.367500708 +0100
-+++ fresh/fs/proc/task_mmu.c	2026-02-28 14:27:44.702604262 +0100
++++ fresh/fs/proc/task_mmu.c	2026-02-28 16:10:18.413299262 +0100
 @@ -19,6 +19,9 @@
  #include <linux/shmem_fs.h>
  #include <linux/uaccess.h>
@@ -1260,15 +1268,7 @@
  	smap_gather_stats(vma, &mss, 0);
  
  	show_map_vma(m, vma);
-@@ -915,6 +978,7 @@
- 		seq_printf(m, "ProtectionKey:  %8u\n", vma_pkey(vma));
- 	show_smap_vma_flags(m, vma);
- 
-+show_pad:
- 	return 0;
- }
- 
-@@ -946,7 +1010,23 @@
+@@ -946,7 +1009,23 @@
  	hold_task_mempolicy(priv);
  
  	for (vma = priv->mm->mmap; vma;) {
@@ -1292,7 +1292,7 @@
  		last_vma_end = vma->vm_end;
  
  		/*
-@@ -1671,6 +1751,9 @@
+@@ -1671,6 +1750,9 @@
  	unsigned long start_vaddr;
  	unsigned long end_vaddr;
  	int ret = 0, copied = 0;
@@ -1302,7 +1302,7 @@
  
  	if (!mm || !mmget_not_zero(mm))
  		goto out;
-@@ -1726,6 +1809,18 @@
+@@ -1726,6 +1808,18 @@
  		if (ret)
  			goto out_free;
  		ret = walk_page_range(mm, start_vaddr, end, &pagemap_ops, &pm);

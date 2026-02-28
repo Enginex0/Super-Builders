@@ -226,8 +226,11 @@ jobs:
       run: |
         SL="$SUBLEVEL"
 
-        if [[ "$ANDROID_VER" == "android12" && "$KERNEL_VER" == "5.10" && $SL -le 209 ]]; then
-          sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
+        if [[ "$ANDROID_VER" == "android12" && "$KERNEL_VER" == "5.10" && $SL -lt 218 ]]; then
+          if grep -q 'goto show_pad;' ./fs/proc/task_mmu.c && ! grep -q '^show_pad:' ./fs/proc/task_mmu.c; then
+            sed -i '/show_smap_vma_flags(m, vma);/{n;/^$/a\show_pad:
+}' ./fs/proc/task_mmu.c
+          fi
         fi
 
         if [[ "$ANDROID_VER" == "android12" && "$KERNEL_VER" == "5.10" && $SL -le 117 ]]; then
