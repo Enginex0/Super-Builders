@@ -161,18 +161,21 @@ diff -ruN '--exclude=.git' clean/fs/exec.c work/fs/exec.c
  	 * set*uid() to execve() because too many poorly written programs
 diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
 --- clean/fs/namei.c	2026-02-27 17:54:47.367500708 +0100
-+++ work/fs/namei.c	2026-02-28 04:36:21.357781059 +0100
-@@ -39,6 +39,9 @@
++++ work/fs/namei.c	2026-02-28 05:28:50.791270289 +0100
+@@ -39,6 +39,12 @@
  #include <linux/bitops.h>
  #include <linux/init_task.h>
  #include <linux/uaccess.h>
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/susfs.h>
++#endif
 +#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
 +#include <linux/susfs_def.h>
 +#endif
  
  #include "internal.h"
  #include "mount.h"
-@@ -46,6 +49,11 @@
+@@ -46,6 +52,11 @@
  #define CREATE_TRACE_POINTS
  #include <trace/events/namei.h>
  
@@ -184,7 +187,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  /* [Feb-1997 T. Schoebel-Theuer]
   * Fundamental changes in the pathname lookup mechanisms (namei)
   * were necessary because of omirr.  The reason is that omirr needs
-@@ -508,6 +516,9 @@
+@@ -508,6 +519,9 @@
  	struct path	root;
  	struct inode	*inode; /* path.dentry.d_inode */
  	unsigned int	flags;
@@ -194,7 +197,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  	unsigned	seq, m_seq, r_seq;
  	int		last_type;
  	unsigned	depth;
-@@ -537,6 +548,9 @@
+@@ -537,6 +551,9 @@
  	p->total_link_count = old ? old->total_link_count : 0;
  	p->saved = old;
  	current->nameidata = p;
@@ -204,7 +207,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  }
  
  static void restore_nameidata(void)
-@@ -1526,15 +1540,44 @@
+@@ -1526,15 +1543,44 @@
  	struct dentry *dentry = lookup_dcache(name, base, flags);
  	struct dentry *old;
  	struct inode *dir = base->d_inode;
@@ -249,7 +252,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  	if (unlikely(!dentry))
  		return ERR_PTR(-ENOMEM);
  
-@@ -1552,6 +1595,9 @@
+@@ -1552,6 +1598,9 @@
  {
  	struct dentry *dentry, *parent = nd->path.dentry;
  	int status = 1;
@@ -259,7 +262,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  
  	/*
  	 * Rename seqlock is not required here because in the off chance
-@@ -1561,6 +1607,16 @@
+@@ -1561,6 +1610,16 @@
  	if (nd->flags & LOOKUP_RCU) {
  		unsigned seq;
  		dentry = __d_lookup_rcu(parent, &nd->last, &seq);
@@ -276,7 +279,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  		if (unlikely(!dentry)) {
  			if (!try_to_unlazy(nd))
  				return ERR_PTR(-ECHILD);
-@@ -1596,6 +1652,16 @@
+@@ -1596,6 +1655,16 @@
  			status = d_revalidate(dentry, nd->flags);
  	} else {
  		dentry = __d_lookup(parent, &nd->last);
@@ -293,7 +296,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  		if (unlikely(!dentry))
  			return NULL;
  		status = d_revalidate(dentry, nd->flags);
-@@ -1617,12 +1683,19 @@
+@@ -1617,12 +1686,19 @@
  	struct dentry *dentry, *old;
  	struct inode *inode = dir->d_inode;
  	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wq);
@@ -313,7 +316,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  	if (IS_ERR(dentry))
  		return dentry;
  	if (unlikely(!d_in_lookup(dentry))) {
-@@ -1631,6 +1704,12 @@
+@@ -1631,6 +1707,12 @@
  			if (!error) {
  				d_invalidate(dentry);
  				dput(dentry);
@@ -326,7 +329,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  				goto again;
  			}
  			dput(dentry);
-@@ -1644,6 +1723,18 @@
+@@ -1644,6 +1726,18 @@
  			dentry = old;
  		}
  	}
@@ -345,7 +348,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  	return dentry;
  }
  
-@@ -1949,6 +2040,11 @@
+@@ -1949,6 +2043,11 @@
  	if (IS_ERR(dentry))
  		return ERR_CAST(dentry);
  	if (unlikely(!dentry)) {
@@ -357,7 +360,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  		dentry = lookup_slow(&nd->last, nd->path.dentry, nd->flags);
  		if (IS_ERR(dentry))
  			return ERR_CAST(dentry);
-@@ -2210,6 +2306,9 @@
+@@ -2210,6 +2309,9 @@
  
  	/* At this point we know we have a real path component. */
  	for(;;) {
@@ -367,7 +370,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  		const char *link;
  		u64 hash_len;
  		int type;
-@@ -2218,6 +2317,14 @@
+@@ -2218,6 +2320,14 @@
  		if (err)
  			return err;
  
@@ -382,7 +385,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  		hash_len = hash_name(nd->path.dentry, name);
  
  		type = LAST_NORM;
-@@ -2399,6 +2506,9 @@
+@@ -2399,6 +2509,9 @@
  {
  	if (nd->last_type == LAST_NORM && nd->last.name[nd->last.len])
  		nd->flags |= LOOKUP_FOLLOW | LOOKUP_DIRECTORY;
@@ -392,7 +395,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  
  	return walk_component(nd, WALK_TRAILING);
  }
-@@ -3170,15 +3280,40 @@
+@@ -3170,15 +3283,40 @@
  	int error, create_error = 0;
  	umode_t mode = op->mode;
  	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wq);
@@ -433,7 +436,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  			if (IS_ERR(dentry))
  				return dentry;
  		}
-@@ -3276,6 +3411,9 @@
+@@ -3276,6 +3414,9 @@
  	struct inode *inode;
  	struct dentry *dentry;
  	const char *res;
@@ -443,7 +446,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  
  	nd->flags |= op->intent;
  
-@@ -3531,12 +3669,20 @@
+@@ -3531,12 +3672,20 @@
  	return ERR_PTR(error);
  }
  
@@ -464,7 +467,7 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  
  	set_nameidata(&nd, dfd, pathname);
  	filp = path_openat(&nd, op, flags | LOOKUP_RCU);
-@@ -3544,6 +3690,31 @@
+@@ -3544,6 +3693,31 @@
  		filp = path_openat(&nd, op, flags);
  	if (unlikely(filp == ERR_PTR(-ESTALE)))
  		filp = path_openat(&nd, op, flags | LOOKUP_REVAL);
@@ -496,6 +499,72 @@ diff -ruN '--exclude=.git' clean/fs/namei.c work/fs/namei.c
  	restore_nameidata();
  	return filp;
  }
+@@ -3807,6 +3981,12 @@
+ 	int error;
+ 	unsigned int lookup_flags = LOOKUP_DIRECTORY;
+ 
++#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER
++	if (susfs_check_unicode_bypass(pathname)) {
++		return -ENOENT;
++	}
++#endif
++
+ retry:
+ 	dentry = user_path_create(dfd, pathname, &path, lookup_flags);
+ 	if (IS_ERR(dentry))
+@@ -4078,6 +4258,12 @@
+ 	if ((flag & ~AT_REMOVEDIR) != 0)
+ 		return -EINVAL;
+ 
++#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER
++	if (susfs_check_unicode_bypass(pathname)) {
++		return -ENOENT;
++	}
++#endif
++
+ 	if (flag & AT_REMOVEDIR)
+ 		return do_rmdir(dfd, getname(pathname));
+ 	return do_unlinkat(dfd, getname(pathname));
+@@ -4118,6 +4304,12 @@
+ 	struct path path;
+ 	unsigned int lookup_flags = 0;
+ 
++#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER
++	if (susfs_check_unicode_bypass(newname)) {
++		return -ENOENT;
++	}
++#endif
++
+ 	from = getname(oldname);
+ 	if (IS_ERR(from))
+ 		return PTR_ERR(from);
+@@ -4249,6 +4441,12 @@
+ 	int how = 0;
+ 	int error;
+ 
++#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER
++	if (susfs_check_unicode_bypass(newname)) {
++		return -ENOENT;
++	}
++#endif
++
+ 	if ((flags & ~(AT_SYMLINK_FOLLOW | AT_EMPTY_PATH)) != 0)
+ 		return -EINVAL;
+ 	/*
+@@ -4509,6 +4707,13 @@
+ 	bool should_retry = false;
+ 	int error = -EINVAL;
+ 
++#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER
++	if (susfs_check_unicode_bypass(from->uptr) ||
++	    susfs_check_unicode_bypass(to->uptr)) {
++		return -ENOENT;
++	}
++#endif
++
+ 	if (flags & ~(RENAME_NOREPLACE | RENAME_EXCHANGE | RENAME_WHITEOUT))
+ 		goto put_both;
+ 
 diff -ruN '--exclude=.git' clean/fs/namespace.c work/fs/namespace.c
 --- clean/fs/namespace.c	2026-02-27 17:08:27.058021703 +0100
 +++ work/fs/namespace.c	2026-02-28 04:36:21.481778474 +0100
@@ -842,18 +911,21 @@ diff -ruN '--exclude=.git' clean/fs/notify/fdinfo.c work/fs/notify/fdinfo.c
  			   inotify_mark_user_mask(mark));
 diff -ruN '--exclude=.git' clean/fs/open.c work/fs/open.c
 --- clean/fs/open.c	2026-02-27 17:08:27.058409718 +0100
-+++ work/fs/open.c	2026-02-28 04:36:21.605775889 +0100
-@@ -32,6 +32,9 @@
++++ work/fs/open.c	2026-02-28 05:27:39.488811458 +0100
+@@ -32,6 +32,12 @@
  #include <linux/ima.h>
  #include <linux/dnotify.h>
  #include <linux/compat.h>
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/susfs.h>
++#endif
 +#ifdef CONFIG_KSU_SUSFS
 +#include <linux/susfs_def.h>
 +#endif
  
  #include "internal.h"
  #include <trace/hooks/syscall_check.h>
-@@ -395,6 +398,13 @@
+@@ -395,6 +401,15 @@
  	return old_cred;
  }
  
@@ -862,12 +934,14 @@ diff -ruN '--exclude=.git' clean/fs/open.c work/fs/open.c
 +extern bool __ksu_is_allow_uid_for_current(uid_t uid);
 +extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
 +			int *flags);
++extern bool susfs_is_current_proc_umounted(void);
++extern bool susfs_is_hidden_name(const char *name, int namlen, uid_t caller_uid);
 +#endif
 +
  static long do_faccessat(int dfd, const char __user *filename, int mode, int flags)
  {
  	struct path path;
-@@ -403,6 +413,18 @@
+@@ -403,6 +418,18 @@
  	unsigned int lookup_flags = LOOKUP_FOLLOW;
  	const struct cred *old_cred = NULL;
  
@@ -885,6 +959,51 @@ diff -ruN '--exclude=.git' clean/fs/open.c work/fs/open.c
 +
  	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
  		return -EINVAL;
+ 
+@@ -425,6 +452,31 @@
+ 	if (res)
+ 		goto out;
+ 
++#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
++	if (current_uid().val >= 10000 &&
++	    susfs_is_current_proc_umounted()) {
++		struct dentry *_d = path.dentry;
++		struct dentry *_par = _d->d_parent;
++		if (_par && _par != _d && _par->d_parent) {
++			int _plen = _par->d_name.len;
++			if ((_plen == 4 && !memcmp(_par->d_name.name, "data", 4)) ||
++			    (_plen == 3 && !memcmp(_par->d_name.name, "obb", 3))) {
++				struct dentry *_gp = _par->d_parent;
++				if (_gp->d_name.len == 7 &&
++				    !memcmp(_gp->d_name.name, "Android", 7) &&
++				    susfs_is_hidden_name(_d->d_name.name,
++				        _d->d_name.len, current_uid().val)) {
++					printk_ratelimited(KERN_INFO
++						"susfs_debug: HIDE access uid=%u name='%.*s'\n",
++						current_uid().val, _d->d_name.len, _d->d_name.name);
++					res = -ENOENT;
++					goto out_path_release;
++				}
++			}
++		}
++	}
++#endif
++
+ 	inode = d_backing_inode(path.dentry);
+ 
+ 	if ((mode & MAY_EXEC) && S_ISREG(inode->i_mode)) {
+@@ -1205,6 +1257,12 @@
+ 	int fd = build_open_flags(how, &op);
+ 	struct filename *tmp;
+ 
++#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER
++	if (susfs_check_unicode_bypass(filename)) {
++		return -ENOENT;
++	}
++#endif
++
+ 	if (fd)
+ 		return fd;
  
 diff -ruN '--exclude=.git' clean/fs/proc/base.c work/fs/proc/base.c
 --- clean/fs/proc/base.c	2026-02-27 17:54:47.367500708 +0100
@@ -1563,11 +1682,14 @@ diff -ruN '--exclude=.git' clean/fs/readdir.c work/fs/readdir.c
  		error = buf.error;
 diff -ruN '--exclude=.git' clean/fs/stat.c work/fs/stat.c
 --- clean/fs/stat.c	2026-02-27 17:54:47.367500708 +0100
-+++ work/fs/stat.c	2026-02-28 04:36:21.977768133 +0100
-@@ -18,12 +18,20 @@
++++ work/fs/stat.c	2026-02-28 05:26:25.830403557 +0100
+@@ -18,12 +18,24 @@
  #include <linux/pagemap.h>
  #include <linux/compat.h>
  
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/susfs.h>
++#endif
 +#ifdef CONFIG_KSU_SUSFS
 +#include <linux/susfs_def.h>
 +#include <linux/version.h>
@@ -1580,12 +1702,13 @@ diff -ruN '--exclude=.git' clean/fs/stat.c work/fs/stat.c
  
 +#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 +extern void susfs_sus_ino_for_generic_fillattr(unsigned long ino, struct kstat *stat);
++extern bool susfs_is_hidden_name(const char *name, int namlen, uid_t caller_uid);
 +#endif
 +
  /**
   * generic_fillattr - Fill in the basic attributes from the inode struct
   * @inode: Inode to use as the source
-@@ -35,6 +43,19 @@
+@@ -35,6 +47,19 @@
   */
  void generic_fillattr(struct inode *inode, struct kstat *stat)
  {
@@ -1605,7 +1728,7 @@ diff -ruN '--exclude=.git' clean/fs/stat.c work/fs/stat.c
  	stat->dev = inode->i_sb->s_dev;
  	stat->ino = inode->i_ino;
  	stat->mode = inode->i_mode;
-@@ -143,6 +164,13 @@
+@@ -143,6 +168,13 @@
   *
   * 0 will be returned on success, and a -ve error code if unsuccessful.
   */
@@ -1619,7 +1742,7 @@ diff -ruN '--exclude=.git' clean/fs/stat.c work/fs/stat.c
  int vfs_fstat(int fd, struct kstat *stat)
  {
  	struct fd f;
-@@ -152,10 +180,25 @@
+@@ -152,10 +184,25 @@
  	if (!f.file)
  		return -EBADF;
  	error = vfs_getattr(&f.file->f_path, stat, STATX_BASIC_STATS, 0);
@@ -1645,10 +1768,16 @@ diff -ruN '--exclude=.git' clean/fs/stat.c work/fs/stat.c
  /**
   * vfs_statx - Get basic and extra attributes by filename
   * @dfd: A file descriptor representing the base dir for a relative filename
-@@ -178,6 +221,18 @@
+@@ -178,6 +225,24 @@
  	unsigned lookup_flags = 0;
  	int error;
  
++#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER
++	if (susfs_check_unicode_bypass(filename)) {
++		return -ENOENT;
++	}
++#endif
++
 +#ifdef CONFIG_KSU_SUSFS
 +	if (likely(susfs_is_current_proc_umounted()) || !ksu_su_compat_enabled) {
 +		goto orig_flow;
@@ -1664,6 +1793,52 @@ diff -ruN '--exclude=.git' clean/fs/stat.c work/fs/stat.c
  	if (flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT | AT_EMPTY_PATH |
  		      AT_STATX_SYNC_TYPE))
  		return -EINVAL;
+@@ -194,6 +259,32 @@
+ 	if (error)
+ 		goto out;
+ 
++#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
++	if (current_uid().val >= 10000 &&
++	    susfs_is_current_proc_umounted()) {
++		struct dentry *_d = path.dentry;
++		struct dentry *_par = _d->d_parent;
++		if (_par && _par != _d && _par->d_parent) {
++			int _plen = _par->d_name.len;
++			if ((_plen == 4 && !memcmp(_par->d_name.name, "data", 4)) ||
++			    (_plen == 3 && !memcmp(_par->d_name.name, "obb", 3))) {
++				struct dentry *_gp = _par->d_parent;
++				if (_gp->d_name.len == 7 &&
++				    !memcmp(_gp->d_name.name, "Android", 7) &&
++				    susfs_is_hidden_name(_d->d_name.name,
++				        _d->d_name.len, current_uid().val)) {
++					printk_ratelimited(KERN_INFO
++						"susfs_debug: HIDE stat uid=%u name='%.*s'\n",
++						current_uid().val, _d->d_name.len, _d->d_name.name);
++					path_put(&path);
++					error = -ENOENT;
++					goto out;
++				}
++			}
++		}
++	}
++#endif
++
+ 	error = vfs_getattr(&path, stat, request_mask, flags);
+ 	stat->mnt_id = real_mount(path.mnt)->mnt_id;
+ 	stat->result_mask |= STATX_MNT_ID;
+@@ -407,6 +498,12 @@
+ 	int empty = 0;
+ 	unsigned int lookup_flags = LOOKUP_EMPTY;
+ 
++#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER
++	if (susfs_check_unicode_bypass(pathname)) {
++		return -ENOENT;
++	}
++#endif
++
+ 	if (bufsiz <= 0)
+ 		return -EINVAL;
+ 
 diff -ruN '--exclude=.git' clean/fs/statfs.c work/fs/statfs.c
 --- clean/fs/statfs.c	2026-02-27 17:54:47.371500621 +0100
 +++ work/fs/statfs.c	2026-02-28 04:36:22.009767466 +0100
