@@ -75,6 +75,9 @@ jobs:
         rmz_version: "3.1.1"
         testing: false
 
+    - name: Install LLD
+      run: sudo apt-get install -y -qq lld
+
     - name: Download AnyKernel3 Artifact
       uses: actions/download-artifact@v4
       with:
