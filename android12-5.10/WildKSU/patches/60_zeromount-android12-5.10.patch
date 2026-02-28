@@ -492,7 +492,7 @@ new file mode 100644
 index 000000000..0b596ea48
 --- /dev/null
 +++ b/fs/zeromount.c
-@@ -0,0 +1,1513 @@
+@@ -0,0 +1,1517 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -2015,7 +2015,7 @@ new file mode 100644
 index 000000000..01fd6aca0
 --- /dev/null
 +++ b/include/linux/zeromount.h
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,200 @@
 +#ifndef _LINUX_ZEROMOUNT_H
 +#define _LINUX_ZEROMOUNT_H
 +
