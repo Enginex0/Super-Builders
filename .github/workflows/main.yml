@@ -64,10 +64,6 @@ on:
         description: "SukiSU commit (empty = pinned default)"
         type: string
         default: ""
-      susfs_commit:
-        description: "SUSFS commit (empty = pinned default)"
-        type: string
-        default: ""
       device_codename:
         description: "Device profile (generic = no identity spoofing)"
         type: choice
@@ -91,7 +87,6 @@ jobs:
       add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
       sukisu_commit: ${{ inputs.sukisu_commit }}
-      susfs_commit: ${{ inputs.susfs_commit }}
       device_codename: ${{ inputs.device_codename }}
 
   build-a13-5-10:
@@ -108,7 +103,6 @@ jobs:
       add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
       sukisu_commit: ${{ inputs.sukisu_commit }}
-      susfs_commit: ${{ inputs.susfs_commit }}
       device_codename: ${{ inputs.device_codename }}
 
   build-a13-5-15:
@@ -125,7 +119,6 @@ jobs:
       add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
       sukisu_commit: ${{ inputs.sukisu_commit }}
-      susfs_commit: ${{ inputs.susfs_commit }}
       device_codename: ${{ inputs.device_codename }}
 
   build-a14-5-15:
@@ -142,7 +135,6 @@ jobs:
       add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
       sukisu_commit: ${{ inputs.sukisu_commit }}
-      susfs_commit: ${{ inputs.susfs_commit }}
       device_codename: ${{ inputs.device_codename }}
 
   build-a14-6-1:
@@ -159,7 +151,6 @@ jobs:
       add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
       sukisu_commit: ${{ inputs.sukisu_commit }}
-      susfs_commit: ${{ inputs.susfs_commit }}
       device_codename: ${{ inputs.device_codename }}
 
   build-a15-6-6:
@@ -176,7 +167,6 @@ jobs:
       add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
       sukisu_commit: ${{ inputs.sukisu_commit }}
-      susfs_commit: ${{ inputs.susfs_commit }}
       device_codename: ${{ inputs.device_codename }}
 
   build-a16-6-12:
@@ -193,7 +183,6 @@ jobs:
       add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
       sukisu_commit: ${{ inputs.sukisu_commit }}
-      susfs_commit: ${{ inputs.susfs_commit }}
       device_codename: ${{ inputs.device_codename }}
 
   build-custom:
