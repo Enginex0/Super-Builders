@@ -361,6 +361,10 @@ jobs:
         GAS_BIN=$(grep '^LINUX_GCC_CROSS_COMPILE_PREBUILTS_BIN=' build.config.aarch64 | cut -d= -f2)
         export PATH="$ROOT_DIR/$CLANG_BIN:$ROOT_DIR/$TOOLS_BIN:$ROOT_DIR/$GAS_BIN:$PATH"
 
+        if ! command -v ld.lld &>/dev/null; then
+          sudo apt-get install -y -qq lld >/dev/null 2>&1
+        fi
+
         mkdir -p ../out
         MAKE="make ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- O=../out"
 
