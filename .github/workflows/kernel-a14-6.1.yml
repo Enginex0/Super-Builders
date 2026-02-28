@@ -17,17 +17,9 @@ on:
           - ReSukiSU
           - WKSU
           # - RKSU  # no SUSFS integration — deferred
-        default: "KernelSU-Next"
+        default: "SukiSU"
       add_susfs:
-        description: "Add SUSFS (upstream only)"
-        type: boolean
-        default: true
-      add_enhanced_susfs:
-        description: "Add enhanced SUSFS (custom injection scripts)"
-        type: boolean
-        default: true
-      add_unicode_filter:
-        description: "Add Unicode filter"
+        description: "Add Enhanced SUSFS"
         type: boolean
         default: true
       add_zeromount:
@@ -35,7 +27,7 @@ on:
         type: boolean
         default: true
       add_zram:
-        description: "Add ZRAM with LZ4K"
+        description: "Add ZRAM with LZ4K/LZ4KD"
         type: boolean
         default: true
       add_bbg:
@@ -46,22 +38,35 @@ on:
         description: "Add overlayfs support (CONFIG_TMPFS_XATTR + POSIX ACL)"
         type: boolean
         default: true
+      add_usb_debugging_stealth:
+        description: "Add USB Debugging Stealth (ADB filter)"
+        type: boolean
+        default: true
       add_kpm:
         description: "Add KPM (SukiSU/ReSukiSU)"
         type: boolean
         default: false
+      sukisu_commit:
+        description: "SukiSU commit (empty = pinned default)"
+        type: string
+        default: ""
+      susfs_commit:
+        description: "SUSFS commit (empty = pinned default)"
+        type: string
+        default: ""
+      device_codename:
+        description: "Device profile (generic = no identity spoofing)"
+        type: choice
+        options:
+          - generic
+          - lake
+        default: "lake"
   workflow_call:
     inputs:
       ksu_variant:
         type: string
-        default: "KernelSU-Next"
+        default: "SukiSU"
       add_susfs:
-        type: boolean
-        default: true
-      add_enhanced_susfs:
-        type: boolean
-        default: true
-      add_unicode_filter:
         type: boolean
         default: true
       add_zeromount:
@@ -76,9 +81,21 @@ on:
       add_overlayfs_support:
         type: boolean
         default: true
+      add_usb_debugging_stealth:
+        type: boolean
+        default: true
       add_kpm:
         type: boolean
         default: false
+      sukisu_commit:
+        type: string
+        default: ""
+      susfs_commit:
+        type: string
+        default: ""
+      device_codename:
+        type: string
+        default: "lake"
 
 jobs:
   download-dependencies:
@@ -87,8 +104,9 @@ jobs:
       contents: read
       actions: write
 
-  build:
+  build-sukisu:
     needs: [download-dependencies]
+    if: inputs.ksu_variant == 'SukiSU'
     strategy:
       fail-fast: false
       matrix:
@@ -135,18 +153,213 @@ jobs:
             os_patch_level: "2025-09"
           - sub_level: "157"
             os_patch_level: "2025-12"
-    uses: ./.github/workflows/gki-build.yml
+    uses: ./.github/workflows/build-sukisu.yml
     with:
       android_version: android14
       kernel_version: "6.1"
       sub_level: ${{ matrix.sub_level }}
       os_patch_level: ${{ matrix.os_patch_level }}
-      ksu_variant: ${{ inputs.ksu_variant }}
       add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
       add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
       add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: ${{ inputs.device_codename }}
+
+  build-ksu-next:
+    needs: [download-dependencies]
+    if: inputs.ksu_variant == 'KernelSU-Next'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sub_level: "25"
+            os_patch_level: "2023-10"
+          - sub_level: "43"
+            os_patch_level: "2023-11"
+          - sub_level: "57"
+            os_patch_level: "2024-01"
+          - sub_level: "68"
+            os_patch_level: "2024-03"
+          - sub_level: "75"
+            os_patch_level: "2024-05"
+          - sub_level: "78"
+            os_patch_level: "2024-06"
+          - sub_level: "84"
+            os_patch_level: "2024-07"
+          - sub_level: "90"
+            os_patch_level: "2024-08"
+          - sub_level: "93"
+            os_patch_level: "2024-09"
+          - sub_level: "99"
+            os_patch_level: "2024-10"
+          - sub_level: "112"
+            os_patch_level: "2024-11"
+          - sub_level: "115"
+            os_patch_level: "2024-12"
+          - sub_level: "118"
+            os_patch_level: "2025-01"
+          - sub_level: "124"
+            os_patch_level: "2025-02"
+          - sub_level: "128"
+            os_patch_level: "2025-03"
+          - sub_level: "129"
+            os_patch_level: "2025-04"
+          - sub_level: "134"
+            os_patch_level: "2025-05"
+          - sub_level: "138"
+            os_patch_level: "2025-06"
+          - sub_level: "141"
+            os_patch_level: "2025-07"
+          - sub_level: "145"
+            os_patch_level: "2025-09"
+          - sub_level: "157"
+            os_patch_level: "2025-12"
+    uses: ./.github/workflows/build-ksu-next.yml
+    with:
+      android_version: android14
+      kernel_version: "6.1"
+      sub_level: ${{ matrix.sub_level }}
+      os_patch_level: ${{ matrix.os_patch_level }}
+      add_susfs: ${{ inputs.add_susfs }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: ${{ inputs.device_codename }}
+
+  build-resukisu:
+    needs: [download-dependencies]
+    if: inputs.ksu_variant == 'ReSukiSU'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sub_level: "25"
+            os_patch_level: "2023-10"
+          - sub_level: "43"
+            os_patch_level: "2023-11"
+          - sub_level: "57"
+            os_patch_level: "2024-01"
+          - sub_level: "68"
+            os_patch_level: "2024-03"
+          - sub_level: "75"
+            os_patch_level: "2024-05"
+          - sub_level: "78"
+            os_patch_level: "2024-06"
+          - sub_level: "84"
+            os_patch_level: "2024-07"
+          - sub_level: "90"
+            os_patch_level: "2024-08"
+          - sub_level: "93"
+            os_patch_level: "2024-09"
+          - sub_level: "99"
+            os_patch_level: "2024-10"
+          - sub_level: "112"
+            os_patch_level: "2024-11"
+          - sub_level: "115"
+            os_patch_level: "2024-12"
+          - sub_level: "118"
+            os_patch_level: "2025-01"
+          - sub_level: "124"
+            os_patch_level: "2025-02"
+          - sub_level: "128"
+            os_patch_level: "2025-03"
+          - sub_level: "129"
+            os_patch_level: "2025-04"
+          - sub_level: "134"
+            os_patch_level: "2025-05"
+          - sub_level: "138"
+            os_patch_level: "2025-06"
+          - sub_level: "141"
+            os_patch_level: "2025-07"
+          - sub_level: "145"
+            os_patch_level: "2025-09"
+          - sub_level: "157"
+            os_patch_level: "2025-12"
+    uses: ./.github/workflows/build-resukisu.yml
+    with:
+      android_version: android14
+      kernel_version: "6.1"
+      sub_level: ${{ matrix.sub_level }}
+      os_patch_level: ${{ matrix.os_patch_level }}
+      add_susfs: ${{ inputs.add_susfs }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: ${{ inputs.device_codename }}
+
+  build-wksu:
+    needs: [download-dependencies]
+    if: inputs.ksu_variant == 'WKSU'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sub_level: "25"
+            os_patch_level: "2023-10"
+          - sub_level: "43"
+            os_patch_level: "2023-11"
+          - sub_level: "57"
+            os_patch_level: "2024-01"
+          - sub_level: "68"
+            os_patch_level: "2024-03"
+          - sub_level: "75"
+            os_patch_level: "2024-05"
+          - sub_level: "78"
+            os_patch_level: "2024-06"
+          - sub_level: "84"
+            os_patch_level: "2024-07"
+          - sub_level: "90"
+            os_patch_level: "2024-08"
+          - sub_level: "93"
+            os_patch_level: "2024-09"
+          - sub_level: "99"
+            os_patch_level: "2024-10"
+          - sub_level: "112"
+            os_patch_level: "2024-11"
+          - sub_level: "115"
+            os_patch_level: "2024-12"
+          - sub_level: "118"
+            os_patch_level: "2025-01"
+          - sub_level: "124"
+            os_patch_level: "2025-02"
+          - sub_level: "128"
+            os_patch_level: "2025-03"
+          - sub_level: "129"
+            os_patch_level: "2025-04"
+          - sub_level: "134"
+            os_patch_level: "2025-05"
+          - sub_level: "138"
+            os_patch_level: "2025-06"
+          - sub_level: "141"
+            os_patch_level: "2025-07"
+          - sub_level: "145"
+            os_patch_level: "2025-09"
+          - sub_level: "157"
+            os_patch_level: "2025-12"
+    uses: ./.github/workflows/build-wksu.yml
+    with:
+      android_version: android14
+      kernel_version: "6.1"
+      sub_level: ${{ matrix.sub_level }}
+      os_patch_level: ${{ matrix.os_patch_level }}
+      add_susfs: ${{ inputs.add_susfs }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: ${{ inputs.device_codename }}

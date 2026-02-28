@@ -33,15 +33,7 @@ on:
           # - RKSU  # no SUSFS integration — deferred
         default: "KernelSU-Next"
       add_susfs:
-        description: "Add SUSFS (upstream)"
-        type: boolean
-        default: true
-      add_enhanced_susfs:
-        description: "Add enhanced SUSFS (custom injection)"
-        type: boolean
-        default: true
-      add_unicode_filter:
-        description: "Add Unicode filter"
+        description: "Add Enhanced SUSFS"
         type: boolean
         default: true
       add_zeromount:
@@ -49,7 +41,7 @@ on:
         type: boolean
         default: true
       add_zram:
-        description: "Add ZRAM with LZ4K"
+        description: "Add ZRAM with LZ4K/LZ4KD"
         type: boolean
         default: true
       add_bbg:
@@ -57,13 +49,32 @@ on:
         type: boolean
         default: true
       add_overlayfs_support:
-        description: "Add overlayfs support"
+        description: "Add overlayfs support (CONFIG_TMPFS_XATTR + POSIX ACL)"
+        type: boolean
+        default: true
+      add_usb_debugging_stealth:
+        description: "Add USB Debugging Stealth (ADB filter)"
         type: boolean
         default: true
       add_kpm:
         description: "Add KPM (SukiSU/ReSukiSU)"
         type: boolean
         default: false
+      sukisu_commit:
+        description: "SukiSU commit (empty = pinned default)"
+        type: string
+        default: ""
+      susfs_commit:
+        description: "SUSFS commit (empty = pinned default)"
+        type: string
+        default: ""
+      device_codename:
+        description: "Device profile (generic = no identity spoofing)"
+        type: choice
+        options:
+          - generic
+          - lake
+        default: "lake"
 
 jobs:
   build-a12-5-10:
@@ -73,13 +84,15 @@ jobs:
     with:
       ksu_variant: ${{ inputs.ksu_variant }}
       add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
       add_zeromount: ${{ inputs.add_zeromount }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      susfs_commit: ${{ inputs.susfs_commit }}
+      device_codename: ${{ inputs.device_codename }}
 
   build-a13-5-10:
     if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a13-5-10' }}
@@ -88,13 +101,15 @@ jobs:
     with:
       ksu_variant: ${{ inputs.ksu_variant }}
       add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
       add_zeromount: ${{ inputs.add_zeromount }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      susfs_commit: ${{ inputs.susfs_commit }}
+      device_codename: ${{ inputs.device_codename }}
 
   build-a13-5-15:
     if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a13-5-15' }}
@@ -103,13 +118,15 @@ jobs:
     with:
       ksu_variant: ${{ inputs.ksu_variant }}
       add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
       add_zeromount: ${{ inputs.add_zeromount }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      susfs_commit: ${{ inputs.susfs_commit }}
+      device_codename: ${{ inputs.device_codename }}
 
   build-a14-5-15:
     if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a14-5-15' }}
@@ -118,13 +135,15 @@ jobs:
     with:
       ksu_variant: ${{ inputs.ksu_variant }}
       add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
       add_zeromount: ${{ inputs.add_zeromount }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      susfs_commit: ${{ inputs.susfs_commit }}
+      device_codename: ${{ inputs.device_codename }}
 
   build-a14-6-1:
     if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a14-6-1' }}
@@ -133,13 +152,15 @@ jobs:
     with:
       ksu_variant: ${{ inputs.ksu_variant }}
       add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
       add_zeromount: ${{ inputs.add_zeromount }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      susfs_commit: ${{ inputs.susfs_commit }}
+      device_codename: ${{ inputs.device_codename }}
 
   build-a15-6-6:
     if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a15-6-6' }}
@@ -148,13 +169,15 @@ jobs:
     with:
       ksu_variant: ${{ inputs.ksu_variant }}
       add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
       add_zeromount: ${{ inputs.add_zeromount }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      susfs_commit: ${{ inputs.susfs_commit }}
+      device_codename: ${{ inputs.device_codename }}
 
   build-a16-6-12:
     if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a16-6-12' }}
@@ -163,13 +186,15 @@ jobs:
     with:
       ksu_variant: ${{ inputs.ksu_variant }}
       add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
       add_zeromount: ${{ inputs.add_zeromount }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      susfs_commit: ${{ inputs.susfs_commit }}
+      device_codename: ${{ inputs.device_codename }}
 
   build-custom:
     if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'custom' }}
@@ -178,8 +203,8 @@ jobs:
     with:
       ksu_variant: ${{ inputs.ksu_variant }}
       add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
+      add_enhanced_susfs: true
+      add_unicode_filter: true
       add_zeromount: ${{ inputs.add_zeromount }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
