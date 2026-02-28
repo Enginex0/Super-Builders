@@ -3414,7 +3414,7 @@
 +
 --- clean/include/linux/susfs.h	1970-01-01 01:00:00.000000000 +0100
 +++ fresh/include/linux/susfs.h	2026-02-28 14:21:23.902679545 +0100
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,253 @@
 +#ifndef KSU_SUSFS_H
 +#define KSU_SUSFS_H
 +
@@ -3424,6 +3424,8 @@
 +#include <linux/hashtable.h>
 +#include <linux/path.h>
 +#include <linux/susfs_def.h>
++
++struct super_block;
 +
 +#define SUSFS_VERSION "v2.0.0"
 +#if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)
