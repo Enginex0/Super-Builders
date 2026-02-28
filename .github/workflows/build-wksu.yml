@@ -228,8 +228,8 @@ jobs:
 
         if [[ "$ANDROID_VER" == "android12" && "$KERNEL_VER" == "5.10" && $SL -lt 218 ]]; then
           if grep -q 'goto show_pad;' ./fs/proc/task_mmu.c && ! grep -q '^show_pad:' ./fs/proc/task_mmu.c; then
-            sed -i '/show_smap_vma_flags(m, vma);/{n;/^$/a\show_pad:
-}' ./fs/proc/task_mmu.c
+            sed -i '/show_smap_vma_flags(m, vma);/,/return 0;/{/return 0;/i\show_pad:
+            }' ./fs/proc/task_mmu.c
           fi
         fi
 

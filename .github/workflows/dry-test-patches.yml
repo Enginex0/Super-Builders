@@ -254,8 +254,8 @@ jobs:
             RESULTS="${RESULTS}50_enhanced_susfs|applied\n"
             TMU="$KERNEL_ROOT/common/fs/proc/task_mmu.c"
             if [[ "$SUBLEVEL" -lt 218 ]] && grep -q 'goto show_pad;' "$TMU" && ! grep -q '^show_pad:' "$TMU"; then
-              sed -i '/show_smap_vma_flags(m, vma);/{n;/^$/a\show_pad:
-}' "$TMU"
+              sed -i '/show_smap_vma_flags(m, vma);/,/return 0;/{/return 0;/i\show_pad:
+              }' "$TMU"
             fi
           else
             RESULTS="${RESULTS}50_enhanced_susfs|FAILED\n"
