@@ -1008,8 +1008,11 @@ index 000000000..0b596ea48
 +	if (atomic_read(&zeromount_rule_count) == 0)
 +		return NULL;
 +
-+	if (!zm_bloom_test(hash))
++	if (!zm_bloom_test(hash)) {
++		ZM_TRACE("bloom: reject hash=0x%08x path=%.*s\n", hash, (int)norm_len, normalized);
 +		return NULL;
++	}
++	ZM_DBG("bloom: pass hash=0x%08x path=%.*s\n", hash, (int)norm_len, normalized);
 +
 +	rcu_read_lock();
 +	hash_for_each_possible_rcu(zeromount_rules_ht, rule, node, hash) {
@@ -1611,6 +1614,7 @@ index 000000000..0b596ea48
 +	spin_lock(&zeromount_lock);
 +	hash_add_rcu(zeromount_rules_ht, &rule->node, hash);
 +	zm_bloom_add(hash);
++	ZM_DBG("bloom: add hash=0x%08x path=%s\n", hash, rule->virtual_path);
 +	if (rule->real_ino != 0) {
 +		unsigned long ino_key = rule->real_ino ^ rule->real_dev;
 +
@@ -2089,6 +2093,7 @@ index 000000000..01fd6aca0
 +			pr_info("ZeroMount: " fmt, ##__VA_ARGS__); \
 +	} while (0)
 +
++#define ZM_TRACE(fmt, ...) ZM_LOG(3, fmt, ##__VA_ARGS__)
 +#define ZM_DBG(fmt, ...)  ZM_LOG(2, fmt, ##__VA_ARGS__)
 +#define ZM_INFO(fmt, ...) ZM_LOG(1, fmt, ##__VA_ARGS__)
 +#define ZM_ERR(fmt, ...)  pr_err("ZeroMount: " fmt, ##__VA_ARGS__)
