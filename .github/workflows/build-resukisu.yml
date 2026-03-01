@@ -226,6 +226,10 @@ jobs:
         if ! grep -q 'inotify_mark_user_mask' ./fs/notify/inotify/inotify.h; then
           sed -i 's/inotify_mark_user_mask(mark)/mark->mask/g' ./fs/notify/fdinfo.c
         fi
+        # Prevent declaration-after-label error on old sublevels where u32 mask follows the label
+        if grep -q 'out_seq_printf:' ./fs/notify/fdinfo.c; then
+          sed -i 's/^\([[:space:]]*\)out_seq_printf:$/\1out_seq_printf: ;/' ./fs/notify/fdinfo.c
+        fi
 
     - name: Setup Baseband Guard
       if: inputs.add_bbg
