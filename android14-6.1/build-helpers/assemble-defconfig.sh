@@ -34,10 +34,11 @@ $ADD_KPM && extract_section "kpm" >> "$FRAGMENT_DST"
 tac "$FRAGMENT_DST" | awk -F= '/^CONFIG_/{if(seen[$1]++)next} {print}' | tac > "${FRAGMENT_DST}.tmp"
 mv "${FRAGMENT_DST}.tmp" "$FRAGMENT_DST"
 
-# GKI build.sh sources the fragment as bash but never merges it into .config.
-# All Kconfig values must also be in gki_defconfig for make gki_defconfig to
-# resolve them. Append fragment configs and dedup (last-wins).
-# Reference: ShirkNeko/GKI_KernelSU_SUSFS gki-kernel.yml
+# Kleaf rejects =n in fragments (can't match against .config output)
+# Move =n entries to defconfig only, where they work correctly
+grep '=n$' "$FRAGMENT_DST" >> "$DEFCONFIG" 2>/dev/null || true
+sed -i '/=n$/d' "$FRAGMENT_DST"
+
 cat "$FRAGMENT_DST" >> "$DEFCONFIG"
 
 if $ADD_ZRAM; then

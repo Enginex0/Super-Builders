@@ -1,104 +1,7 @@
-diff -ruN ksunext-clean/kernel/Kconfig ksunext-modified/kernel/Kconfig
---- ksunext-clean/kernel/Kconfig	2026-02-27 22:47:56.599915832 +0100
-+++ ksunext-modified/kernel/Kconfig	2026-02-27 22:48:30.477017573 +0100
-@@ -104,6 +104,20 @@
- 	  - It may not be able to evade detections by apps that implement a good injection detection.
- 	  - Effective only on zygote spawned umounted user app process.
- 
-+config KSU_SUSFS_SUS_KSTAT_REDIRECT
-+	bool "SUSFS kstat redirect"
-+	depends on KSU_SUSFS_SUS_KSTAT
-+	default y
-+	help
-+	  Redirects kstat lookups to real file metadata for spoofed paths.
-+
-+config KSU_SUSFS_UNICODE_FILTER
-+	bool "Unicode Filter (blocks scoped storage bypass)"
-+	depends on KSU_SUSFS
-+	default y
-+	help
-+	  Blocks filesystem path attacks using unicode characters.
-+
- endmenu
- 
- endmenu
-diff -ruN ksunext-clean/kernel/ksud.c ksunext-modified/kernel/ksud.c
---- ksunext-clean/kernel/ksud.c	2026-02-27 22:47:56.599915832 +0100
-+++ ksunext-modified/kernel/ksud.c	2026-02-27 22:48:35.124916163 +0100
-@@ -460,7 +460,7 @@
- 					int *value)
- {
- #ifdef CONFIG_KSU_SUSFS
--	if (!ksu_input_hook) {
-+	if (!READ_ONCE(ksu_input_hook)) {
- 		return 0;
- 	}
- #endif // #ifdef CONFIG_KSU_SUSFS
-@@ -662,7 +662,7 @@
- 	bool ret = schedule_work(&stop_init_rc_hook_work);
- 	pr_info("unregister init_rc_hook kprobe: %d!\n", ret);
- #else
--	ksu_init_rc_hook = false;
-+	WRITE_ONCE(ksu_init_rc_hook, false);
- 	pr_info("stop init_rc_hook\n");
- #endif // #ifndef CONFIG_KSU_SUSFS
- }
-@@ -673,7 +673,7 @@
- 	bool ret = schedule_work(&stop_execve_hook_work);
- 	pr_info("unregister execve kprobe: %d!\n", ret);
- #else
--	ksu_execveat_hook = false;
-+	WRITE_ONCE(ksu_execveat_hook, false);
- 	pr_info("stop execve_hook\n");
- #endif // #ifndef CONFIG_KSU_SUSFS
- }
-@@ -689,7 +689,7 @@
- 	bool ret = schedule_work(&stop_input_hook_work);
- 	pr_info("unregister input kprobe: %d!\n", ret);
- #else
--	ksu_input_hook = false;
-+	WRITE_ONCE(ksu_input_hook, false);
- 	pr_info("stop input_hook\n");
- #endif // #ifndef CONFIG_KSU_SUSFS
- }
-diff -ruN ksunext-clean/kernel/setuid_hook.c ksunext-modified/kernel/setuid_hook.c
---- ksunext-clean/kernel/setuid_hook.c	2026-02-27 22:47:56.601228945 +0100
-+++ ksunext-modified/kernel/setuid_hook.c	2026-02-27 22:48:45.092698680 +0100
-@@ -37,7 +37,7 @@
- static inline bool is_zygote_normal_app_uid(uid_t uid)
- {
-     uid %= 100000;
--    return (uid >= 10000 && uid < 19999);
-+    return (uid >= 10000 && uid < 20000);
- }
- 
- extern u32 susfs_zygote_sid;
-@@ -101,6 +101,10 @@
-     uid_t old_uid = current_uid().val;
- 
-     // We only interest in process spwaned by zygote
-+    if (susfs_zygote_sid == 0) {
-+        return 0;
-+    }
-+
-     if (!susfs_is_sid_equal(current_cred(), susfs_zygote_sid)) {
-         return 0;
-     }
-diff -ruN ksunext-clean/kernel/supercalls.c ksunext-modified/kernel/supercalls.c
---- ksunext-clean/kernel/supercalls.c	2026-02-27 22:47:56.601228945 +0100
-+++ ksunext-modified/kernel/supercalls.c	2026-02-27 22:48:42.280760032 +0100
-@@ -360,7 +360,9 @@
-     ret = ksu_set_app_profile(&cmd.profile);
-     if (!ret) {
-         ksu_persistent_allow_list();
--        ksu_mark_running_process();
-+#ifndef CONFIG_KSU_SUSFS
-+        ksu_mark_running_process();
-+#endif
-     }
-     return ret;
- }
-@@ -1051,6 +1053,12 @@
+diff -ruN a/kernel/supercalls.c b/kernel/supercalls.c
+--- a/kernel/supercalls.c
++++ b/kernel/supercalls.c
+@@ -1051,6 +1051,12 @@
  			return 0;
  		}
  #endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
@@ -107,7 +10,7 @@ diff -ruN ksunext-clean/kernel/supercalls.c ksunext-modified/kernel/supercalls.c
 +			susfs_add_sus_kstat_redirect(arg);
 +			return 0;
 +		}
-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT
++#endif
  #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
  		if (cmd == CMD_SUSFS_SET_UNAME) {
  			susfs_set_uname(arg);

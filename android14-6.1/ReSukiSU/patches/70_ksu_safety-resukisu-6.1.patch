@@ -1,70 +1,7 @@
-diff -ruN a/kernel/Kconfig b/kernel/Kconfig
---- a/kernel/Kconfig	2026-02-27 20:07:33.269481230 +0100
-+++ b/kernel/Kconfig	2026-02-27 20:08:41.761143978 +0100
-@@ -182,6 +182,20 @@
-         - It may not be able to evade detections by apps that implement a good injection detection.
-         - Effective only on zygote spawned umounted user app process.
- 
-+config KSU_SUSFS_SUS_KSTAT_REDIRECT
-+	bool "SUSFS kstat redirect"
-+	depends on KSU_SUSFS_SUS_KSTAT
-+	default y
-+	help
-+	  Redirects kstat lookups to real file metadata for spoofed paths.
-+
-+config KSU_SUSFS_UNICODE_FILTER
-+	bool "Unicode Filter (blocks scoped storage bypass)"
-+	depends on KSU_SUSFS
-+	default y
-+	help
-+	  Blocks filesystem path attacks using unicode characters.
-+
- endmenu
- 
- endmenu
-diff -ruN a/kernel/ksud.c b/kernel/ksud.c
---- a/kernel/ksud.c	2026-02-27 20:07:33.270478356 +0100
-+++ b/kernel/ksud.c	2026-02-27 20:09:24.340214579 +0100
-@@ -657,7 +657,7 @@
- #else
- 
- #if defined(CONFIG_KSU_SUSFS) || defined(CONFIG_KSU_MANUAL_HOOK)
--    if (!ksu_input_hook) {
-+    if (!READ_ONCE(ksu_input_hook)) {
-         return 0;
-     }
- #endif
-@@ -943,7 +943,7 @@
-     bool ret = schedule_work(&stop_init_rc_hook_work);
-     pr_info("unregister init_rc_hook kprobe: %d!\n", ret);
- #else
--    ksu_init_rc_hook = false;
-+    WRITE_ONCE(ksu_init_rc_hook, false);
-     pr_info("stop init_rc_hook!\n");
- #endif
- }
-@@ -954,7 +954,7 @@
-     bool ret = schedule_work(&stop_execve_hook_work);
-     pr_info("unregister execve kprobe: %d!\n", ret);
- #else
--    ksu_execveat_hook = false;
-+    WRITE_ONCE(ksu_execveat_hook, false);
-     pr_info("stop execve_hook\n");
- #endif
- }
-@@ -970,7 +970,7 @@
-     bool ret = schedule_work(&stop_input_hook_work);
-     pr_info("unregister input kprobe: %d!\n", ret);
- #else
--    ksu_input_hook = false;
-+    WRITE_ONCE(ksu_input_hook, false);
-     pr_info("stop input_hook\n");
- #endif
- 
 diff -ruN a/kernel/supercalls.c b/kernel/supercalls.c
---- a/kernel/supercalls.c	2026-02-27 20:07:33.271184319 +0100
-+++ b/kernel/supercalls.c	2026-02-27 20:09:09.916529413 +0100
-@@ -1004,6 +1004,12 @@
+--- a/kernel/supercalls.c
++++ b/kernel/supercalls.c
+@@ -1000,6 +1000,12 @@
              susfs_add_sus_kstat(arg);
              return 0;
          }
@@ -73,7 +10,7 @@ diff -ruN a/kernel/supercalls.c b/kernel/supercalls.c
 +            susfs_add_sus_kstat_redirect(arg);
 +            return 0;
 +        }
-+#endif //#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT
++#endif
  #endif //#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
  #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
          if (cmd == CMD_SUSFS_SET_UNAME) {

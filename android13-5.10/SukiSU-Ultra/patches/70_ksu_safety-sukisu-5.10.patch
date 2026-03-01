@@ -1,97 +1,7 @@
-diff -ruN a/kernel/Kconfig b/kernel/Kconfig
---- a/kernel/Kconfig	2026-02-26 19:49:12.704763999 +0100
-+++ b/kernel/Kconfig	2026-02-26 19:53:35.170875993 +0100
-@@ -156,6 +156,20 @@
- 		- It may not be able to evade detections by apps that implement a good injection detection.
- 		- Effective only on zygote spawned umounted user app process.
- 
-+config KSU_SUSFS_SUS_KSTAT_REDIRECT
-+	bool "SUSFS kstat redirect"
-+	depends on KSU_SUSFS_SUS_KSTAT
-+	default y
-+	help
-+	  Redirects kstat lookups to real file metadata for spoofed paths.
-+
-+config KSU_SUSFS_UNICODE_FILTER
-+	bool "Unicode Filter (blocks scoped storage bypass)"
-+	depends on KSU_SUSFS
-+	default y
-+	help
-+	  Blocks filesystem path attacks using unicode characters.
-+
- endmenu
- 
- endmenu
-diff -ruN a/kernel/ksud.c b/kernel/ksud.c
---- a/kernel/ksud.c	2026-02-26 19:49:12.706452809 +0100
-+++ b/kernel/ksud.c	2026-02-26 19:53:17.731241964 +0100
-@@ -574,7 +574,7 @@
- 				  int *value)
- {
- #if defined(CONFIG_KSU_MANUAL_HOOK) || defined(CONFIG_KSU_SUSFS)
--	if (!ksu_input_hook) {
-+	if (!READ_ONCE(ksu_input_hook)) {
- 		return 0;
- 	}
- #endif // #ifndef CONFIG_KSU_SUSFS
-@@ -603,7 +603,7 @@
- #ifdef CONFIG_KSU_SYSCALL_HOOK
- 	kp_handle_ksud_stop(INIT_RC_HOOK_KP);
- #else
--	ksu_init_rc_hook = false;
-+	WRITE_ONCE(ksu_init_rc_hook, false);
- 	pr_info("stop vfs_read_hook\n");
- #endif // #ifndef CONFIG_KSU_SUSFS
- }
-@@ -613,7 +613,7 @@
- #ifdef CONFIG_KSU_SYSCALL_HOOK
- 	kp_handle_ksud_stop(EXECVE_HOOK_KP);
- #else
--	ksu_execveat_hook = false;
-+	WRITE_ONCE(ksu_execveat_hook, false);
- 	pr_info("stop execve_hook\n");
- #endif // #ifndef CONFIG_KSU_SUSFS
- }
-@@ -624,10 +624,10 @@
- 	kp_handle_ksud_stop(INPUT_EVENT_HOOK_KP);
- #else
- 	// No need to stop when its already stopped.
--	if (!ksu_input_hook) {
-+	if (!READ_ONCE(ksu_input_hook)) {
- 		return;
- 	}
--	ksu_input_hook = false;
-+	WRITE_ONCE(ksu_input_hook, false);
- 	pr_info("stop input_hook\n");
- #endif // #ifndef CONFIG_KSU_SUSFS
- }
-diff -ruN a/kernel/setuid_hook.c b/kernel/setuid_hook.c
---- a/kernel/setuid_hook.c	2026-02-26 19:49:12.707543505 +0100
-+++ b/kernel/setuid_hook.c	2026-02-26 19:52:54.940850460 +0100
-@@ -42,7 +42,7 @@
- static inline bool is_zygote_normal_app_uid(uid_t uid)
- {
- 	uid %= 100000;
--	return (uid >= 10000 && uid < 19999);
-+	return (uid >= 10000 && uid < 20000);
- }
- 
- extern u32 susfs_zygote_sid;
-@@ -113,6 +113,10 @@
- 	uid_t old_uid = current_uid().val;
- 
- 	// We only interest in process spwaned by zygote
-+	if (susfs_zygote_sid == 0) {
-+		return 0;
-+	}
-+
- 	if (!susfs_is_sid_equal(current_cred(), susfs_zygote_sid)) {
- 		return 0;
- 	}
 diff -ruN a/kernel/supercalls.c b/kernel/supercalls.c
---- a/kernel/supercalls.c	2026-02-26 19:49:12.707543505 +0100
-+++ b/kernel/supercalls.c	2026-02-26 19:53:26.099066365 +0100
-@@ -1081,6 +1081,12 @@
+--- a/kernel/supercalls.c
++++ b/kernel/supercalls.c
+@@ -1080,6 +1080,12 @@
  			susfs_add_sus_kstat(arg);
  			return 0;
  		}
@@ -100,7 +10,7 @@ diff -ruN a/kernel/supercalls.c b/kernel/supercalls.c
 +			susfs_add_sus_kstat_redirect(arg);
 +			return 0;
 +		}
-+#endif //#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT
++#endif
  #endif //#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
  #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
  		if (cmd == CMD_SUSFS_SET_UNAME) {
