@@ -1,6 +1,6 @@
-diff -ruN ksunext-clean/kernel/Kconfig ksunext-modified/kernel/Kconfig
---- ksunext-clean/kernel/Kconfig	2026-02-27 22:47:56.599915832 +0100
-+++ ksunext-modified/kernel/Kconfig	2026-02-27 22:48:30.477017573 +0100
+diff '--color=auto' -ruN /tmp/ksunext-clean/Kconfig /tmp/ksunext-modified/Kconfig
+--- /tmp/ksunext-clean/Kconfig	2026-03-01 11:38:05.579439731 +0100
++++ /tmp/ksunext-modified/Kconfig	2026-03-01 11:39:19.784547181 +0100
 @@ -104,6 +104,20 @@
  	  - It may not be able to evade detections by apps that implement a good injection detection.
  	  - Effective only on zygote spawned umounted user app process.
@@ -22,9 +22,9 @@ diff -ruN ksunext-clean/kernel/Kconfig ksunext-modified/kernel/Kconfig
  endmenu
  
  endmenu
-diff -ruN ksunext-clean/kernel/ksud.c ksunext-modified/kernel/ksud.c
---- ksunext-clean/kernel/ksud.c	2026-02-27 22:47:56.599915832 +0100
-+++ ksunext-modified/kernel/ksud.c	2026-02-27 22:48:35.124916163 +0100
+diff '--color=auto' -ruN /tmp/ksunext-clean/ksud.c /tmp/ksunext-modified/ksud.c
+--- /tmp/ksunext-clean/ksud.c	2026-03-01 11:38:05.579439731 +0100
++++ /tmp/ksunext-modified/ksud.c	2026-03-01 11:39:57.476979863 +0100
 @@ -460,7 +460,7 @@
  					int *value)
  {
@@ -61,9 +61,9 @@ diff -ruN ksunext-clean/kernel/ksud.c ksunext-modified/kernel/ksud.c
  	pr_info("stop input_hook\n");
  #endif // #ifndef CONFIG_KSU_SUSFS
  }
-diff -ruN ksunext-clean/kernel/setuid_hook.c ksunext-modified/kernel/setuid_hook.c
---- ksunext-clean/kernel/setuid_hook.c	2026-02-27 22:47:56.601228945 +0100
-+++ ksunext-modified/kernel/setuid_hook.c	2026-02-27 22:48:45.092698680 +0100
+diff '--color=auto' -ruN /tmp/ksunext-clean/setuid_hook.c /tmp/ksunext-modified/setuid_hook.c
+--- /tmp/ksunext-clean/setuid_hook.c	2026-03-01 11:38:05.579439731 +0100
++++ /tmp/ksunext-modified/setuid_hook.c	2026-03-01 11:42:26.973693442 +0100
 @@ -37,7 +37,7 @@
  static inline bool is_zygote_normal_app_uid(uid_t uid)
  {
@@ -73,30 +73,29 @@ diff -ruN ksunext-clean/kernel/setuid_hook.c ksunext-modified/kernel/setuid_hook
  }
  
  extern u32 susfs_zygote_sid;
-@@ -107,6 +107,10 @@
+@@ -101,6 +101,9 @@
      uid_t old_uid = current_uid().val;
  
      // We only interest in process spwaned by zygote
 +    if (susfs_zygote_sid == 0) {
 +        return 0;
 +    }
-+
      if (!susfs_is_sid_equal(current_cred(), susfs_zygote_sid)) {
          return 0;
      }
-diff -ruN ksunext-clean/kernel/supercalls.c ksunext-modified/kernel/supercalls.c
---- ksunext-clean/kernel/supercalls.c	2026-02-27 22:47:56.601228945 +0100
-+++ ksunext-modified/kernel/supercalls.c	2026-02-27 22:48:42.280760032 +0100
-@@ -980,6 +980,12 @@
+diff '--color=auto' -ruN /tmp/ksunext-clean/supercalls.c /tmp/ksunext-modified/supercalls.c
+--- /tmp/ksunext-clean/supercalls.c	2026-03-01 11:38:05.579439731 +0100
++++ /tmp/ksunext-modified/supercalls.c	2026-03-01 11:42:30.065625472 +0100
+@@ -1051,6 +1051,12 @@
  			return 0;
  		}
- #endif //#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+ #endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 +#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT
 +		if (cmd == CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT) {
 +			susfs_add_sus_kstat_redirect(arg);
 +			return 0;
 +		}
-+#endif //#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT
++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT
  #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
  		if (cmd == CMD_SUSFS_SET_UNAME) {
  			susfs_set_uname(arg);
