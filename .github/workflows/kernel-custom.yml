@@ -152,12 +152,8 @@ on:
         description: "Add SUSFS"
         type: boolean
         default: true
-      add_enhanced_susfs:
-        description: "Add enhanced SUSFS"
-        type: boolean
-        default: true
-      add_unicode_filter:
-        description: "Add Unicode filter"
+      add_usb_debugging_stealth:
+        description: "Add USB Debugging Stealth (ADB filter)"
         type: boolean
         default: true
       add_zeromount:
@@ -180,6 +176,10 @@ on:
         description: "Add KPM (SukiSU/ReSukiSU)"
         type: boolean
         default: false
+      sukisu_commit:
+        description: "SukiSU commit (empty = pinned default)"
+        type: string
+        default: ""
   workflow_call:
     inputs:
       kernel_target:
@@ -194,10 +194,7 @@ on:
       add_susfs:
         type: boolean
         default: true
-      add_enhanced_susfs:
-        type: boolean
-        default: true
-      add_unicode_filter:
+      add_usb_debugging_stealth:
         type: boolean
         default: true
       add_zeromount:
@@ -215,6 +212,9 @@ on:
       add_kpm:
         type: boolean
         default: false
+      sukisu_commit:
+        type: string
+        default: ""
 
 jobs:
   resolve:
@@ -438,26 +438,78 @@ jobs:
       contents: read
       actions: write
 
-  build:
+  build-sukisu:
     needs: [resolve, download-dependencies]
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: ${{ fromJSON(needs.resolve.outputs.variants) }}
-    uses: ./.github/workflows/gki-build.yml
-    secrets: inherit
+    if: inputs.ksu_variant == 'SukiSU' || inputs.ksu_variant == 'All'
+    uses: ./.github/workflows/build-sukisu.yml
     with:
       android_version: ${{ needs.resolve.outputs.android_version }}
       kernel_version: ${{ needs.resolve.outputs.kernel_version }}
       sub_level: ${{ needs.resolve.outputs.sub_level }}
       os_patch_level: ${{ needs.resolve.outputs.os_patch_level }}
-      ksu_variant: ${{ matrix.variant }}
       add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
       add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
       add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: ${{ needs.resolve.outputs.device_codename }}
+
+  build-ksu-next:
+    needs: [resolve, download-dependencies]
+    if: inputs.ksu_variant == 'KernelSU-Next' || inputs.ksu_variant == 'All'
+    uses: ./.github/workflows/build-ksu-next.yml
+    with:
+      android_version: ${{ needs.resolve.outputs.android_version }}
+      kernel_version: ${{ needs.resolve.outputs.kernel_version }}
+      sub_level: ${{ needs.resolve.outputs.sub_level }}
+      os_patch_level: ${{ needs.resolve.outputs.os_patch_level }}
+      add_susfs: ${{ inputs.add_susfs }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: ${{ needs.resolve.outputs.device_codename }}
+
+  build-resukisu:
+    needs: [resolve, download-dependencies]
+    if: inputs.ksu_variant == 'ReSukiSU' || inputs.ksu_variant == 'All'
+    uses: ./.github/workflows/build-resukisu.yml
+    with:
+      android_version: ${{ needs.resolve.outputs.android_version }}
+      kernel_version: ${{ needs.resolve.outputs.kernel_version }}
+      sub_level: ${{ needs.resolve.outputs.sub_level }}
+      os_patch_level: ${{ needs.resolve.outputs.os_patch_level }}
+      add_susfs: ${{ inputs.add_susfs }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
+      device_codename: ${{ needs.resolve.outputs.device_codename }}
+
+  build-wksu:
+    needs: [resolve, download-dependencies]
+    if: inputs.ksu_variant == 'WKSU' || inputs.ksu_variant == 'All'
+    uses: ./.github/workflows/build-wksu.yml
+    with:
+      android_version: ${{ needs.resolve.outputs.android_version }}
+      kernel_version: ${{ needs.resolve.outputs.kernel_version }}
+      sub_level: ${{ needs.resolve.outputs.sub_level }}
+      os_patch_level: ${{ needs.resolve.outputs.os_patch_level }}
+      add_susfs: ${{ inputs.add_susfs }}
+      add_zeromount: ${{ inputs.add_zeromount }}
+      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
+      add_zram: ${{ inputs.add_zram }}
+      add_bbg: ${{ inputs.add_bbg }}
+      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
+      add_kpm: ${{ inputs.add_kpm }}
+      sukisu_commit: ${{ inputs.sukisu_commit }}
       device_codename: ${{ needs.resolve.outputs.device_codename }}
