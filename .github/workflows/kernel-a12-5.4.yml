@@ -12,9 +12,7 @@ on:
         type: choice
         options:
           - SukiSU
-          - KernelSU-Next
           - ReSukiSU
-          - WKSU
         default: "SukiSU"
       add_susfs:
         description: "Add Enhanced SUSFS"
@@ -119,31 +117,6 @@ jobs:
       sukisu_commit: ${{ inputs.sukisu_commit }}
       device_codename: ${{ inputs.device_codename }}
 
-  build-ksu-next:
-    needs: [download-dependencies]
-    if: inputs.ksu_variant == 'KernelSU-Next'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - sub_level: "302"
-            os_patch_level: "lts"
-    uses: ./.github/workflows/build-ksu-next.yml
-    with:
-      android_version: android12
-      kernel_version: "5.4"
-      sub_level: ${{ matrix.sub_level }}
-      os_patch_level: ${{ matrix.os_patch_level }}
-      add_susfs: ${{ inputs.add_susfs }}
-      add_zeromount: ${{ inputs.add_zeromount }}
-      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
-      add_zram: ${{ inputs.add_zram }}
-      add_bbg: ${{ inputs.add_bbg }}
-      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
-      add_kpm: ${{ inputs.add_kpm }}
-      sukisu_commit: ${{ inputs.sukisu_commit }}
-      device_codename: ${{ inputs.device_codename }}
-
   build-resukisu:
     needs: [download-dependencies]
     if: inputs.ksu_variant == 'ReSukiSU'
@@ -169,27 +142,3 @@ jobs:
       sukisu_commit: ${{ inputs.sukisu_commit }}
       device_codename: ${{ inputs.device_codename }}
 
-  build-wksu:
-    needs: [download-dependencies]
-    if: inputs.ksu_variant == 'WKSU'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - sub_level: "302"
-            os_patch_level: "lts"
-    uses: ./.github/workflows/build-wksu.yml
-    with:
-      android_version: android12
-      kernel_version: "5.4"
-      sub_level: ${{ matrix.sub_level }}
-      os_patch_level: ${{ matrix.os_patch_level }}
-      add_susfs: ${{ inputs.add_susfs }}
-      add_zeromount: ${{ inputs.add_zeromount }}
-      add_usb_debugging_stealth: ${{ inputs.add_usb_debugging_stealth }}
-      add_zram: ${{ inputs.add_zram }}
-      add_bbg: ${{ inputs.add_bbg }}
-      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
-      add_kpm: ${{ inputs.add_kpm }}
-      sukisu_commit: ${{ inputs.sukisu_commit }}
-      device_codename: ${{ inputs.device_codename }}
