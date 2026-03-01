@@ -307,7 +307,7 @@ jobs:
 
         while IFS='=' read -r cfg _; do
           symbol="${cfg#CONFIG_}"
-          grep -rqx "config ${symbol}" common/ --include='Kconfig*' 2>/dev/null && continue
+          grep -Rqx "config ${symbol}" common/ --include='Kconfig*' 2>/dev/null && continue
           sed -i "/^${cfg}=/d" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG"
         done < <(grep '^CONFIG_KSU_' "$DEFCONFIG_FRAGMENT" 2>/dev/null || true)
 

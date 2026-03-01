@@ -47,7 +47,7 @@ else
   cat "$FRAGMENT_DST" >> "$DEFCONFIG"
 fi
 
-if $ADD_ZRAM; then
+if $ADD_ZRAM && ! $USE_KLEAF; then
   sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$DEFCONFIG" 2>/dev/null || true
   sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' "$DEFCONFIG" 2>/dev/null || true
 fi

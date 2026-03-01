@@ -20,3 +20,8 @@ elif [[ "$ANDROID_VER" == "android15" ]]; then
 fi
 
 sed -i 's/check_defconfig//' ./common/build.config.gki 2>/dev/null || true
+
+# Kleaf: disable savedefconfig check in the build macro
+if [[ -f "build/kernel/kleaf/common_kernels.bzl" ]]; then
+  sed -i '/check_defconfig/s/"minimized"/"disabled"/; /check_defconfig/s/"match"/"disabled"/' build/kernel/kleaf/common_kernels.bzl
+fi
