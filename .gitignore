@@ -13,6 +13,7 @@ logs_llm/
 evidence_*.png
 
 _archive/
+_archived/
 validate-build.sh
 
 # Removed overlay scripts
