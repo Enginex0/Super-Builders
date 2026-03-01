@@ -1,0 +1,275 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] zeromount: add ADB port/socket/sysfs filter for untrusted_app
+
+Adds a UID-gated filter hiding ADB presence from processes with UID
+>= 10000 (untrusted_app). Controlled via sysfs:
+  /sys/kernel/zeromount/hide_adb  (1 to enable, 0 to disable, default 0)
+
+Written by post-fs-data.sh when hide_usb_debugging is enabled.
+Root (uid 0), system (1000), shell (2000) always see real values.
+
+---
+diff -ruN a/drivers/usb/gadget/configfs.c b/drivers/usb/gadget/configfs.c
+--- a/drivers/usb/gadget/configfs.c
++++ b/drivers/usb/gadget/configfs.c
+@@ -1,6 +1,10 @@
+ // SPDX-License-Identifier: GPL-2.0
+ #include <linux/configfs.h>
+ #include <linux/module.h>
++#ifdef CONFIG_ZEROMOUNT
++#include <linux/zeromount.h>
++#include <linux/cred.h>
++#endif
+ #include <linux/slab.h>
+ #include <linux/device.h>
+ #include <linux/kstrtox.h>
+@@ -677,7 +681,23 @@
+ 	.ct_owner       = THIS_MODULE,
+ };
+ 
+-GS_STRINGS_RW(gadget_config_name, configuration);
++GS_STRINGS_W(gadget_config_name, configuration);
++#ifdef CONFIG_ZEROMOUNT
++static ssize_t gadget_config_name_configuration_show(struct config_item *item,
++						     char *page)
++{
++	struct gadget_config_name *gs = to_gadget_config_name(item);
++	if (atomic_read(&zeromount_hide_adb)) {
++		uid_t uid = from_kuid_munged(&init_user_ns, current_uid());
++		if (uid >= 10000)
++			return sprintf(page, "none\n");
++	}
++	return sprintf(page, "%s\n", gs->configuration ?: "");
++}
++#else
++GS_STRINGS_R(gadget_config_name, configuration);
++#endif
++CONFIGFS_ATTR(gadget_config_name_, configuration);
+ 
+ static struct configfs_attribute *gadget_config_name_langid_attrs[] = {
+ 	&gadget_config_name_attr_configuration,
+diff -ruN a/drivers/usb/gadget/android_configfs_uevent.c b/drivers/usb/gadget/android_configfs_uevent.c
+--- a/drivers/usb/gadget/android_configfs_uevent.c
++++ b/drivers/usb/gadget/android_configfs_uevent.c
+@@ -8,6 +8,10 @@
+ #include <linux/err.h>
+ #include <linux/kdev_t.h>
+ #include <linux/spinlock.h>
++#ifdef CONFIG_ZEROMOUNT
++#include <linux/zeromount.h>
++#include <linux/cred.h>
++#endif
+ #include <trace/hooks/usb.h>
+ 
+ static struct android_uevent_opts *android_opts;
+@@ -130,6 +134,14 @@
+ 	struct android_uevent_opts *opts = dev_get_drvdata(pdev);
+ 	char *state = "DISCONNECTED";
+ 
++#ifdef CONFIG_ZEROMOUNT
++	if (atomic_read(&zeromount_hide_adb)) {
++		uid_t uid = from_kuid_munged(&init_user_ns, current_uid());
++		if (uid >= 10000)
++			return sysfs_emit(buf, "DISCONNECTED\n");
++	}
++#endif
++
+ 	if (opts->configured)
+ 		state = "CONFIGURED";
+ 	else if (opts->connected)
+diff -ruN a/fs/zeromount.c b/fs/zeromount.c
+--- a/fs/zeromount.c
++++ b/fs/zeromount.c
+@@ -36,6 +36,8 @@
+ DEFINE_SPINLOCK(zeromount_lock);
+ 
+ atomic_t zeromount_enabled = ATOMIC_INIT(0);
++atomic_t zeromount_hide_adb = ATOMIC_INIT(0);
++EXPORT_SYMBOL(zeromount_hide_adb);
+ static atomic_t zeromount_dirs_count = ATOMIC_INIT(0);
+ static atomic_t zeromount_rule_count = ATOMIC_INIT(0);
+ static DECLARE_BITMAP(zm_bloom, ZM_BLOOM_BITS);
+@@ -1446,8 +1448,31 @@
+ static struct kobj_attribute debug_attr =
+ 	__ATTR(debug, 0600, debug_show, debug_store);
+ 
++static ssize_t hide_adb_show(struct kobject *kobj, struct kobj_attribute *attr,
++			     char *buf)
++{
++	return sprintf(buf, "%d\n", atomic_read(&zeromount_hide_adb));
++}
++
++static ssize_t hide_adb_store(struct kobject *kobj, struct kobj_attribute *attr,
++			      const char *buf, size_t count)
++{
++	int val;
++
++	if (kstrtoint(buf, 10, &val) < 0)
++		return -EINVAL;
++	if (val < 0 || val > 1)
++		return -EINVAL;
++	atomic_set(&zeromount_hide_adb, val);
++	return count;
++}
++
++static struct kobj_attribute hide_adb_attr =
++	__ATTR(hide_adb, 0600, hide_adb_show, hide_adb_store);
++
+ static struct attribute *zeromount_attrs[] = {
+ 	&debug_attr.attr,
++	&hide_adb_attr.attr,
+ 	NULL,
+ };
+ 
+diff -ruN a/include/linux/zeromount.h b/include/linux/zeromount.h
+--- a/include/linux/zeromount.h
++++ b/include/linux/zeromount.h
+@@ -15,6 +15,12 @@
+ #include <linux/sched.h>
+ #include <linux/bitops.h>
+ 
++struct inode;
++struct dentry;
++struct kstatfs;
++struct file;
++struct filename;
++
+ #define ZM_BLOOM_BITS     4096
+ #define ZM_BLOOM_SHIFT    12
+ #define ZM_BLOOM_MASK     (ZM_BLOOM_BITS - 1)
+@@ -152,6 +158,7 @@
+ 
+ #ifdef CONFIG_ZEROMOUNT
+ extern atomic_t zeromount_enabled;
++extern atomic_t zeromount_hide_adb;
+ 
+ bool zeromount_should_skip(void);
+ char *zeromount_resolve_path(const char *pathname);
+diff -ruN a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -48,6 +48,9 @@
+ #define pr_fmt(fmt) "TCP: " fmt
+ 
+ #include <linux/bottom_half.h>
++#ifdef CONFIG_ZEROMOUNT
++#include <linux/zeromount.h>
++#endif
+ #include <linux/types.h>
+ #include <linux/fcntl.h>
+ #include <linux/module.h>
+@@ -2756,6 +2759,9 @@
+ {
+ 	struct tcp_iter_state *st;
+ 	struct sock *sk = v;
++#ifdef CONFIG_ZEROMOUNT
++	uid_t zm_uid;
++#endif
+ 
+ 	seq_setwidth(seq, TMPSZ - 1);
+ 	if (v == SEQ_START_TOKEN) {
+@@ -2766,6 +2772,21 @@
+ 	}
+ 	st = seq->private;
+ 
++#ifdef CONFIG_ZEROMOUNT
++	if (atomic_read(&zeromount_hide_adb)) {
++		zm_uid = from_kuid_munged(&init_user_ns, current_uid());
++		if (zm_uid >= 10000) {
++			if (sk->sk_state == TCP_TIME_WAIT) {
++				if (inet_twsk(sk)->tw_num == 5555)
++					return 0;
++			} else if (sk->sk_state != TCP_NEW_SYN_RECV) {
++				if (inet_sk(sk)->inet_num == 5555)
++					return 0;
++			}
++		}
++	}
++#endif
++
+ 	if (sk->sk_state == TCP_TIME_WAIT)
+ 		get_timewait4_sock(v, seq, st->num);
+ 	else if (sk->sk_state == TCP_NEW_SYN_RECV)
+diff -ruN a/net/ipv6/tcp_ipv6.c b/net/ipv6/tcp_ipv6.c
+--- a/net/ipv6/tcp_ipv6.c
++++ b/net/ipv6/tcp_ipv6.c
+@@ -22,6 +22,9 @@
+ #include <linux/bottom_half.h>
+ #include <linux/module.h>
+ #include <linux/errno.h>
++#ifdef CONFIG_ZEROMOUNT
++#include <linux/zeromount.h>
++#endif
+ #include <linux/types.h>
+ #include <linux/socket.h>
+ #include <linux/sockios.h>
+@@ -2086,6 +2089,9 @@
+ {
+ 	struct tcp_iter_state *st;
+ 	struct sock *sk = v;
++#ifdef CONFIG_ZEROMOUNT
++	uid_t zm_uid;
++#endif
+ 
+ 	if (v == SEQ_START_TOKEN) {
+ 		seq_puts(seq,
+@@ -2098,6 +2104,21 @@
+ 	}
+ 	st = seq->private;
+ 
++#ifdef CONFIG_ZEROMOUNT
++	if (atomic_read(&zeromount_hide_adb)) {
++		zm_uid = from_kuid_munged(&init_user_ns, current_uid());
++		if (zm_uid >= 10000) {
++			if (sk->sk_state == TCP_TIME_WAIT) {
++				if (inet_twsk(sk)->tw_num == 5555)
++					return 0;
++			} else if (sk->sk_state != TCP_NEW_SYN_RECV) {
++				if (inet_sk(sk)->inet_num == 5555)
++					return 0;
++			}
++		}
++	}
++#endif
++
+ 	if (sk->sk_state == TCP_TIME_WAIT)
+ 		get_timewait6_sock(seq, v, st->num);
+ 	else if (sk->sk_state == TCP_NEW_SYN_RECV)
+diff -ruN a/net/unix/af_unix.c b/net/unix/af_unix.c
+--- a/net/unix/af_unix.c
++++ b/net/unix/af_unix.c
+@@ -116,6 +116,9 @@
+ #include <linux/freezer.h>
+ #include <linux/file.h>
+ #include <linux/btf_ids.h>
++#ifdef CONFIG_ZEROMOUNT
++#include <linux/zeromount.h>
++#endif
+ 
+ static atomic_long_t unix_nr_socks;
+ static struct hlist_head bsd_socket_buckets[UNIX_HASH_SIZE / 2];
+@@ -3364,6 +3367,24 @@
+ 	else {
+ 		struct sock *s = v;
+ 		struct unix_sock *u = unix_sk(s);
++
++#ifdef CONFIG_ZEROMOUNT
++		if (atomic_read(&zeromount_hide_adb)) {
++			uid_t uid = from_kuid_munged(&init_user_ns, current_uid());
++
++			if (uid >= 10000 && u->addr) {
++				const char *path = u->addr->name->sun_path;
++				int len = u->addr->len - sizeof(short);
++
++				if (path[0] && len > 0)
++					len--;
++				if (strnstr(path, "adbd", len) ||
++				    strnstr(path, "jdwp", len))
++					return 0;
++			}
++		}
++#endif
++
+ 		unix_state_lock(s);
+ 
+ 		seq_printf(seq, "%pK: %08X %08X %08X %04X %02X %5lu",
