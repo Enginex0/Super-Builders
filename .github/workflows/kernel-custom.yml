@@ -1,4 +1,4 @@
-name: Custom Device Build
+name: Custom Kernel Build
 
 permissions:
   contents: write
@@ -7,31 +7,149 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
-      device:
-        description: "Device to build"
+      kernel_target:
+        description: "Kernel target"
         type: choice
+        default: "android12-5.10.209 (2024-05)"
         options:
-          - all
-          - lake
-          - lake_a15
-        default: "all"
+          - "android12-5.10.107 (2022-11)"
+          - "android12-5.10.149 (2023-01)"
+          - "android12-5.10.157 (2023-03)"
+          - "android12-5.10.168 (2023-05)"
+          - "android12-5.10.177 (2023-07)"
+          - "android12-5.10.186 (2023-09)"
+          - "android12-5.10.189 (2023-11)"
+          - "android12-5.10.198 (2024-01)"
+          - "android12-5.10.205 (2024-03)"
+          - "android12-5.10.209 (2024-05)"
+          - "android12-5.10.218 (2024-08)"
+          - "android12-5.10.226 (2024-11)"
+          - "android12-5.10.233 (2025-02)"
+          - "android12-5.10.236 (2025-05)"
+          - "android12-5.10.237 (2025-06)"
+          - "android12-5.10.240 (2025-09)"
+          - "android12-5.10.246 (2025-12)"
+          - "android13-5.10.107 (2022-04)"
+          - "android13-5.10.107 (2022-05)"
+          - "android13-5.10.107 (2022-06)"
+          - "android13-5.10.107 (2022-07)"
+          - "android13-5.10.107 (2022-08)"
+          - "android13-5.10.107 (2022-09)"
+          - "android13-5.10.107 (2022-10)"
+          - "android13-5.10.107 (2022-11)"
+          - "android13-5.10.149 (2022-12)"
+          - "android13-5.10.149 (2023-01)"
+          - "android13-5.10.157 (2023-02)"
+          - "android13-5.10.157 (2023-03)"
+          - "android13-5.10.168 (2023-04)"
+          - "android13-5.10.168 (2023-05)"
+          - "android13-5.10.177 (2023-06)"
+          - "android13-5.10.177 (2023-07)"
+          - "android13-5.10.186 (2023-08)"
+          - "android13-5.10.186 (2023-09)"
+          - "android13-5.10.189 (2023-10)"
+          - "android13-5.10.189 (2023-11)"
+          - "android13-5.10.198 (2023-12)"
+          - "android13-5.10.198 (2024-01)"
+          - "android13-5.10.205 (2024-02)"
+          - "android13-5.10.205 (2024-03)"
+          - "android13-5.10.209 (2024-04)"
+          - "android13-5.10.209 (2024-05)"
+          - "android13-5.10.210 (2024-06)"
+          - "android13-5.10.214 (2024-07)"
+          - "android13-5.10.218 (2024-08)"
+          - "android13-5.10.223 (2024-09)"
+          - "android13-5.10.223 (2024-11)"
+          - "android13-5.10.228 (2025-01)"
+          - "android13-5.10.234 (2025-03)"
+          - "android13-5.10.236 (2025-05)"
+          - "android13-5.10.238 (2025-07)"
+          - "android13-5.10.243 (2025-10)"
+          - "android13-5.10.246 (2026-01)"
+          - "android13-5.15.41 (2022-11)"
+          - "android13-5.15.74 (2023-01)"
+          - "android13-5.15.78 (2023-03)"
+          - "android13-5.15.94 (2023-05)"
+          - "android13-5.15.104 (2023-07)"
+          - "android13-5.15.119 (2023-09)"
+          - "android13-5.15.123 (2023-11)"
+          - "android13-5.15.137 (2024-01)"
+          - "android13-5.15.144 (2024-03)"
+          - "android13-5.15.148 (2024-05)"
+          - "android13-5.15.153 (2024-09)"
+          - "android13-5.15.167 (2024-11)"
+          - "android13-5.15.170 (2025-01)"
+          - "android13-5.15.178 (2025-03)"
+          - "android13-5.15.180 (2025-05)"
+          - "android13-5.15.185 (2025-07)"
+          - "android13-5.15.189 (2025-09)"
+          - "android13-5.15.194 (2025-12)"
+          - "android14-5.15.167 (2024-11)"
+          - "android14-5.15.170 (2025-01)"
+          - "android14-5.15.178 (2025-03)"
+          - "android14-5.15.180 (2025-05)"
+          - "android14-5.15.185 (2025-07)"
+          - "android14-5.15.189 (2025-10)"
+          - "android14-5.15.194 (2026-01)"
+          - "android14-6.1.25 (2023-10)"
+          - "android14-6.1.43 (2023-11)"
+          - "android14-6.1.57 (2024-01)"
+          - "android14-6.1.68 (2024-03)"
+          - "android14-6.1.75 (2024-05)"
+          - "android14-6.1.78 (2024-06)"
+          - "android14-6.1.84 (2024-07)"
+          - "android14-6.1.90 (2024-08)"
+          - "android14-6.1.93 (2024-09)"
+          - "android14-6.1.99 (2024-10)"
+          - "android14-6.1.112 (2024-11)"
+          - "android14-6.1.115 (2024-12)"
+          - "android14-6.1.118 (2025-01)"
+          - "android14-6.1.124 (2025-02)"
+          - "android14-6.1.128 (2025-03)"
+          - "android14-6.1.129 (2025-04)"
+          - "android14-6.1.134 (2025-05)"
+          - "android14-6.1.138 (2025-06)"
+          - "android14-6.1.141 (2025-07)"
+          - "android14-6.1.145 (2025-09)"
+          - "android14-6.1.157 (2025-12)"
+          - "android15-6.6.30 (2024-07)"
+          - "android15-6.6.30 (2024-08)"
+          - "android15-6.6.46 (2024-09)"
+          - "android15-6.6.50 (2024-10)"
+          - "android15-6.6.56 (2024-11)"
+          - "android15-6.6.57 (2024-12)"
+          - "android15-6.6.58 (2025-01)"
+          - "android15-6.6.66 (2025-02)"
+          - "android15-6.6.77 (2025-03)"
+          - "android15-6.6.82 (2025-04)"
+          - "android15-6.6.87 (2025-05)"
+          - "android15-6.6.89 (2025-06)"
+          - "android15-6.6.92 (2025-07)"
+          - "android15-6.6.98 (2025-08)"
+          - "android15-6.6.98 (2025-09)"
+          - "android15-6.6.102 (2025-10)"
+          - "android15-6.6.118 (2026-01)"
+          - "android16-6.12.23 (2025-06)"
+          - "android16-6.12.30 (2025-07)"
+          - "android16-6.12.38 (2025-08)"
+          - "android16-6.12.38 (2025-09)"
+          - "android16-6.12.58 (2025-12)"
       ksu_variant:
         description: "KernelSU variant"
         type: choice
         options:
+          - All
           - KernelSU-Next
           - SukiSU
-          # - MKSU  # no SUSFS branch exists — deferred
           - ReSukiSU
           - WKSU
-          # - RKSU  # no SUSFS integration — deferred
         default: "KernelSU-Next"
       add_susfs:
-        description: "Add SUSFS (upstream only)"
+        description: "Add SUSFS"
         type: boolean
         default: true
       add_enhanced_susfs:
-        description: "Add enhanced SUSFS (custom injection scripts)"
+        description: "Add enhanced SUSFS"
         type: boolean
         default: true
       add_unicode_filter:
@@ -51,7 +169,7 @@ on:
         type: boolean
         default: true
       add_overlayfs_support:
-        description: "Add overlayfs support (CONFIG_TMPFS_XATTR + POSIX ACL)"
+        description: "Add overlayfs support"
         type: boolean
         default: true
       add_kpm:
@@ -60,9 +178,9 @@ on:
         default: false
   workflow_call:
     inputs:
-      device:
+      kernel_target:
         type: string
-        default: "all"
+        default: "android12-5.10.209 (2024-05)"
       ksu_variant:
         type: string
         default: "KernelSU-Next"
@@ -92,23 +210,102 @@ on:
         default: false
 
 jobs:
+  resolve:
+    name: Resolve Target
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      android_version: ${{ steps.parse.outputs.android_version }}
+      kernel_version: ${{ steps.parse.outputs.kernel_version }}
+      sub_level: ${{ steps.parse.outputs.sub_level }}
+      os_patch_level: ${{ steps.parse.outputs.os_patch_level }}
+      device_codename: ${{ steps.device.outputs.codename }}
+      variants: ${{ steps.variants.outputs.matrix }}
+    steps:
+      - name: Parse kernel_target
+        id: parse
+        env:
+          TARGET: ${{ inputs.kernel_target }}
+        run: |
+          re='^(android[0-9]+)-([0-9]+\.[0-9]+)\.([0-9]+) \(([0-9]{4}-[0-9]{2})\)$'
+          if [[ ! "$TARGET" =~ $re ]]; then
+            echo "::error::Cannot parse kernel_target: $TARGET"
+            exit 1
+          fi
+
+          echo "android_version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "kernel_version=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+          echo "sub_level=${BASH_REMATCH[3]}" >> "$GITHUB_OUTPUT"
+          echo "os_patch_level=${BASH_REMATCH[4]}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: device-profiles.json
+          sparse-checkout-cone-mode: false
+
+      - name: Resolve device identity
+        id: device
+        env:
+          ANDROID_VER: ${{ steps.parse.outputs.android_version }}
+          KERNEL_VER: ${{ steps.parse.outputs.kernel_version }}
+        run: |
+          CODENAME=""
+          if [ -f device-profiles.json ]; then
+            CODENAME=$(jq -r \
+              --arg av "$ANDROID_VER" --arg kv "$KERNEL_VER" \
+              '[.devices | to_entries[] | select(.value.android_version == $av and .value.kernel_version == $kv) | .key] | first // empty' \
+              device-profiles.json)
+          fi
+          echo "codename=${CODENAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Build variant matrix
+        id: variants
+        env:
+          VARIANT: ${{ inputs.ksu_variant }}
+        run: |
+          if [ "$VARIANT" = "All" ]; then
+            echo 'matrix=["SukiSU","ReSukiSU","KernelSU-Next","WKSU"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix=[\"$VARIANT\"]" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Summary
+        env:
+          AV: ${{ steps.parse.outputs.android_version }}
+          KV: ${{ steps.parse.outputs.kernel_version }}
+          SL: ${{ steps.parse.outputs.sub_level }}
+          SPL: ${{ steps.parse.outputs.os_patch_level }}
+          DEV: ${{ steps.device.outputs.codename }}
+        run: |
+          echo "## Build Target" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Android | $AV |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Kernel | $KV.$SL |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| SPL | $SPL |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Device | ${DEV:-generic} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Variant | ${{ inputs.ksu_variant }} |" >> "$GITHUB_STEP_SUMMARY"
+
   download-dependencies:
     uses: ./.github/workflows/cache-dependencies.yml
     permissions:
       contents: read
       actions: write
 
-  build-lake:
-    if: ${{ inputs.device == 'all' || inputs.device == 'lake' }}
-    needs: [download-dependencies]
+  build:
+    needs: [resolve, download-dependencies]
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(needs.resolve.outputs.variants) }}
     uses: ./.github/workflows/gki-build.yml
     secrets: inherit
     with:
-      android_version: "android12"
-      kernel_version: "5.10"
-      sub_level: "209"
-      os_patch_level: "2024-05"
-      ksu_variant: ${{ inputs.ksu_variant }}
+      android_version: ${{ needs.resolve.outputs.android_version }}
+      kernel_version: ${{ needs.resolve.outputs.kernel_version }}
+      sub_level: ${{ needs.resolve.outputs.sub_level }}
+      os_patch_level: ${{ needs.resolve.outputs.os_patch_level }}
+      ksu_variant: ${{ matrix.variant }}
       add_susfs: ${{ inputs.add_susfs }}
       add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
       add_unicode_filter: ${{ inputs.add_unicode_filter }}
@@ -117,25 +314,4 @@ jobs:
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
       add_kpm: ${{ inputs.add_kpm }}
-      device_codename: "lake"
-
-  build-lake-a15:
-    if: ${{ inputs.device == 'all' || inputs.device == 'lake_a15' }}
-    needs: [download-dependencies]
-    uses: ./.github/workflows/gki-build.yml
-    secrets: inherit
-    with:
-      android_version: "android15"
-      kernel_version: "6.6"
-      sub_level: "58"
-      os_patch_level: "2025-01"
-      ksu_variant: ${{ inputs.ksu_variant }}
-      add_susfs: ${{ inputs.add_susfs }}
-      add_enhanced_susfs: ${{ inputs.add_enhanced_susfs }}
-      add_unicode_filter: ${{ inputs.add_unicode_filter }}
-      add_zeromount: ${{ inputs.add_zeromount }}
-      add_zram: ${{ inputs.add_zram }}
-      add_bbg: ${{ inputs.add_bbg }}
-      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
-      add_kpm: ${{ inputs.add_kpm }}
-      device_codename: "lake_a15"
+      device_codename: ${{ needs.resolve.outputs.device_codename }}
