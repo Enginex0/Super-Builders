@@ -73,7 +73,7 @@ diff -ruN ksunext-clean/kernel/setuid_hook.c ksunext-modified/kernel/setuid_hook
  }
  
  extern u32 susfs_zygote_sid;
-@@ -107,6 +107,10 @@
+@@ -101,6 +101,10 @@
      uid_t old_uid = current_uid().val;
  
      // We only interest in process spwaned by zygote
@@ -87,16 +87,16 @@ diff -ruN ksunext-clean/kernel/setuid_hook.c ksunext-modified/kernel/setuid_hook
 diff -ruN ksunext-clean/kernel/supercalls.c ksunext-modified/kernel/supercalls.c
 --- ksunext-clean/kernel/supercalls.c	2026-02-27 22:47:56.601228945 +0100
 +++ ksunext-modified/kernel/supercalls.c	2026-02-27 22:48:42.280760032 +0100
-@@ -980,6 +980,12 @@
+@@ -1051,6 +1051,12 @@
  			return 0;
  		}
- #endif //#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+ #endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 +#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT
 +		if (cmd == CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT) {
 +			susfs_add_sus_kstat_redirect(arg);
 +			return 0;
 +		}
-+#endif //#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT
++#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT
  #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
  		if (cmd == CMD_SUSFS_SET_UNAME) {
  			susfs_set_uname(arg);
