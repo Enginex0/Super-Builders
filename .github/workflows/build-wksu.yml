@@ -297,6 +297,14 @@ jobs:
         [[ "$ADD_KPM" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --kpm"
 
         bash "$HELPERS/assemble-defconfig.sh" "$FRAGMENT" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG" $ASSEMBLE_FLAGS
+
+        # WKSU's Kconfig may not declare all SUSFS symbols from the shared fragment
+        while IFS='=' read -r cfg _; do
+          symbol="${cfg#CONFIG_}"
+          grep -rqx "config ${symbol}" common/ --include='Kconfig*' 2>/dev/null && continue
+          sed -i "/^${cfg}=/d" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG"
+        done < <(grep '^CONFIG_KSU_' "$DEFCONFIG_FRAGMENT" 2>/dev/null || true)
+
         bash "$HELPERS/bypass-abi-check.sh" . "$ANDROID_VER" "$KERNEL_VER"
 
     - name: Clean Module Lists
