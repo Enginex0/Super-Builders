@@ -417,11 +417,10 @@
  #include "fd.h"
  
  #include "../../lib/kstrtox.h"
-@@ -1797,6 +1800,27 @@
- 	if (!p)
- 		return -ESRCH;
+@@ -1869,6 +1872,26 @@
+ 	if (!tmp)
+ 		return -ENOMEM;
  
-+
 +#ifdef CONFIG_ZEROMOUNT
 +	if (!zeromount_should_skip() && path->dentry) {
 +		struct inode *inode = d_backing_inode(path->dentry);
@@ -433,7 +432,7 @@
 +					vlen = buflen;
 +				if (copy_to_user(buffer, vpath, vlen) == 0) {
 +					kfree(vpath);
-+					free_page((unsigned long)tmp);
++					kfree(tmp);
 +					return vlen;
 +				}
 +				kfree(vpath);
@@ -442,8 +441,8 @@
 +	}
 +#endif
 +
- 	proc_task_name(m, p, false);
- 	seq_putc(m, '\n');
+ 	pathname = d_path(path, tmp, PATH_MAX);
+ 	len = PTR_ERR(pathname);
  
 --- a/fs/proc/task_mmu.c	2026-03-01 02:42:32.402972154 +0100
 +++ b/fs/proc/task_mmu.c	2026-03-01 02:42:39.830594483 +0100

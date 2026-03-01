@@ -144,11 +144,10 @@ diff '--color=auto' -ruN '--exclude=.git' work-50-base/fs/proc/base.c work/fs/pr
  #include "fd.h"
  
  #include "../../lib/kstrtox.h"
-@@ -1790,6 +1793,27 @@
- 	if (!p)
- 		return -ESRCH;
+@@ -1862,6 +1865,26 @@
+ 	if (!tmp)
+ 		return -ENOMEM;
  
-+
 +#ifdef CONFIG_ZEROMOUNT
 +	if (!zeromount_should_skip() && path->dentry) {
 +		struct inode *inode = d_backing_inode(path->dentry);
@@ -160,7 +159,7 @@ diff '--color=auto' -ruN '--exclude=.git' work-50-base/fs/proc/base.c work/fs/pr
 +					vlen = buflen;
 +				if (copy_to_user(buffer, vpath, vlen) == 0) {
 +					kfree(vpath);
-+					free_page((unsigned long)tmp);
++					kfree(tmp);
 +					return vlen;
 +				}
 +				kfree(vpath);
@@ -169,8 +168,8 @@ diff '--color=auto' -ruN '--exclude=.git' work-50-base/fs/proc/base.c work/fs/pr
 +	}
 +#endif
 +
- 	proc_task_name(m, p, false);
- 	seq_putc(m, '\n');
+ 	pathname = d_path(path, tmp, PATH_MAX);
+ 	len = PTR_ERR(pathname);
  
 diff '--color=auto' -ruN '--exclude=.git' work-50-base/fs/proc/task_mmu.c work/fs/proc/task_mmu.c
 --- work-50-base/fs/proc/task_mmu.c	2026-03-01 05:27:32.059714569 +0100
