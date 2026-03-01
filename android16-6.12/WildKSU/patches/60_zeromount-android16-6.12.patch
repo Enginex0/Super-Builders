@@ -466,18 +466,19 @@ diff '--color=auto' -ruN '--exclude=.git' work-50-base/fs/xattr.c work/fs/xattr.
  
  #include "internal.h"
  
-@@ -403,6 +406,12 @@
- 
- 	error = handler->get(handler, dentry, inode, name, value, error);
- 	*xattr_value = value;
+@@ -427,6 +430,12 @@
+ ssize_t
+ vfs_getxattr(struct mnt_idmap *idmap, struct dentry *dentry,
+ 	     const char *name, void *value, size_t size)
+ {
 +#ifdef CONFIG_ZEROMOUNT
 +	ssize_t zm_ret;
 +	zm_ret = zeromount_spoof_xattr(dentry, name, value, size);
 +	if (zm_ret != -EOPNOTSUPP)
 +		return zm_ret;
 +#endif
- 	return error;
- }
+ 	struct inode *inode = dentry->d_inode;
+ 	int error;
  
 diff '--color=auto' -ruN '--exclude=.git' work-50-base/fs/zeromount.c work/fs/zeromount.c
 --- work-50-base/fs/zeromount.c	1970-01-01 01:00:00.000000000 +0100

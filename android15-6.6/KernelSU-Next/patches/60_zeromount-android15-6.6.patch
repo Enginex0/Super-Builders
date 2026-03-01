@@ -392,18 +392,19 @@
  
  #include "internal.h"
  
-@@ -404,6 +407,12 @@
- 
- 	error = handler->get(handler, dentry, inode, name, value, error);
- 	*xattr_value = value;
+@@ -428,6 +431,12 @@
+ ssize_t
+ vfs_getxattr(struct mnt_idmap *idmap, struct dentry *dentry,
+ 	     const char *name, void *value, size_t size)
+ {
 +#ifdef CONFIG_ZEROMOUNT
 +	ssize_t zm_ret;
 +	zm_ret = zeromount_spoof_xattr(dentry, name, value, size);
 +	if (zm_ret != -EOPNOTSUPP)
 +		return zm_ret;
 +#endif
- 	return error;
- }
+ 	struct inode *inode = dentry->d_inode;
+ 	int error;
  
 --- a/fs/proc/base.c	2026-03-01 02:42:32.397406585 +0100
 +++ b/fs/proc/base.c	2026-03-01 02:42:39.806855584 +0100

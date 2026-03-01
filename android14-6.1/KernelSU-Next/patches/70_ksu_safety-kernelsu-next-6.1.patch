@@ -87,7 +87,18 @@ diff -ruN ksunext-clean/kernel/setuid_hook.c ksunext-modified/kernel/setuid_hook
 diff -ruN ksunext-clean/kernel/supercalls.c ksunext-modified/kernel/supercalls.c
 --- ksunext-clean/kernel/supercalls.c	2026-02-27 22:47:56.601228945 +0100
 +++ ksunext-modified/kernel/supercalls.c	2026-02-27 22:48:42.280760032 +0100
-@@ -1051,6 +1051,12 @@
+@@ -360,7 +360,9 @@
+     ret = ksu_set_app_profile(&cmd.profile);
+     if (!ret) {
+         ksu_persistent_allow_list();
+-        ksu_mark_running_process();
++#ifndef CONFIG_KSU_SUSFS
++        ksu_mark_running_process();
++#endif
+     }
+     return ret;
+ }
+@@ -1051,6 +1053,12 @@
  			return 0;
  		}
  #endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
