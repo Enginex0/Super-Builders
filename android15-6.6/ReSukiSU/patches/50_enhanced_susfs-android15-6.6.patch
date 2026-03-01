@@ -901,7 +901,7 @@ diff -ruN clean/fs/namespace.c work/fs/namespace.c
  	new = copy_tree(old, old->mnt.mnt_root, copy_flags);
  	if (IS_ERR(new)) {
  		namespace_unlock();
-@@ -5080,3 +5279,42 @@
+@@ -5080,3 +5279,44 @@
  fs_initcall(init_fs_namespace_sysctls);
  
  #endif /* CONFIG_SYSCTL */
@@ -942,6 +942,8 @@ diff -ruN clean/fs/namespace.c work/fs/namespace.c
 +	unlock_ns_list(mnt_ns);
 +	up_read(&namespace_sem);
 +}
++#else
++void susfs_reorder_mnt_id(void) { }
 +#endif
 +
 diff -ruN clean/fs/notify/fdinfo.c work/fs/notify/fdinfo.c

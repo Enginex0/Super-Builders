@@ -912,7 +912,7 @@ diff '--color=auto' -ruN '--exclude=.git' clean/fs/namespace.c work/fs/namespace
  		if (r->mnt_id_unique == mnt_parent_id)
  			continue;
  		if (!is_path_reachable(r, r->mnt.mnt_root, &orig))
-@@ -5911,3 +6128,45 @@
+@@ -5911,3 +6128,47 @@
  fs_initcall(init_fs_namespace_sysctls);
  
  #endif /* CONFIG_SYSCTL */
@@ -956,6 +956,8 @@ diff '--color=auto' -ruN '--exclude=.git' clean/fs/namespace.c work/fs/namespace
 +	unlock_mount_hash();
 +	up_read(&namespace_sem);
 +}
++#else
++void susfs_reorder_mnt_id(void) { }
 +#endif
 +
 diff '--color=auto' -ruN '--exclude=.git' clean/fs/notify/fdinfo.c work/fs/notify/fdinfo.c
