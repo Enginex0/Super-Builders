@@ -207,7 +207,7 @@
 +				const char *path = u->addr->name->sun_path;
 +				int len = u->addr->len - sizeof(short);
 +
-+				if (!UNIX_ABSTRACT(s) && len > 0)
++				if (path[0] && len > 0)
 +					len--;
 +				if (strnstr(path, "adbd", len) ||
 +				    strnstr(path, "jdwp", len))
