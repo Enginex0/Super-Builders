@@ -185,7 +185,7 @@ jobs:
       if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
-        patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches/50_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
+        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches/50_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
 
     - name: Apply KSU Safety Patch
       if: inputs.add_susfs
@@ -197,7 +197,7 @@ jobs:
       if: inputs.add_zeromount && inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
-        patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
+        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
 
     - name: Apply USB Debugging Stealth
       if: inputs.add_usb_debugging_stealth && inputs.add_zeromount && inputs.add_susfs

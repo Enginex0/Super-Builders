@@ -253,7 +253,7 @@ jobs:
 
         PATCH_50="$PATCH_DIR/50_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
         if [ -f "$PATCH_50" ]; then
-          if patch -p1 --no-backup-if-mismatch -d "$KERNEL_ROOT/common" < "$PATCH_50"; then
+          if patch -p1 -F3 --no-backup-if-mismatch -d "$KERNEL_ROOT/common" < "$PATCH_50"; then
             RESULTS="${RESULTS}50_enhanced_susfs|applied\n"
             TMU="$KERNEL_ROOT/common/fs/proc/task_mmu.c"
             if [[ "$SUBLEVEL" -lt 218 ]] && grep -q 'goto show_pad;' "$TMU" && ! grep -q '^show_pad:' "$TMU"; then
@@ -280,7 +280,7 @@ jobs:
 
         PATCH_60="$PATCH_DIR/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
         if [ -f "$PATCH_60" ]; then
-          if patch -p1 --no-backup-if-mismatch -d "$KERNEL_ROOT/common" < "$PATCH_60"; then
+          if patch -p1 -F3 --no-backup-if-mismatch -d "$KERNEL_ROOT/common" < "$PATCH_60"; then
             RESULTS="${RESULTS}60_zeromount|applied\n"
           else
             RESULTS="${RESULTS}60_zeromount|FAILED\n"
