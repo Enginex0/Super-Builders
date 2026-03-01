@@ -640,19 +640,16 @@ diff -ruN clean/fs/namei.c work/fs/namei.c
 diff -ruN clean/fs/namespace.c work/fs/namespace.c
 --- a/fs/namespace.c	2026-02-25 02:24:55.115547755 +0100
 +++ b/fs/namespace.c	2026-03-01 01:56:54.380466580 +0100
-@@ -32,12 +32,24 @@
- #include <linux/fs_context.h>
- #include <linux/shmem_fs.h>
- #include <linux/mnt_idmapping.h>
+@@ -35,3 +35,6 @@
+
 +#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 +#include <linux/susfs_def.h>
 +#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
- 
  #include "pnode.h"
  #include "internal.h"
- #include <trace/hooks/blk.h>
+@@ -39,3 +42,12 @@
  #include <trace/hooks/fs.h>
- 
+
 +#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 +extern bool susfs_is_current_ksu_domain(void);
 +extern bool susfs_is_sdcard_android_data_decrypted __read_mostly;
