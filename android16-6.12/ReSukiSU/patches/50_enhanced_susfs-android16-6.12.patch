@@ -1966,7 +1966,7 @@ diff '--color=auto' -ruN '--exclude=.git' clean/fs/statfs.c work/fs/statfs.c
 diff '--color=auto' -ruN '--exclude=.git' clean/fs/susfs.c work/fs/susfs.c
 --- clean/fs/susfs.c	1970-01-01 01:00:00.000000000 +0100
 +++ work/fs/susfs.c	2026-03-01 05:40:13.287365626 +0100
-@@ -0,0 +1,1259 @@
+@@ -0,0 +1,1257 @@
 +#include <linux/version.h>
 +#include <linux/cred.h>
 +#include <linux/fs.h>

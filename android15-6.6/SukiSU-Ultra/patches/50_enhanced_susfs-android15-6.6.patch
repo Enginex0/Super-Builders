@@ -2013,7 +2013,7 @@ diff -ruN clean/fs/statfs.c work/fs/statfs.c
 diff -ruN clean/fs/susfs.c work/fs/susfs.c
 --- a/fs/susfs.c	1970-01-01 01:00:00.000000000 +0100
 +++ b/fs/susfs.c	2026-03-01 02:05:07.389658030 +0100
-@@ -0,0 +1,1259 @@
+@@ -0,0 +1,1257 @@
 +#include <linux/version.h>
 +#include <linux/cred.h>
 +#include <linux/fs.h>
