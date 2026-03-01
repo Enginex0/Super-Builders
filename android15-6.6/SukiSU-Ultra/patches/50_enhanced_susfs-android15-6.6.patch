@@ -3149,7 +3149,6 @@ diff -ruN clean/fs/susfs.c work/fs/susfs.c
 +};
 +
 +static DEFINE_HASHTABLE(HIDDEN_INO_HLIST, 10);
-+static DEFINE_SPINLOCK(susfs_spin_lock_hidden_ino);
 +
 +bool susfs_is_hidden_ino(struct super_block *sb, unsigned long ino) {
 +	struct susfs_hidden_ino_entry *entry;
@@ -3176,7 +3175,6 @@ diff -ruN clean/fs/susfs.c work/fs/susfs.c
 +};
 +
 +static DEFINE_HASHTABLE(HIDDEN_NAME_HLIST, 8);
-+static DEFINE_SPINLOCK(susfs_spin_lock_hidden_name);
 +
 +static u32 susfs_name_hash(const char *name, int namlen) {
 +	u32 hash = 0;
