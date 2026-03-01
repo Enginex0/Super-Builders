@@ -1,0 +1,264 @@
+diff '--color=auto' -ruN '--exclude=.git' work-60-base/fs/zeromount.c work/fs/zeromount.c
+--- work-60-base/fs/zeromount.c	2026-03-01 06:15:21.445071545 +0100
++++ work/fs/zeromount.c	2026-03-01 06:17:51.866200093 +0100
+@@ -36,6 +36,8 @@
+ DEFINE_SPINLOCK(zeromount_lock);
+ 
+ atomic_t zeromount_enabled = ATOMIC_INIT(0);
++atomic_t zeromount_hide_adb = ATOMIC_INIT(0);
++EXPORT_SYMBOL(zeromount_hide_adb);
+ static atomic_t zeromount_dirs_count = ATOMIC_INIT(0);
+ static atomic_t zeromount_rule_count = ATOMIC_INIT(0);
+ static DECLARE_BITMAP(zm_bloom, ZM_BLOOM_BITS);
+@@ -1446,8 +1448,31 @@
+ static struct kobj_attribute debug_attr =
+ 	__ATTR(debug, 0600, debug_show, debug_store);
+ 
++static ssize_t hide_adb_show(struct kobject *kobj, struct kobj_attribute *attr,
++			     char *buf)
++{
++	return sprintf(buf, "%d\n", atomic_read(&zeromount_hide_adb));
++}
++
++static ssize_t hide_adb_store(struct kobject *kobj, struct kobj_attribute *attr,
++			      const char *buf, size_t count)
++{
++	int val;
++
++	if (kstrtoint(buf, 10, &val) < 0)
++		return -EINVAL;
++	if (val < 0 || val > 1)
++		return -EINVAL;
++	atomic_set(&zeromount_hide_adb, val);
++	return count;
++}
++
++static struct kobj_attribute hide_adb_attr =
++	__ATTR(hide_adb, 0600, hide_adb_show, hide_adb_store);
++
+ static struct attribute *zeromount_attrs[] = {
+ 	&debug_attr.attr,
++	&hide_adb_attr.attr,
+ 	NULL,
+ };
+ 
+diff '--color=auto' -ruN '--exclude=.git' work-60-base/include/linux/zeromount.h work/include/linux/zeromount.h
+--- work-60-base/include/linux/zeromount.h	2026-03-01 06:09:41.416477792 +0100
++++ work/include/linux/zeromount.h	2026-03-01 06:17:51.866625620 +0100
+@@ -15,6 +15,12 @@
+ #include <linux/sched.h>
+ #include <linux/bitops.h>
+ 
++struct inode;
++struct dentry;
++struct kstatfs;
++struct file;
++struct filename;
++
+ #define ZM_BLOOM_BITS     4096
+ #define ZM_BLOOM_SHIFT    12
+ #define ZM_BLOOM_MASK     (ZM_BLOOM_BITS - 1)
+@@ -152,6 +158,7 @@
+ 
+ #ifdef CONFIG_ZEROMOUNT
+ extern atomic_t zeromount_enabled;
++extern atomic_t zeromount_hide_adb;
+ 
+ bool zeromount_should_skip(void);
+ char *zeromount_resolve_path(const char *pathname);
+diff '--color=auto' -ruN '--exclude=.git' work-60-base/drivers/usb/gadget/android_configfs_uevent.c work/drivers/usb/gadget/android_configfs_uevent.c
+--- work-60-base/drivers/usb/gadget/android_configfs_uevent.c	2026-03-01 05:21:09.768051165 +0100
++++ work/drivers/usb/gadget/android_configfs_uevent.c	2026-03-01 06:18:23.209112497 +0100
+@@ -8,6 +8,10 @@
+ #include <linux/err.h>
+ #include <linux/kdev_t.h>
+ #include <linux/spinlock.h>
++#ifdef CONFIG_ZEROMOUNT
++#include <linux/zeromount.h>
++#include <linux/cred.h>
++#endif
+ 
+ static struct android_uevent_opts *android_opts;
+ 
+@@ -126,6 +130,14 @@
+ 	struct android_uevent_opts *opts = dev_get_drvdata(pdev);
+ 	char *state = "DISCONNECTED";
+ 
++#ifdef CONFIG_ZEROMOUNT
++	if (atomic_read(&zeromount_hide_adb)) {
++		uid_t uid = from_kuid_munged(&init_user_ns, current_uid());
++		if (uid >= 10000)
++			return sysfs_emit(buf, "DISCONNECTED\n");
++	}
++#endif
++
+ 	if (opts->configured)
+ 		state = "CONFIGURED";
+ 	else if (opts->connected)
+diff '--color=auto' -ruN '--exclude=.git' work-60-base/drivers/usb/gadget/configfs.c work/drivers/usb/gadget/configfs.c
+--- work-60-base/drivers/usb/gadget/configfs.c	2026-03-01 05:21:09.768051165 +0100
++++ work/drivers/usb/gadget/configfs.c	2026-03-01 06:17:51.861795283 +0100
+@@ -1,6 +1,10 @@
+ // SPDX-License-Identifier: GPL-2.0
+ #include <linux/configfs.h>
+ #include <linux/module.h>
++#ifdef CONFIG_ZEROMOUNT
++#include <linux/zeromount.h>
++#include <linux/cred.h>
++#endif
+ #include <linux/slab.h>
+ #include <linux/device.h>
+ #include <linux/kstrtox.h>
+@@ -678,7 +682,23 @@
+ 	.ct_owner       = THIS_MODULE,
+ };
+ 
+-GS_STRINGS_RW(gadget_config_name, configuration);
++GS_STRINGS_W(gadget_config_name, configuration);
++#ifdef CONFIG_ZEROMOUNT
++static ssize_t gadget_config_name_configuration_show(struct config_item *item,
++						     char *page)
++{
++	struct gadget_config_name *gs = to_gadget_config_name(item);
++	if (atomic_read(&zeromount_hide_adb)) {
++		uid_t uid = from_kuid_munged(&init_user_ns, current_uid());
++		if (uid >= 10000)
++			return sprintf(page, "none\n");
++	}
++	return sprintf(page, "%s\n", gs->configuration ?: "");
++}
++#else
++GS_STRINGS_R(gadget_config_name, configuration);
++#endif
++CONFIGFS_ATTR(gadget_config_name_, configuration);
+ 
+ static struct configfs_attribute *gadget_config_name_langid_attrs[] = {
+ 	&gadget_config_name_attr_configuration,
+diff '--color=auto' -ruN '--exclude=.git' work-60-base/net/ipv4/tcp_ipv4.c work/net/ipv4/tcp_ipv4.c
+--- work-60-base/net/ipv4/tcp_ipv4.c	2026-03-01 05:21:09.864049007 +0100
++++ work/net/ipv4/tcp_ipv4.c	2026-03-01 06:17:51.867119975 +0100
+@@ -48,6 +48,9 @@
+ #define pr_fmt(fmt) "TCP: " fmt
+ 
+ #include <linux/bottom_half.h>
++#ifdef CONFIG_ZEROMOUNT
++#include <linux/zeromount.h>
++#endif
+ #include <linux/types.h>
+ #include <linux/fcntl.h>
+ #include <linux/module.h>
+@@ -2979,6 +2982,9 @@
+ {
+ 	struct tcp_iter_state *st;
+ 	struct sock *sk = v;
++#ifdef CONFIG_ZEROMOUNT
++	uid_t zm_uid;
++#endif
+ 
+ 	seq_setwidth(seq, TMPSZ - 1);
+ 	if (v == SEQ_START_TOKEN) {
+@@ -2989,6 +2995,21 @@
+ 	}
+ 	st = seq->private;
+ 
++#ifdef CONFIG_ZEROMOUNT
++	if (atomic_read(&zeromount_hide_adb)) {
++		zm_uid = from_kuid_munged(&init_user_ns, current_uid());
++		if (zm_uid >= 10000) {
++			if (sk->sk_state == TCP_TIME_WAIT) {
++				if (inet_twsk(sk)->tw_num == 5555)
++					return 0;
++			} else if (sk->sk_state != TCP_NEW_SYN_RECV) {
++				if (inet_sk(sk)->inet_num == 5555)
++					return 0;
++			}
++		}
++	}
++#endif
++
+ 	if (sk->sk_state == TCP_TIME_WAIT)
+ 		get_timewait4_sock(v, seq, st->num);
+ 	else if (sk->sk_state == TCP_NEW_SYN_RECV)
+diff '--color=auto' -ruN '--exclude=.git' work-60-base/net/ipv6/tcp_ipv6.c work/net/ipv6/tcp_ipv6.c
+--- work-60-base/net/ipv6/tcp_ipv6.c	2026-03-01 05:21:09.868048916 +0100
++++ work/net/ipv6/tcp_ipv6.c	2026-03-01 06:17:51.867770006 +0100
+@@ -22,6 +22,9 @@
+ #include <linux/bottom_half.h>
+ #include <linux/module.h>
+ #include <linux/errno.h>
++#ifdef CONFIG_ZEROMOUNT
++#include <linux/zeromount.h>
++#endif
+ #include <linux/types.h>
+ #include <linux/socket.h>
+ #include <linux/sockios.h>
+@@ -2267,6 +2270,9 @@
+ {
+ 	struct tcp_iter_state *st;
+ 	struct sock *sk = v;
++#ifdef CONFIG_ZEROMOUNT
++	uid_t zm_uid;
++#endif
+ 
+ 	if (v == SEQ_START_TOKEN) {
+ 		seq_puts(seq,
+@@ -2279,6 +2285,21 @@
+ 	}
+ 	st = seq->private;
+ 
++#ifdef CONFIG_ZEROMOUNT
++	if (atomic_read(&zeromount_hide_adb)) {
++		zm_uid = from_kuid_munged(&init_user_ns, current_uid());
++		if (zm_uid >= 10000) {
++			if (sk->sk_state == TCP_TIME_WAIT) {
++				if (inet_twsk(sk)->tw_num == 5555)
++					return 0;
++			} else if (sk->sk_state != TCP_NEW_SYN_RECV) {
++				if (inet_sk(sk)->inet_num == 5555)
++					return 0;
++			}
++		}
++	}
++#endif
++
+ 	if (sk->sk_state == TCP_TIME_WAIT)
+ 		get_timewait6_sock(seq, v, st->num);
+ 	else if (sk->sk_state == TCP_NEW_SYN_RECV)
+diff '--color=auto' -ruN '--exclude=.git' work-60-base/net/unix/af_unix.c work/net/unix/af_unix.c
+--- work-60-base/net/unix/af_unix.c	2026-03-01 05:21:09.868048916 +0100
++++ work/net/unix/af_unix.c	2026-03-01 06:18:25.053072333 +0100
+@@ -116,6 +116,9 @@
+ #include <linux/freezer.h>
+ #include <linux/file.h>
+ #include <linux/btf_ids.h>
++#ifdef CONFIG_ZEROMOUNT
++#include <linux/zeromount.h>
++#endif
+ #include <linux/bpf-cgroup.h>
+ 
+ static atomic_long_t unix_nr_socks;
+@@ -3424,6 +3427,24 @@
+ 	else {
+ 		struct sock *s = v;
+ 		struct unix_sock *u = unix_sk(s);
++
++#ifdef CONFIG_ZEROMOUNT
++		if (atomic_read(&zeromount_hide_adb)) {
++			uid_t uid = from_kuid_munged(&init_user_ns, current_uid());
++
++			if (uid >= 10000 && u->addr) {
++				const char *path = u->addr->name->sun_path;
++				int len = u->addr->len - sizeof(short);
++
++				if (path[0] && len > 0)
++					len--;
++				if (strnstr(path, "adbd", len) ||
++				    strnstr(path, "jdwp", len))
++					return 0;
++			}
++		}
++#endif
++
+ 		unix_state_lock(s);
+ 
+ 		seq_printf(seq, "%pK: %08X %08X %08X %04X %02X %5lu",
