@@ -238,6 +238,10 @@ jobs:
             patch -p1 < "$KERNEL_PATCHES/wild/susfs_fix_patches/v2.0.0/a12-5.10/fdinfo.c.patch" || true
         fi
 
+        if ! grep -q 'inotify_mark_user_mask' ./fs/notify/inotify/inotify.h; then
+          sed -i 's/inotify_mark_user_mask(mark)/mark->mask/g' ./fs/notify/fdinfo.c
+        fi
+
     - name: Setup Baseband Guard
       if: inputs.add_bbg
       working-directory: ${{ env.KERNEL_ROOT }}

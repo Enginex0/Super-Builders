@@ -219,6 +219,14 @@ jobs:
           fi
         fi
 
+    - name: Fix inotify_mark_user_mask for old sublevels
+      if: inputs.add_susfs
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        if ! grep -q 'inotify_mark_user_mask' ./fs/notify/inotify/inotify.h; then
+          sed -i 's/inotify_mark_user_mask(mark)/mark->mask/g' ./fs/notify/fdinfo.c
+        fi
+
     - name: Setup Baseband Guard
       if: inputs.add_bbg
       working-directory: ${{ env.KERNEL_ROOT }}
