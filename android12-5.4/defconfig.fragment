@@ -1,5 +1,7 @@
 # [base]
 CONFIG_KSU=y
+# 5.4 input.h includes <sys/time.h> — fails HDRTEST with prebuilt clang
+CONFIG_UAPI_HEADER_TEST=n
 CONFIG_IP_NF_TARGET_TTL=y
 CONFIG_IP6_NF_TARGET_HL=y
 CONFIG_IP6_NF_MATCH_HL=y
