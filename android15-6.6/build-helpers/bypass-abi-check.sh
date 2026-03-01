@@ -23,5 +23,10 @@ sed -i 's/check_defconfig//' ./common/build.config.gki 2>/dev/null || true
 
 # Kleaf: disable savedefconfig check in the build macro
 if [[ -f "build/kernel/kleaf/common_kernels.bzl" ]]; then
-  sed -i '/check_defconfig/s/"minimized"/"disabled"/; /check_defconfig/s/"match"/"disabled"/' build/kernel/kleaf/common_kernels.bzl
+  sed -i 's/"match" if pre_defconfig_fragments else "minimized"/"disabled"/' build/kernel/kleaf/common_kernels.bzl
+fi
+
+# Fallback: neuter the check function in _setup_env.sh
+if [[ -f "build/_setup_env.sh" ]]; then
+  sed -i 's/function kleaf_internal_check_defconfig_minimized().*/function kleaf_internal_check_defconfig_minimized() { return 0; }/' build/_setup_env.sh
 fi

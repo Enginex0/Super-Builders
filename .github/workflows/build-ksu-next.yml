@@ -175,10 +175,19 @@ jobs:
         curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev_susfs/kernel/setup.sh" | bash -s dev_susfs
         [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
 
-        if [ -n "$SUKISU_COMMIT" ]; then
-          cd "$KERNEL_ROOT/$KSU_DIR"
-          git fetch origin
-          git checkout "$SUKISU_COMMIT"
+        # Pin to last known working commit (2fae51d broke syscall_hook_manager.h include)
+        COMMIT="${SUKISU_COMMIT:-4855fa3a8445}"
+        cd "$KERNEL_ROOT/$KSU_DIR"
+        git fetch origin
+        git checkout "$COMMIT"
+
+    - name: Fix KSU-Next Upstream Bugs
+      working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}
+      run: |
+        # 2fae51d wrapped syscall_hook_manager.h in #ifndef CONFIG_KSU_SUSFS
+        # but left unconditional calls to ksu_mark_running_process()
+        if grep -q '#ifndef CONFIG_KSU_SUSFS' kernel/supercalls.c 2>/dev/null; then
+          sed -i '/#ifndef CONFIG_KSU_SUSFS/{N;/syscall_hook_manager\.h/{N;s/#ifndef CONFIG_KSU_SUSFS\n\(#include "syscall_hook_manager\.h"\)\n#endif.*$/\1/}}' kernel/supercalls.c
         fi
 
     - name: Fix Old Kernel Compatibility
@@ -248,7 +257,7 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
-        bash "$HELPERS/setup-bbg.sh" . "$DEFCONFIG"
+        bash "$HELPERS/setup-bbg.sh" . "$DEFCONFIG" "$DEFCONFIG_FRAGMENT"
 
     - name: Upgrade LZ4 to v1.10.0
       if: inputs.add_zram
