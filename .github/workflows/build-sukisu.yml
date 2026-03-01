@@ -191,8 +191,10 @@ jobs:
         sed -i '/ksu_persistent_allow_list/{n;s/^\(\s*\)ksu_mark_running_process/\1\/*ksu_mark_running_process/;s/();$/();*\//}' supercalls.c
 
         # susfs_reorder_mnt_id removed from upstream susfs4ksu (Feb 21 2026)
-        # SukiSU builtin branch hasn't synced yet — strip the stale references
         sed -i '/susfs_reorder_mnt_id/d' setuid_hook.c
+
+        # On 6.8+, dual ksu_handle_setresuid defs when SUSFS is enabled
+        sed -i 's/defined(CONFIG_KSU_MANUAL_HOOK))/defined(CONFIG_KSU_MANUAL_HOOK) \&\& !defined(CONFIG_KSU_SUSFS))/' setuid_hook.c
 
     - name: Fix Old Kernel Compatibility
       working-directory: ${{ env.KERNEL_ROOT }}/common

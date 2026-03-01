@@ -1405,22 +1405,12 @@ diff '--color=auto' -ruN '--exclude=.git' clean/fs/proc/task_mmu.c work/fs/proc/
  		last_vma_end = vma->vm_end;
  
  		/*
-@@ -2181,6 +2251,9 @@
- 	int ret = 0, copied = 0;
- 	unsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;
- 	pagemap_entry_t *res = NULL;
-+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-+	struct vm_area_struct *vma;
-+#endif
- 
- 	if (!mm || !mmget_not_zero(mm))
- 		goto out;
-@@ -2256,6 +2329,17 @@
+@@ -2256,6 +2326,17 @@
  		if (ret)
  			goto out_free;
  		ret = walk_page_range(mm, start_vaddr, end, &pagemap_ops, &pm);
 +#ifdef CONFIG_KSU_SUSFS_SUS_MAP
-+		vma = find_vma(mm, start_vaddr);
++		struct vm_area_struct *vma = find_vma(mm, start_vaddr);
 +		if (vma && vma->vm_file) {
 +			const struct inode *inode = file_inode(vma->vm_file);
 +			if (unlikely(test_bit(AS_FLAGS_SUS_MAP, &inode->i_mapping->flags) &&
