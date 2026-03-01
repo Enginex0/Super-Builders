@@ -90,7 +90,14 @@ jobs:
         name: git-repo-tool
         path: git-repo
 
+    - name: Download Kernel Patches Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: kernel-patches
+        path: kernel_patches
+
     - name: Download SukiSU Patch
+      if: inputs.add_zram
       uses: actions/download-artifact@v4
       with:
         name: sukisu-patch
@@ -120,6 +127,7 @@ jobs:
           echo "VERSION_DIR=$VERSION_DIR"
           echo "DEFCONFIG=$KERNEL_ROOT/common/arch/arm64/configs/gki_defconfig"
           echo "DEFCONFIG_FRAGMENT=$KERNEL_ROOT/common/arch/arm64/configs/sukisu_gki.fragment"
+          echo "KERNEL_PATCHES=$GITHUB_WORKSPACE/kernel_patches"
           echo "ANYKERNEL3=$GITHUB_WORKSPACE/AnyKernel3"
         } >> "$GITHUB_ENV"
 
@@ -167,12 +175,10 @@ jobs:
         curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s susfs-ksud
         [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
 
-        PIN="${SUKISU_COMMIT:-$(cat "$GITHUB_WORKSPACE/$VERSION_DIR/resukisu-pin.txt" 2>/dev/null || true)}"
-        if [ -n "$PIN" ]; then
+        if [ -n "$SUKISU_COMMIT" ]; then
           cd "$KERNEL_ROOT/$KSU_DIR"
           git fetch origin
-          git checkout "$PIN"
-          echo "Pinned ReSukiSU to $(git rev-parse --short=7 HEAD)"
+          git checkout "$SUKISU_COMMIT"
         fi
 
     - name: Fix Old Kernel Compatibility
@@ -208,25 +214,31 @@ jobs:
           patch -p1 -F3 --no-backup-if-mismatch < "$ADB_FILTER"
         fi
 
-    - name: Fix show_pad for old sublevels
+    - name: Apply SUSFS Version-Specific Fixes
       if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common
+      env:
+        ANDROID_VER: ${{ inputs.android_version }}
+        KERNEL_VER: ${{ inputs.kernel_version }}
+        OS_PATCH: ${{ inputs.os_patch_level }}
       run: |
-        if [[ "$SUBLEVEL" -lt 218 ]]; then
+        SL="$SUBLEVEL"
+
+        if [[ "$ANDROID_VER" == "android12" && "$KERNEL_VER" == "5.10" && $SL -lt 218 ]]; then
           if grep -q 'goto show_pad;' ./fs/proc/task_mmu.c && ! grep -q '^show_pad:' ./fs/proc/task_mmu.c; then
             sed -i '/show_smap_vma_flags(m, vma);/,/return 0;/{/return 0;/i\show_pad:
             }' ./fs/proc/task_mmu.c
           fi
         fi
 
-    - name: Fix inotify_mark_user_mask for old sublevels
-      if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
+        if [[ "$ANDROID_VER" == "android12" && "$KERNEL_VER" == "5.10" && $SL -le 117 ]]; then
+          [ -f "$KERNEL_PATCHES/wild/susfs_fix_patches/v2.0.0/a12-5.10/fdinfo.c.patch" ] && \
+            patch -p1 < "$KERNEL_PATCHES/wild/susfs_fix_patches/v2.0.0/a12-5.10/fdinfo.c.patch" || true
+        fi
+
         if ! grep -q 'inotify_mark_user_mask' ./fs/notify/inotify/inotify.h; then
           sed -i 's/inotify_mark_user_mask(mark)/mark->mask/g' ./fs/notify/fdinfo.c
         fi
-        # Prevent declaration-after-label error on old sublevels where u32 mask follows the label
         if grep -q 'out_seq_printf:' ./fs/notify/fdinfo.c; then
           sed -i 's/^\([[:space:]]*\)out_seq_printf:$/\1out_seq_printf: ;/' ./fs/notify/fdinfo.c
         fi
@@ -283,6 +295,13 @@ jobs:
         [ ! -f "$KERNEL_ROOT/build/build.sh" ] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --kleaf"
 
         bash "$HELPERS/assemble-defconfig.sh" "$FRAGMENT" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG" $ASSEMBLE_FLAGS
+
+        while IFS='=' read -r cfg _; do
+          symbol="${cfg#CONFIG_}"
+          grep -rqx "config ${symbol}" common/ --include='Kconfig*' 2>/dev/null && continue
+          sed -i "/^${cfg}=/d" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG"
+        done < <(grep '^CONFIG_KSU_' "$DEFCONFIG_FRAGMENT" 2>/dev/null || true)
+
         bash "$HELPERS/bypass-abi-check.sh" . "$ANDROID_VER" "$KERNEL_VER"
 
     - name: Clean Module Lists
@@ -291,6 +310,18 @@ jobs:
       run: |
         HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
         bash "$HELPERS/clean-module-list.sh" .
+
+    - name: Apply Module Check Bypass
+      working-directory: ${{ env.KERNEL_ROOT }}
+      env:
+        KERNEL_VER: ${{ inputs.kernel_version }}
+      run: |
+        if [[ "$KERNEL_VER" == "6.1" || "$KERNEL_VER" == "6.6" || "$KERNEL_VER" == "6.12" ]]; then
+          TARGET_FILE="$KERNEL_ROOT/common/kernel/module/version.c"
+        else
+          TARGET_FILE="$KERNEL_ROOT/common/kernel/module.c"
+        fi
+        sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' "$TARGET_FILE"
 
     - name: Clean Build Flags
       working-directory: ${{ env.KERNEL_ROOT }}

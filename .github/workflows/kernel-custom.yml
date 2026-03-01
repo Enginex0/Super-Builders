@@ -177,7 +177,7 @@ on:
         type: boolean
         default: false
       sukisu_commit:
-        description: "SukiSU commit (empty = pinned default)"
+        description: "KSU commit override (empty = latest)"
         type: string
         default: ""
   workflow_call:

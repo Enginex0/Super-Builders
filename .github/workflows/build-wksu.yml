@@ -175,12 +175,10 @@ jobs:
         curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/stable/kernel/setup.sh" | bash -s canary
         [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
 
-        PIN="${SUKISU_COMMIT:-$(cat "$GITHUB_WORKSPACE/$VERSION_DIR/wksu-pin.txt" 2>/dev/null || true)}"
-        if [ -n "$PIN" ]; then
+        if [ -n "$SUKISU_COMMIT" ]; then
           cd "$KERNEL_ROOT/$KSU_DIR"
           git fetch origin
-          git checkout "$PIN"
-          echo "Pinned WKSU to $(git rev-parse --short=7 HEAD)"
+          git checkout "$SUKISU_COMMIT"
         fi
 
     - name: Fix Old Kernel Compatibility
