@@ -32,7 +32,7 @@
  
  struct prepend_buffer {
  	char *buf;
-@@ -267,6 +271,26 @@
+@@ -267,6 +271,20 @@
  	DECLARE_BUFFER(b, buf, buflen);
  	struct path root;
  
@@ -41,16 +41,10 @@
 +		char *v_path = zeromount_get_static_vpath(d_backing_inode(path->dentry));
 +
 +		if (v_path) {
-+			int len = strlen(v_path);
-+			if (buflen < len + 1) {
-+				kfree(v_path);
-+				return ERR_PTR(-ENAMETOOLONG);
-+			}
-+			*--res = '\0';
-+			res -= len;
-+			memcpy(res, v_path, len);
++			prepend_char(&b, 0);
++			prepend(&b, v_path, strlen(v_path));
 +			kfree(v_path);
-+			return res;
++			return extract_string(&b);
 +		}
 +	}
 +#endif
