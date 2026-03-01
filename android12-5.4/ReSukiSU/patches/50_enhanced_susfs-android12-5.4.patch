@@ -1897,8 +1897,8 @@
  EXPORT_SYMBOL(vfs_statfs);
  
 --- a/fs/susfs.c	1970-01-01 01:00:00.000000000 +0100
-+++ b/fs/susfs.c	2026-03-01 12:33:18.247181785 +0100
-@@ -0,0 +1,1543 @@
++++ b/fs/susfs.c	2026-03-01 15:23:33.755617483 +0100
+@@ -0,0 +1,1545 @@
 +#include <linux/version.h>
 +#include <linux/cred.h>
 +#include <linux/fs.h>
@@ -3342,9 +3342,11 @@
 + * synchronize_srcu on the same SRCU struct, causing a permanent deadlock).
 + * Cleanup is deferred to a delayed_work that runs outside the SRCU context.
 + */
-+static int susfs_handle_sdcard_inode_event(struct fsnotify_mark *mark, u32 mask,
-+											struct inode *inode, struct inode *dir,
-+											const struct qstr *file_name, u32 cookie)
++static int susfs_handle_sdcard_event(struct fsnotify_group *group,
++				     struct inode *inode, u32 mask,
++				     const void *data, int data_type,
++				     const struct qstr *file_name, u32 cookie,
++				     struct fsnotify_iter_info *iter_info)
 +{
 +	if (!file_name || file_name->len != 7 ||
 +	    memcmp(file_name->name, "Android", 7))
@@ -3360,7 +3362,7 @@
 +}
 +
 +static const struct fsnotify_ops fsnotify_ops = {
-+	.handle_inode_event = susfs_handle_sdcard_inode_event,
++	.handle_event = susfs_handle_sdcard_event,
 +};
 +
 +static int add_mark_on_inode(struct inode *inode, u32 mask,
@@ -3699,14 +3701,15 @@
 +
 +#endif
 --- a/include/linux/susfs_def.h	1970-01-01 01:00:00.000000000 +0100
-+++ b/include/linux/susfs_def.h	2026-03-01 14:50:20.943440654 +0100
-@@ -0,0 +1,95 @@
++++ b/include/linux/susfs_def.h	2026-03-01 15:23:15.924011713 +0100
+@@ -0,0 +1,96 @@
 +#ifndef KSU_SUSFS_DEF_H
 +#define KSU_SUSFS_DEF_H
 +
 +#include <linux/bits.h>
 +#include <linux/thread_info.h>
 +#include <linux/sched.h>
++#include <linux/cred.h>
 +
 +/********/
 +/* ENUM */
