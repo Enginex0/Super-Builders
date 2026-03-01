@@ -70,12 +70,12 @@ diff '--color=auto' -ruN '--exclude=.git' work-50-base/fs/namei.c work/fs/namei.
 +++ work/fs/namei.c	2026-03-01 06:09:41.091390946 +0100
 @@ -48,6 +48,10 @@
  #include "mount.h"
- 
- #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+
 +#ifdef CONFIG_ZEROMOUNT
 +#include <linux/zeromount.h>
 +#endif
 +
+ #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  extern bool susfs_is_inode_sus_path(struct mnt_idmap* idmap, struct inode *inode);
  extern const struct qstr susfs_fake_qstr_name;
  #endif

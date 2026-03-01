@@ -63,12 +63,12 @@
 +++ b/fs/namei.c	2026-03-01 02:42:39.804070545 +0100
 @@ -49,6 +49,10 @@
  #include "mount.h"
- 
- #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+
 +#ifdef CONFIG_ZEROMOUNT
 +#include <linux/zeromount.h>
 +#endif
 +
+ #ifdef CONFIG_KSU_SUSFS_SUS_PATH
  extern bool susfs_is_inode_sus_path(struct mnt_idmap* idmap, struct inode *inode);
  extern const struct qstr susfs_fake_qstr_name;
  #endif
