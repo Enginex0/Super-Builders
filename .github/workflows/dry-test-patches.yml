@@ -114,7 +114,7 @@ jobs:
         include: ${{ fromJSON(needs.setup.outputs.matrix) }}
     name: "Dry Test ${{ inputs.kernel_version }}.${{ matrix.sub_level }}"
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       KSU_VARIANT: ${{ inputs.ksu_variant }}
       KSU_DIR: KernelSU
