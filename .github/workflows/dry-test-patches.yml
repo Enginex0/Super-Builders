@@ -14,7 +14,7 @@ on:
       kernel_version:
         description: "Kernel version"
         type: choice
-        options: ["5.10", "5.15", "6.1", "6.6", "6.12"]
+        options: ["5.4", "5.10", "5.15", "6.1", "6.6", "6.12"]
         default: "5.10"
       mode:
         description: "single = one sublevel, matrix = all sublevels"
@@ -79,6 +79,9 @@ jobs:
         fi
 
         case "${ANDROID_VER}-${KERNEL_VER}" in
+          android12-5.4)
+            echo 'result=[{"sub_level":"302","os_patch_level":"lts"}]' >> "$GITHUB_OUTPUT"
+            ;;
           android12-5.10)
             echo 'result=[{"sub_level":"107","os_patch_level":"2022-11"},{"sub_level":"149","os_patch_level":"2023-01"},{"sub_level":"157","os_patch_level":"2023-03"},{"sub_level":"168","os_patch_level":"2023-05"},{"sub_level":"177","os_patch_level":"2023-07"},{"sub_level":"186","os_patch_level":"2023-09"},{"sub_level":"189","os_patch_level":"2023-11"},{"sub_level":"198","os_patch_level":"2024-01"},{"sub_level":"205","os_patch_level":"2024-03"},{"sub_level":"209","os_patch_level":"2024-05"},{"sub_level":"218","os_patch_level":"2024-08"},{"sub_level":"226","os_patch_level":"2024-11"},{"sub_level":"233","os_patch_level":"2025-02"},{"sub_level":"236","os_patch_level":"2025-05"},{"sub_level":"237","os_patch_level":"2025-06"},{"sub_level":"240","os_patch_level":"2025-09"},{"sub_level":"246","os_patch_level":"2025-12"}]' >> "$GITHUB_OUTPUT"
             ;;
