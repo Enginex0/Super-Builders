@@ -190,6 +190,10 @@ jobs:
         sed -i 's/KSU_IOCTL(KSU_IOCTL_NEW_GET_/KSU_IOCTL(NEW_GET_/g' supercalls.c
         sed -i '/ksu_persistent_allow_list/{n;s/^\(\s*\)ksu_mark_running_process/\1\/*ksu_mark_running_process/;s/();$/();*\//}' supercalls.c
 
+        # susfs_reorder_mnt_id removed from upstream susfs4ksu (Feb 21 2026)
+        # SukiSU builtin branch hasn't synced yet — strip the stale references
+        sed -i '/susfs_reorder_mnt_id/d' setuid_hook.c
+
     - name: Fix Old Kernel Compatibility
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |

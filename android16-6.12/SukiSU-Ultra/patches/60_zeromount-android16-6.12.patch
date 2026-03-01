@@ -862,7 +862,7 @@ diff '--color=auto' -ruN '--exclude=.git' work-50-base/fs/zeromount.c work/fs/ze
 +EXPORT_SYMBOL(zeromount_get_static_vpath);
 +
 +/* Spoof dev/ino in /proc/PID/maps for redirected mmap'd files */
-+void zeromount_spoof_mmap_metadata(struct inode *inode, dev_t *dev,
++void zeromount_spoof_mmap_metadata(const struct inode *inode, dev_t *dev,
 +				   unsigned long *ino)
 +{
 +	struct zeromount_rule *rule;
@@ -2166,7 +2166,7 @@ diff '--color=auto' -ruN '--exclude=.git' work-50-base/include/linux/zeromount.h
 +			    int *count, loff_t *pos);
 +char *zeromount_get_virtual_path_for_inode(struct inode *inode);
 +char *zeromount_get_static_vpath(struct inode *inode);
-+void zeromount_spoof_mmap_metadata(struct inode *inode, dev_t *dev,
++void zeromount_spoof_mmap_metadata(const struct inode *inode, dev_t *dev,
 +				   unsigned long *ino);
 +bool zeromount_is_traversal_allowed(struct inode *inode, int mask);
 +bool zeromount_is_injected_file(struct inode *inode);
@@ -2187,7 +2187,7 @@ diff '--color=auto' -ruN '--exclude=.git' work-50-base/include/linux/zeromount.h
 +					  int *c, loff_t *p) {}
 +static inline char *zeromount_get_virtual_path_for_inode(struct inode *inode) { return NULL; }
 +static inline char *zeromount_get_static_vpath(struct inode *inode) { return NULL; }
-+static inline void zeromount_spoof_mmap_metadata(struct inode *inode,
++static inline void zeromount_spoof_mmap_metadata(const struct inode *inode,
 +						 dev_t *dev,
 +						 unsigned long *ino) {}
 +static inline bool zeromount_is_traversal_allowed(struct inode *inode, int mask) { return false; }

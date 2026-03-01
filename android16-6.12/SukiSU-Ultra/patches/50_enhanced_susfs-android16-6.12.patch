@@ -1162,7 +1162,7 @@ diff '--color=auto' -ruN '--exclude=.git' clean/fs/proc/base.c work/fs/proc/base
 +#ifdef CONFIG_KSU_SUSFS_SUS_MAP
 +		vma = find_vma(mm, addr);
 +		if (vma && vma->vm_file) {
-+			struct inode *inode = file_inode(vma->vm_file);
++			const struct inode *inode = file_inode(vma->vm_file);
 +			if (unlikely(test_bit(AS_FLAGS_SUS_MAP, &inode->i_mapping->flags) &&
 +				susfs_is_current_proc_umounted()))
 +			{
@@ -1422,7 +1422,7 @@ diff '--color=auto' -ruN '--exclude=.git' clean/fs/proc/task_mmu.c work/fs/proc/
 +#ifdef CONFIG_KSU_SUSFS_SUS_MAP
 +		vma = find_vma(mm, start_vaddr);
 +		if (vma && vma->vm_file) {
-+			struct inode *inode = file_inode(vma->vm_file);
++			const struct inode *inode = file_inode(vma->vm_file);
 +			if (unlikely(test_bit(AS_FLAGS_SUS_MAP, &inode->i_mapping->flags) &&
 +				susfs_is_current_proc_umounted()))
 +			{
