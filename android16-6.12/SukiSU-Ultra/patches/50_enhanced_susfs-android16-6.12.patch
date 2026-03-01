@@ -912,7 +912,12 @@ diff '--color=auto' -ruN '--exclude=.git' clean/fs/namespace.c work/fs/namespace
  		if (r->mnt_id_unique == mnt_parent_id)
  			continue;
  		if (!is_path_reachable(r, r->mnt.mnt_root, &orig))
-@@ -5911,3 +6128,47 @@
+@@ -5906,8 +6123,52 @@
+ static int __init init_fs_namespace_sysctls(void)
+ {
+ 	register_sysctl_init("fs", fs_namespace_sysctls);
+ 	return 0;
+ }
  fs_initcall(init_fs_namespace_sysctls);
  
  #endif /* CONFIG_SYSCTL */

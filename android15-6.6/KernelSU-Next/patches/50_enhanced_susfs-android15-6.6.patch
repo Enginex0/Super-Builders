@@ -901,7 +901,12 @@ diff -ruN clean/fs/namespace.c work/fs/namespace.c
  	new = copy_tree(old, old->mnt.mnt_root, copy_flags);
  	if (IS_ERR(new)) {
  		namespace_unlock();
-@@ -5080,3 +5279,44 @@
+@@ -5043,8 +5242,49 @@
+ static int __init init_fs_namespace_sysctls(void)
+ {
+ 	register_sysctl_init("fs", fs_namespace_sysctls);
+ 	return 0;
+ }
  fs_initcall(init_fs_namespace_sysctls);
  
  #endif /* CONFIG_SYSCTL */
