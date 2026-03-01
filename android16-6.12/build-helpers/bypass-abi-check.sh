@@ -15,7 +15,7 @@ elif [[ "$ANDROID_VER" == "android13" && "$KERNEL_VER" == "5.15" ]]; then
   sed -i 's/^\s*exit 1$/    echo "Bypassing ABI check"/' build/kernel/abi/compare_to_symbol_list
 elif [[ "$ANDROID_VER" == "android14" ]]; then
   perl -i -pe 's/^(\s*)return 1$/$1return 0/g if /if missing_symbols:/../return 1/' build/kernel/abi/check_buildtime_symbol_protection.py
-elif [[ "$ANDROID_VER" == "android15" ]]; then
+elif [[ "$ANDROID_VER" == "android15" || "$ANDROID_VER" == "android16" ]]; then
   perl -i -pe 's/^(\s*)return 1$/$1return 0/g if /if missing_symbols:/../return 1/' build/kernel/abi/check_buildtime_symbol_protection.py
 fi
 
