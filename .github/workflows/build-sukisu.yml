@@ -413,19 +413,24 @@ jobs:
     - name: Build Kernel
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        # Prebuilt lld can't handle glibc 2.39 C23 symbols (__isoc23_strtol) — replace with system lld-18
+        # Prebuilt lld can't handle glibc 2.39 C23 symbols (__isoc23_strtol) — force system lld-18
         find . \( -name "lld" -o -name "ld.lld" \) -path "*/bin/*" -not -path "./out/*" -not -path "./bazel-*" 2>/dev/null | while read f; do
           rm -f "$f" && cp /usr/bin/ld.lld "$f"
         done
         find . -name "clang" -path "*/bin/clang" -not -path "./out/*" -type f 2>/dev/null | while read f; do
           [ ! -f "$(dirname "$f")/ld" ] && ln -s /usr/bin/ld "$(dirname "$f")/ld"
         done
+        # Inject system lld into host tool linking (Kleaf sanitizes env, so patch Makefiles directly)
+        sed -i '/^KBUILD_HOSTLDFLAGS.*:=/s/$/ -fuse-ld=\/usr\/bin\/ld.lld/' common/Makefile
+        if ! grep -q 'KBUILD_HOSTLDFLAGS' common/tools/bpf/resolve_btfids/Makefile 2>/dev/null; then
+          echo 'override LDFLAGS += -fuse-ld=/usr/bin/ld.lld' >> common/tools/bpf/resolve_btfids/Makefile
+        fi
 
         BUILD_RC=0
         if [ -f "build/build.sh" ]; then
           KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=/usr/bin/ld.lld GKI_DEFCONFIG_FRAGMENT="$DEFCONFIG_FRAGMENT" LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || BUILD_RC=$?
         else
-          tools/bazel build --config=fast --lto=thin --action_env=LDFLAGS=-fuse-ld=/usr/bin/ld.lld --defconfig_fragment=//common:arch/arm64/configs/sukisu_gki.fragment //common:kernel_aarch64_dist || BUILD_RC=$?
+          tools/bazel build --config=fast --lto=thin --defconfig_fragment=//common:arch/arm64/configs/sukisu_gki.fragment //common:kernel_aarch64_dist || BUILD_RC=$?
         fi
         if [ "$BUILD_RC" -ne 0 ]; then
           if find . -name "Image" -type f 2>/dev/null | grep -q .; then
