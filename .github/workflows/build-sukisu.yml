@@ -251,11 +251,9 @@ jobs:
             patch -p1 < "$KERNEL_PATCHES/wild/susfs_fix_patches/v2.0.0/a12-5.10/fdinfo.c.patch" || true
         fi
 
-        # Normalize inotify mask usage across all 5.15 sublevels
         sed -i 's/inotify_mark_user_mask(mark)/mark->mask/g' ./fs/notify/fdinfo.c
-        # Early 5.15: remove local mask variable (declaration-after-code when SUSFS injects above it)
         sed -i '/u32 mask = mark->mask & IN_ALL_EVENTS;/d' ./fs/notify/fdinfo.c
-        sed -i 's/i_sb->s_dev, mask);/i_sb->s_dev, mark->mask);/' ./fs/notify/fdinfo.c
+        sed -i 's/s_dev, mask)/s_dev, mark->mask)/g' ./fs/notify/fdinfo.c
         if grep -q 'out_seq_printf:' ./fs/notify/fdinfo.c; then
           sed -i 's/^\([[:space:]]*\)out_seq_printf:$/\1out_seq_printf: ;/' ./fs/notify/fdinfo.c
         fi
@@ -410,8 +408,12 @@ jobs:
     - name: Build Kernel
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        # Swap prebuilt ld.lld for system lld-18 (prebuilt can't link glibc 2.39 C23 symbols)
-        find prebuilts -name "ld.lld" -path "*/linux-x86/*/bin/*" -type f 2>/dev/null | while read f; do cp /usr/bin/ld.lld "$f"; done
+        # Prebuilt linkers can't handle glibc 2.39 C23 symbols — swap with system versions
+        find . -name "ld.lld" -not -path "./out/*" -type f 2>/dev/null | while read f; do cp /usr/bin/ld.lld "$f"; done
+        find . -name "ld.lld" -not -path "./out/*" -type l 2>/dev/null | while read f; do ln -sf /usr/bin/ld.lld "$f"; done
+        find . -name "clang" -path "*/bin/clang" -not -path "./out/*" -type f 2>/dev/null | while read f; do
+          [ ! -f "$(dirname "$f")/ld" ] && ln -s /usr/bin/ld "$(dirname "$f")/ld"
+        done
 
         BUILD_RC=0
         if [ -f "build/build.sh" ]; then
