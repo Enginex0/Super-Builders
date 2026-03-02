@@ -394,6 +394,8 @@ jobs:
     - name: Build Kernel
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
+        find prebuilts -name "ld.lld" -path "*/linux-x86/*/bin/*" -type f 2>/dev/null | while read f; do cp /usr/bin/ld.lld "$f"; done
+
         BUILD_RC=0
         if [ -f "build/build.sh" ]; then
           KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=/usr/bin/ld.lld GKI_DEFCONFIG_FRAGMENT="$DEFCONFIG_FRAGMENT" LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || BUILD_RC=$?
