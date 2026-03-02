@@ -236,9 +236,9 @@ jobs:
             patch -p1 < "$KERNEL_PATCHES/wild/susfs_fix_patches/v2.0.0/a12-5.10/fdinfo.c.patch" || true
         fi
 
-        # Early 5.15 sublevels have a buggy inotify_mark_user_mask macro; always replace
         sed -i 's/inotify_mark_user_mask(mark)/mark->mask/g' ./fs/notify/fdinfo.c
-        # Prevent declaration-after-label error on old sublevels where u32 mask follows the label
+        sed -i '/u32 mask = mark->mask & IN_ALL_EVENTS;/d' ./fs/notify/fdinfo.c
+        sed -i 's/i_sb->s_dev, mask);/i_sb->s_dev, mark->mask);/' ./fs/notify/fdinfo.c
         if grep -q 'out_seq_printf:' ./fs/notify/fdinfo.c; then
           sed -i 's/^\([[:space:]]*\)out_seq_printf:$/\1out_seq_printf: ;/' ./fs/notify/fdinfo.c
         fi
