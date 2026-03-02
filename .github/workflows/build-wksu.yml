@@ -405,8 +405,8 @@ jobs:
         else
           # Prebuilt clang-17 passes sysroot flags that break glibc 2.39 C23 symbol resolution
           if [ -f common/tools/bpf/resolve_btfids/Makefile ]; then
-            echo 'override HOSTCC := gcc' >> common/tools/bpf/resolve_btfids/Makefile
-            echo 'override HOSTLD := ld' >> common/tools/bpf/resolve_btfids/Makefile
+            echo 'override HOSTCC := /usr/bin/gcc' >> common/tools/bpf/resolve_btfids/Makefile
+            echo 'override HOSTLD := /usr/bin/ld' >> common/tools/bpf/resolve_btfids/Makefile
           fi
           tools/bazel build --config=fast --lto=thin --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment //common:kernel_aarch64_dist || BUILD_RC=$?
         fi
