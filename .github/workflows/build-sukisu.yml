@@ -76,7 +76,7 @@ jobs:
         testing: false
 
     - name: Install LLD
-      run: sudo apt-get install -y -qq lld
+      run: sudo apt-get install -y -qq lld binutils
 
     - name: Download AnyKernel3 Artifact
       uses: actions/download-artifact@v4
@@ -251,9 +251,8 @@ jobs:
             patch -p1 < "$KERNEL_PATCHES/wild/susfs_fix_patches/v2.0.0/a12-5.10/fdinfo.c.patch" || true
         fi
 
-        if ! grep -q 'inotify_mark_user_mask' ./fs/notify/inotify/inotify.h; then
-          sed -i 's/inotify_mark_user_mask(mark)/mark->mask/g' ./fs/notify/fdinfo.c
-        fi
+        # Early 5.15 sublevels have a buggy inotify_mark_user_mask macro; always replace
+        sed -i 's/inotify_mark_user_mask(mark)/mark->mask/g' ./fs/notify/fdinfo.c
         if grep -q 'out_seq_printf:' ./fs/notify/fdinfo.c; then
           sed -i 's/^\([[:space:]]*\)out_seq_printf:$/\1out_seq_printf: ;/' ./fs/notify/fdinfo.c
         fi
@@ -410,7 +409,7 @@ jobs:
       run: |
         BUILD_RC=0
         if [ -f "build/build.sh" ]; then
-          KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=ld.lld GKI_DEFCONFIG_FRAGMENT="$DEFCONFIG_FRAGMENT" LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || BUILD_RC=$?
+          KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=/usr/bin/ld.lld GKI_DEFCONFIG_FRAGMENT="$DEFCONFIG_FRAGMENT" LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || BUILD_RC=$?
         else
           tools/bazel build --config=fast --lto=thin --defconfig_fragment=//common:arch/arm64/configs/sukisu_gki.fragment //common:kernel_aarch64_dist || BUILD_RC=$?
         fi
