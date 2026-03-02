@@ -404,11 +404,13 @@ jobs:
           KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=/usr/bin/ld.lld GKI_DEFCONFIG_FRAGMENT="$DEFCONFIG_FRAGMENT" LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || BUILD_RC=$?
         else
           # Prebuilt ld.lld (clang-17) can't resolve glibc 2.39 C23 symbols — replace with system lld
+          echo "System lld: $(/usr/bin/ld.lld --version 2>&1 | head -1)"
           BAZEL_OUTPUT_BASE=$(tools/bazel info output_base 2>/dev/null || echo "")
+          echo "Bazel output_base: ${BAZEL_OUTPUT_BASE:-EMPTY}"
           tools/bazel fetch //common:kernel_aarch64_dist 2>/dev/null || true
-          for search_dir in . ${BAZEL_OUTPUT_BASE:+"$BAZEL_OUTPUT_BASE"}; do
-            find "$search_dir" \( -name "lld" -o -name "ld.lld" \) -path "*/bin/*" -type f 2>/dev/null | while read f; do
-              cp /usr/bin/ld.lld "$f" && echo "Replaced: $f"
+          for search_dir in . ${BAZEL_OUTPUT_BASE:+"$BAZEL_OUTPUT_BASE"} /home/runner/.cache; do
+            find "$search_dir" \( -name "lld" -o -name "ld.lld" \) -path "*/bin/*" 2>/dev/null | while read f; do
+              rm -f "$f" && cp /usr/bin/ld.lld "$f" && chmod +x "$f" && echo "Replaced: $f"
             done
           done
           tools/bazel build --config=fast --lto=thin --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment //common:kernel_aarch64_dist || BUILD_RC=$?
