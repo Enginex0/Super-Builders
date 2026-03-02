@@ -239,6 +239,7 @@ jobs:
         sed -i 's/inotify_mark_user_mask(mark)/mark->mask/g' ./fs/notify/fdinfo.c
         sed -i '/u32 mask = mark->mask & IN_ALL_EVENTS;/d' ./fs/notify/fdinfo.c
         sed -i 's/s_dev, mask)/s_dev, mark->mask)/g' ./fs/notify/fdinfo.c
+        sed -i 's/^\([[:space:]]*\)mask, mark->ignored_mask/\1mark->mask, mark->ignored_mask/' ./fs/notify/fdinfo.c
         if grep -q 'out_seq_printf:' ./fs/notify/fdinfo.c; then
           sed -i 's/^\([[:space:]]*\)out_seq_printf:$/\1out_seq_printf: ;/' ./fs/notify/fdinfo.c
         fi
@@ -394,8 +395,10 @@ jobs:
     - name: Build Kernel
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        find . -name "ld.lld" -not -path "./out/*" -type f 2>/dev/null | while read f; do cp /usr/bin/ld.lld "$f"; done
-        find . -name "ld.lld" -not -path "./out/*" -type l 2>/dev/null | while read f; do ln -sf /usr/bin/ld.lld "$f"; done
+        # Prebuilt lld can't handle glibc 2.39 C23 symbols (__isoc23_strtol) — replace with system lld-18
+        find . \( -name "lld" -o -name "ld.lld" \) -path "*/bin/*" -not -path "./out/*" -not -path "./bazel-*" 2>/dev/null | while read f; do
+          rm -f "$f" && cp /usr/bin/ld.lld "$f"
+        done
         find . -name "clang" -path "*/bin/clang" -not -path "./out/*" -type f 2>/dev/null | while read f; do
           [ ! -f "$(dirname "$f")/ld" ] && ln -s /usr/bin/ld "$(dirname "$f")/ld"
         done
