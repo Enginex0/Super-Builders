@@ -399,24 +399,18 @@ jobs:
     - name: Build Kernel
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        # Prebuilt lld can't handle glibc 2.39 C23 symbols (__isoc23_strtol) — force system lld-18
-        find . \( -name "lld" -o -name "ld.lld" \) -path "*/bin/*" -not -path "./out/*" -not -path "./bazel-*" 2>/dev/null | while read f; do
-          rm -f "$f" && cp /usr/bin/ld.lld "$f"
-        done
-        find . -name "clang" -path "*/bin/clang" -not -path "./out/*" -type f 2>/dev/null | while read f; do
-          [ ! -f "$(dirname "$f")/ld" ] && ln -s /usr/bin/ld "$(dirname "$f")/ld"
-        done
-        # Force system lld for ALL host tool linking — override beats command-line vars from Kleaf
-        echo 'override KBUILD_HOSTLDFLAGS += -fuse-ld=/usr/bin/ld.lld' >> common/Makefile
-        if [ -f common/tools/bpf/resolve_btfids/Makefile ]; then
-          echo 'override LDFLAGS += -fuse-ld=/usr/bin/ld.lld' >> common/tools/bpf/resolve_btfids/Makefile
-          echo 'override KBUILD_HOSTLDFLAGS += -fuse-ld=/usr/bin/ld.lld' >> common/tools/bpf/resolve_btfids/Makefile
-        fi
-
         BUILD_RC=0
         if [ -f "build/build.sh" ]; then
           KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=/usr/bin/ld.lld GKI_DEFCONFIG_FRAGMENT="$DEFCONFIG_FRAGMENT" LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || BUILD_RC=$?
         else
+          # Prebuilt ld.lld (clang-17) can't resolve glibc 2.39 C23 symbols — replace with system lld
+          BAZEL_OUTPUT_BASE=$(tools/bazel info output_base 2>/dev/null || echo "")
+          tools/bazel fetch //common:kernel_aarch64_dist 2>/dev/null || true
+          for search_dir in . ${BAZEL_OUTPUT_BASE:+"$BAZEL_OUTPUT_BASE"}; do
+            find "$search_dir" \( -name "lld" -o -name "ld.lld" \) -path "*/bin/*" -type f 2>/dev/null | while read f; do
+              cp /usr/bin/ld.lld "$f" && echo "Replaced: $f"
+            done
+          done
           tools/bazel build --config=fast --lto=thin --defconfig_fragment=//common:arch/arm64/configs/wild_gki.fragment //common:kernel_aarch64_dist || BUILD_RC=$?
         fi
         if [ "$BUILD_RC" -ne 0 ]; then
