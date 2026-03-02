@@ -242,6 +242,12 @@ jobs:
           sed -i 's/^\([[:space:]]*\)out_seq_printf:$/\1out_seq_printf: ;/' ./fs/notify/fdinfo.c
         fi
 
+        # i_user_ns/i_uid_into_mnt backported mid-5.15 — fall back to direct i_uid on old sublevels
+        if [ -f ./fs/susfs.c ] && ! grep -q 'i_user_ns' ./include/linux/fs.h 2>/dev/null; then
+          sed -i 's/i_uid_into_mnt(i_user_ns(&fi->inode), &fi->inode)\.val/fi->inode.i_uid.val/g' ./fs/susfs.c
+          sed -i 's/i_uid_into_mnt(i_user_ns(inode), inode)\.val/inode->i_uid.val/g' ./fs/susfs.c
+        fi
+
     - name: Setup Baseband Guard
       if: inputs.add_bbg
       working-directory: ${{ env.KERNEL_ROOT }}
