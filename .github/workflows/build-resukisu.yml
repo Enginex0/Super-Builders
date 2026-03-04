@@ -270,6 +270,10 @@ jobs:
           sed -i "/^${cfg}=/d" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG"
         done < <(grep '^CONFIG_KSU_' "$DEFCONFIG_FRAGMENT" 2>/dev/null || true)
 
+        if ! grep -q '^CONFIG_KSU_SUSFS=' "$DEFCONFIG_FRAGMENT" 2>/dev/null; then
+          sed -i '/^CONFIG_KSU_SUSFS_/d' "$DEFCONFIG_FRAGMENT" "$DEFCONFIG"
+        fi
+
         bash "$HELPERS/bypass-abi-check.sh" . "$ANDROID_VER" "$KERNEL_VER"
 
     - name: Clean Module Lists
