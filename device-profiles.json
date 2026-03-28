@@ -1,37 +1,6 @@
 {
   "devices": {
-    "lake": {
-      "name": "Xiaomi Redmi 14C",
-      "codename": "lake",
-      "android_version": "android12",
-      "kernel_version": "5.10",
-      "sub_level": "209",
-      "os_patch_level": "2024-05",
-      "stock_kernel": {
-        "release": "-android12-9-00016-g7c6bbcca33e1-ab12029497",
-        "version_string": "#1 SMP PREEMPT Fri Jun 28 13:58:53 UTC 2024",
-        "build_user": "build-user",
-        "build_host": "build-host",
-        "compiler_info": "Android (7284624, based on r416183b) clang version 12.0.5"
-      }
-    },
-    "lake_a15": {
-      "name": "Xiaomi Redmi 14C",
-      "codename": "lake",
-      "android_version": "android15",
-      "kernel_version": "6.6",
-      "sub_level": "58",
-      "os_patch_level": "2025-01",
-      "stock_kernel": {
-        "release": "-android15-8-g97728a143642-ab13468307-4k",
-        "version_string": "#1 SMP PREEMPT Thu May  8 20:23:55 UTC 2025",
-        "build_user": "kleaf",
-        "build_host": "build-host",
-        "compiler_info": "Android (11368308, +pgo, +bolt, +lto, +mlgo, based on r510928) clang version 18.0.0"
-      }
-    }
-  },
-      "miro": {
+    "miro": {
       "name": "Xiaomi Redmi K80 Pro",
       "codename": "miro",
       "android_version": "android15",
