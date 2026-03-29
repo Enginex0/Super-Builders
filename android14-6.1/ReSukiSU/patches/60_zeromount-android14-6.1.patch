@@ -367,7 +367,7 @@
 +static inline int zeromount_stat_hook(int dfd, struct filename *filename,
 +                                      struct kstat *stat, unsigned int request_mask,
 +                                      int flags) {
-+    if (zm_is_recursive()) return -ENOENT;
++    if (zm_is_recursive() || IS_ERR_OR_NULL(filename)) return -ENOENT;
 +    if (filename && filename->name) {
 +        const char *kname = filename->name;
 +        if (kname[0] != '/') {

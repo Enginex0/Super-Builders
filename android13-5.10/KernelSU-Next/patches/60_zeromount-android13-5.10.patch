@@ -380,7 +380,7 @@ index 9c699e632..c4a5678b8 100644
 +static inline int zeromount_stat_hook(int dfd, const char __user *filename, 
 +                                      struct kstat *stat, unsigned int request_mask, 
 +                                      int flags) {
-+    if (zm_is_recursive()) return -ENOENT;
++    if (zm_is_recursive() || IS_ERR_OR_NULL(filename)) return -ENOENT;
 +    if (filename) {
 +        char kname[NAME_MAX + 1];
 +        long copied = strncpy_from_user(kname, filename, sizeof(kname));

@@ -368,7 +368,7 @@ diff '--color=auto' -ruN '--exclude=.git' work-50-base/fs/stat.c work/fs/stat.c
 +                                      struct kstat *stat, unsigned int request_mask,
 +                                      int flags) {
 +    const char *kname;
-+    if (zm_is_recursive()) return -ENOENT;
++    if (zm_is_recursive() || IS_ERR_OR_NULL(filename)) return -ENOENT;
 +    if (!filename || IS_ERR(filename)) return -ENOENT;
 +    kname = filename->name;
 +    if (kname && kname[0] != '/') {

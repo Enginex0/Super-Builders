@@ -55,7 +55,9 @@ else
     "$COMMON/clear_page_16bytes_align.patch" | patch -p1 -F3 --forward || true
 fi
 
-apply "$COMMON/add_limitation_scaling_min_freq.patch"
+# upstream declares val as unsigned long but uses %u (expects unsigned int *)
+sed 's/unsigned long val;/unsigned int val;/' \
+  "$COMMON/add_limitation_scaling_min_freq.patch" | patch -p1 -F3 --forward || true
 apply "$COMMON/re_write_limitation_scaling_min_freq.patch"
 apply "$COMMON/adjust_cpu_scan_order.patch"
 apply "$COMMON/avoid_extra_s2idle_wake_attempts.patch"
