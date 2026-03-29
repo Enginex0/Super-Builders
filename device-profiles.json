@@ -7,8 +7,9 @@
       "kernel_version": "6.6",
       "sub_level": "77",
       "os_patch_level": "2026-03",
+      "header_version": 4,
       "stock_kernel": {
-        "release": "6.6.77-android15-8-00001-g3d6bcca213f-ab13029497",
+        "release": "6.6.77-android12-9-00016-g7c6bbcca33e1-ab12029497",
         "version_string": "#1 SMP PREEMPT Wed Feb 25 10:24:18 UTC 2026",
         "build_user": "builder",
         "build_host": "xiaomi-build-srv",
