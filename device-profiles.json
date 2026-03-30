@@ -32,19 +32,20 @@
     }
   },
   "_template": {
-    "name": "Device Name",
-    "codename": "codename",
-    "android_version": "android15",
-    "kernel_version": "6.6",
-    "sub_level": "30",
-    "os_patch_level": "2025-01",
-    "stock_kernel": {
-      "release": "-android15-6-xxxxx-gabcdef123456-ab12345678",
-      "version_string": "#1 SMP PREEMPT Mon Jan 1 12:00:00 UTC 2025",
-      "build_user": "build-user",
-      "build_host": "build-host",
-      "compiler_info": "Android clang version X.X.X"
-    },
-    "_note": "To add a new device: 1) Get stock boot.img, 2) Run: strings boot.img | grep 'Linux version', 3) Copy values here"
+     "miro": {
+      "name": "Xiaomi Redmi K80 Pro",
+      "codename": "miro",
+      "android_version": "android16",
+      "kernel_version": "6.6",
+      "sub_level": "77",
+      "os_patch_level": "2026-03",
+      "stock_kernel": {
+        "release": "6.6.77-android15-8-00001-g3d6bcca213f-ab13029497",
+        "version_string": "#1 SMP PREEMPT Wed Feb 25 10:24:18 UTC 2026",
+        "build_user": "builder",
+        "build_host": "xiaomi-build-srv",
+        "compiler_info": "Android (11612248, based on r510928) clang version 18.0.1"
+      }
+    }
   }
 }
