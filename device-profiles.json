@@ -8,10 +8,10 @@
       "sub_level": "77",
       "os_patch_level": "2026-04",
       "stock_kernel": {
-        "release": "-android15-6.6-g612257257c7c",
-        "version_string": "#1 SMP PREEMPT Thu Apr 16 21:30:00 UTC 2026",
+        "release": "-android15-8-BetbetMiro",
+        "version_string": "#1 SMP PREEMPT Mon Mar 16 21:30:00 UTC 2026",
         "build_user": "builder",
-        "build_host": "github-actions",
+        "build_host": "BetbetMiro",
         "compiler_info": "Android (12156622, based on r522830) clang version 19.0.0"
       }
     },
