@@ -29,6 +29,21 @@
         "build_host": "build-host",
         "compiler_info": "Android (11368308, +pgo, +bolt, +lto, +mlgo, based on r510928) clang version 18.0.0"
       }
+    },
+    "blazer": {
+      "name": "Google Pixel 10 Pro",
+      "codename": "blazer",
+      "android_version": "android15",
+      "kernel_version": "6.6",
+      "sub_level": "102",
+      "os_patch_level": "2025-10",
+      "stock_kernel": {
+        "release": "-android15-8-g6eb5b2a8c46b-ab14739656-4k",
+        "version_string": "#1 SMP PREEMPT Mon Jan 19 19:40:24 UTC 2026",
+        "build_user": "kleaf",
+        "build_host": "build-host",
+        "compiler_info": "Android (11368308, +pgo, +bolt, +lto, +mlgo, based on r510928) clang version 18.0.0"
+      }
     }
   },
   "_template": {
