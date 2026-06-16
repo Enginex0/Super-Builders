@@ -86,7 +86,7 @@ The kernels built here provide the **infrastructure layer** — the hiding primi
 | Android 13 | 5.15 | 41 → 194 | SukiSU, ReSukiSU, KSU-Next, WKSU | ✅ | 🔄 In progress |
 | Android 14 | 5.15 | 131 → 194 | SukiSU, ReSukiSU, KSU-Next, WKSU | ✅ | 🔄 In progress |
 | Android 14 | 6.1 | 25 → 157 | SukiSU, ReSukiSU, KSU-Next, WKSU | ✅ | 🔄 In progress |
-| Android 15 | 6.6 | 30 → 118 | SukiSU, ReSukiSU, KSU-Next, WKSU | ✅ | 🔄 In progress |
+| Android 15 | 6.6 | 30 → 127 | SukiSU, ReSukiSU, KSU-Next, WKSU | ✅ | 🔄 In progress |
 | Android 16 | 6.12 | 23 → 58 | SukiSU, ReSukiSU, KSU-Next, WKSU | ✅ | 🔄 In progress |
 
 ### Pre-GKI
