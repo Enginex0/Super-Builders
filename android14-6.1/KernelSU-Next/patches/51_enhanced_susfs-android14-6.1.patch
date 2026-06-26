@@ -1956,7 +1956,7 @@ diff '--color=auto' -ruN post-upstream/include/linux/susfs.h work-50/include/lin
  
 +struct super_block;
 +
- #define SUSFS_VERSION "v2.0.0"
+ #define SUSFS_VERSION "v2.1.0"
  #if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)
  #define SUSFS_VARIANT "NON-GKI"
 @@ -54,7 +56,7 @@
