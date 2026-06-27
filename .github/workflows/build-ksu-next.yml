@@ -224,6 +224,27 @@ jobs:
           echo "No 70_ patch needed"
         fi
 
+        WILDFIX="$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches/wildkernels"
+        if [ -d "$WILDFIX" ]; then
+          echo "Applying WildKernels SUSFS fix patches..."
+          for P in \
+            fix_Makefile.patch \
+            fix_ksu_c.patch \
+            fix_ksud_c.patch \
+            fix_supercalls_c.patch \
+            fix_sucompat_c.patch \
+            fix_kernel_umount_c.patch \
+            fix_rules_c.patch; do
+            if [ -f "$WILDFIX/$P" ]; then
+              echo "  → $P"
+              patch -p1 --no-backup-if-mismatch < "$WILDFIX/$P" || \
+                echo "::warning::WildKernels patch $P had issues"
+            fi
+          done
+        else
+          echo "No WildKernels patches directory found — skipping"
+        fi
+
     - name: Apply ZeroMount Patch
       if: inputs.add_zeromount && inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/common
