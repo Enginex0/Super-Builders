@@ -1,7 +1,7 @@
 diff '--color=auto' -ruN post-upstream/fs/Kconfig work-50/fs/Kconfig
 --- post-upstream/fs/Kconfig	2026-03-07 16:32:21.906120792 +0100
 +++ work-50/fs/Kconfig	2026-03-07 16:47:56.973232698 +0100
-@@ -387,4 +387,34 @@
+@@ -387,4 +387,58 @@
  config IO_WQ
  	bool
  
@@ -34,6 +34,30 @@ diff '--color=auto' -ruN post-upstream/fs/Kconfig work-50/fs/Kconfig
 +	help
 +	  Fixes upstream SUSFS concurrency and error-handling bugs.
 +	  Disable to match exact upstream behavior.
++
++config KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
++	bool "Auto-add KSU default mounts to sus_mount"
++	depends on KSU_SUSFS_SUS_MOUNT
++	default y
++	help
++	  Automatically adds KernelSU default bind mounts to the
++	  sus_mount list so they are hidden without manual configuration.
++
++config KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
++	bool "Auto-add module bind mounts to sus_mount"
++	depends on KSU_SUSFS_SUS_MOUNT
++	default y
++	help
++	  Automatically adds module bind mounts to the sus_mount list
++	  so they are hidden without manual configuration.
++
++config KSU_SUSFS_UID_GATED_HIDING
++	bool "UID-gated hiding (v2.1.0+)"
++	depends on KSU_SUSFS
++	default y
++	help
++	  Gates sus_path and sus_mount hiding behind a per-UID allowlist.
++	  Requires susfs v2.1.0 or newer kernel patches.
 +
  endmenu
 diff '--color=auto' -ruN post-upstream/fs/namei.c work-50/fs/namei.c
