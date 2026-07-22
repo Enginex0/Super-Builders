@@ -1,0 +1,16 @@
+name: Test Button Force
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_input:
+        description: "Testing UI"
+        type: string
+        default: "Hello World"
+
+jobs:
+  test_job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log Test
+        run: echo "UI is working!"

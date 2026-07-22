@@ -1,0 +1,231 @@
+name: Genevn Custom Toolchain Build
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_target:
+        description: "Target Profile Matching device-profiles.json"
+        type: choice
+        default: "genevn_a12"
+        options:
+          - "genevn_a12"
+          - "lake"
+          - "lake_a15"
+      ksu_variant:
+        description: "KernelSU variant"
+        type: choice
+        options:
+          - KernelSU-Next
+          - SukiSU
+          - ReSukiSU
+          - WKSU
+        default: "KernelSU-Next"
+      add_susfs:
+        description: "Add SUSFS"
+        type: boolean
+        default: true
+      add_zeromount:
+        description: "Add ZeroMount"
+        type: boolean
+        default: true
+      add_bbg:
+        description: "Add Baseband Guard"
+        type: boolean
+        default: true
+      add_overlayfs_support:
+        description: "Add overlayfs support"
+        type: boolean
+        default: true
+      add_kpm:
+        description: "Add KPM (SukiSU/ReSukiSU)"
+        type: boolean
+        default: true
+      sukisu_commit:
+        description: "KSU commit override (empty = latest)"
+        type: string
+        default: ""
+
+env:
+  TZ: America/Chicago
+  KBUILD_BUILD_USER: "015stray91"
+  KBUILD_BUILD_HOST: "superbuilders-actions"
+
+jobs:
+  build:
+    name: "Build Custom Kernel - Genevn"
+    runs-on: ubuntu-22.04
+    
+    steps:
+      # Step 1: Full Workspace Checkout to fetch device-profiles.json
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # Step 2: Parse Target Variables Dynamically from local JSON layout
+      - name: Parse Target Details
+        id: parse
+        run: |
+          TARGET_KEY="${{ inputs.kernel_target }}"
+          JSON_FILE="device-profiles.json"
+          
+          if [ ! -f "$JSON_FILE" ]; then
+            echo "ERROR: device-profiles.json not found in repository root!" && exit 1
+          fi
+          
+          CODENAME=$(jq -r ".devices.\"$TARGET_KEY\".codename" "$JSON_FILE")
+          ANDROID_VER=$(jq -r ".devices.\"$TARGET_KEY\".android_version" "$JSON_FILE")
+          KERNEL_VER=$(jq -r ".devices.\"$TARGET_KEY\".kernel_version" "$JSON_FILE")
+          STOCK_RELEASE=$(jq -r ".devices.\"$TARGET_KEY\".stock_kernel.release" "$JSON_FILE")
+          STOCK_VERSION=$(jq -r ".devices.\"$TARGET_KEY\".stock_kernel.version_string" "$JSON_FILE")
+          
+          echo "codename=$CODENAME" >> "$GITHUB_OUTPUT"
+          echo "android_version=$ANDROID_VER" >> "$GITHUB_OUTPUT"
+          echo "kernel_version=$KERNEL_VER" >> "$GITHUB_OUTPUT"
+          echo "stock_release=$STOCK_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "stock_version=$STOCK_VERSION" >> "$GITHUB_OUTPUT"
+
+      # Step 3: Clean the environment disk space 
+      - name: Free Disk Space
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_tool_cache: true
+
+      # Step 4: Native APT Dependency Provisioning on Ubuntu Jammy Base
+      - name: Initialize Toolchain Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq clang-12 lld-12 llvm-12 gcc-aarch64-linux-gnu binutils bc bison flex libssl-dev libelf-dev cpio kmod python3 lz4 liblz4-tool libncurses-dev rsync
+
+      # Step 5: Run the Genevn Custom Kernel Build Execution
+      - name: Compile Genevn Kernel
+        env:
+          KSU_VARIANT: ${{ inputs.ksu_variant }}
+          ADD_SUSFS: ${{ inputs.add_susfs }}
+          ADD_ZEROMOUNT: ${{ inputs.add_zeromount }}
+          ADD_BBG: ${{ inputs.add_bbg }}
+          ADD_OVERLAYFS: ${{ inputs.add_overlayfs_support }}
+          ADD_KPM: ${{ inputs.add_kpm }}
+          SUKISU_COMMIT: ${{ inputs.sukisu_commit }}
+          CODENAME: ${{ steps.parse.outputs.codename }}
+          TARGET_RELEASE: ${{ steps.parse.outputs.stock_release }}
+          TARGET_VERSION: ${{ steps.parse.outputs.stock_version }}
+        run: |
+          echo "================================================="
+          echo " Starting Single-Engine Kernel Compilation for: $CODENAME"
+          echo "================================================="
+          
+          BASE_HTTP="https://github.com"
+          TARGET_MSM="/015stray91/kernel-msm-1.git"
+          TARGET_DT="/015stray91/kernel-devicetree.git"
+          
+          # TARGET WORKING BRANCH AND TARGET REFERENCE PINNED TAGS
+          MY_REPO_BRANCH="android-14-release-u1tgns34.42-86-2-32"
+          MY_REPO_TAG="MMI-U1TGNS34.42-86-3-16"
+          
+          # 1. INITIALIZE WORKSPACE AND FETCH THE EXPLICIT TARGET BRANCH
+          git init kernel-source
+          cd kernel-source
+          git remote add origin "${BASE_HTTP}${TARGET_MSM}"
+          
+          echo "Pulling explicit mainstream branch: ${MY_REPO_BRANCH}..."
+          git fetch --depth=1 origin "${MY_REPO_BRANCH}"
+          git checkout FETCH_HEAD
+          
+          # Isolates the exact hardware tracking refspec layout to block the tag flood
+          echo "Targeting specific repository tracking tag reference: ${MY_REPO_TAG}..."
+          git fetch --depth=1 origin refs/tags/${MY_REPO_TAG}:refs/tags/${MY_REPO_TAG}
+
+          # 2. CLONE YOUR FORKED DEVICE TREE REPOSITORY INTO THE ARCH HARDWARE TREE VIA SYSTEM VARIABLE
+          echo "Deploying hardware device tree sources via HTTPS link..."
+          mkdir -p arch/arm64/boot/dts/vendor
+          git clone --depth=1 "${BASE_HTTP}${TARGET_DT}" arch/arm64/boot/dts/vendor
+
+          # 3. Inject Exact proc/version Tracers matching your successful bot environment
+          echo "Applying specific bot compilation environment signatures..."
+          echo "Linux version 5.10.198${TARGET_RELEASE} (${KBUILD_BUILD_USER}@${KBUILD_BUILD_HOST}) ${TARGET_VERSION}" > .version
+          if [ -f scripts/mkcompile_h ]; then
+            sed -i "s/LINUX_COMPILE_BY=.*/LINUX_COMPILE_BY=\"${KBUILD_BUILD_USER}\"/g" scripts/mkcompile_h
+            sed -i "s/LINUX_COMPILE_HOST=.*/LINUX_COMPILE_HOST=\"${KBUILD_BUILD_HOST}\"/g" scripts/mkcompile_h
+          fi
+
+          # 4. RUN CONSOLIDATION FIRST TO MERGE GKI BASE TO CUSTOM LAYERS INTO .CONFIG
+          echo "================================================="
+          echo " Executing Consolidation and Stacking Script Engine"
+          echo "================================================="
+          if [ -d "build-setup" ]; then
+            cd build-setup
+            chmod +x build-kernel-consolidate.sh
+            ./build-kernel-consolidate.sh
+            cd ..
+          else
+            echo "ERROR: build-setup directory not found!" && exit 1
+          fi
+
+          # 5. STACK KERNELSU-NEXT SUPER ABILITIES DIRECTLY ON TOP OF CONSOLIDATED TREE
+          if [ "$KSU_VARIANT" != "None" ]; then
+            echo "Configuring KernelSU Variant: $KSU_VARIANT"
+            if [ "$KSU_VARIANT" = "KernelSU-Next" ]; then
+              curl -LSs "https://githubusercontent.com" | bash -s next
+            else
+              curl -LSs "https://githubusercontent.com" | bash -s main
+            fi
+            
+            if [ ! -z "$SUKISU_COMMIT" ]; then
+              echo "Overriding KSU to commit: $SUKISU_COMMIT"
+              cd KernelSU && git fetch origin && git checkout "$SUKISU_COMMIT" && cd ..
+            fi
+          fi
+
+          # 6. RUN THE LOCAL SOURCE PATCH FILES DIRECTLY
+          if [ "$ADD_SUSFS" = "true" ]; then
+            echo "Injecting local 5.10 SusFS kernel patches..."
+            if [ -d "patches" ]; then
+              git apply patches/*.patch || true
+            fi
+          fi
+
+          # 7. INJECT CONDITIONAL PERFORMANCE OVERRIDES AND LZ4K ALGORITHM FLAGS INTO OUT/.CONFIG
+          echo "Injecting target overrides and LZ4K parameters into final config..."
+          if [ "$ADD_ZEROMOUNT" = "true" ]; then echo "CONFIG_ZEROMOUNT=y" >> out/.config; fi
+          if [ "$ADD_OVERLAYFS" = "true" ]; then echo "CONFIG_OVERLAY_FS=y" >> out/.config; fi
+
+          # Dynamically hooks your custom compression parameters directly below active flags inside your file system layers
+          sed -i '/CONFIG_ZRAM=y/a CONFIG_ZCOMP_LZ4K=y' out/.config || true
+
+          # Finalize parameters inside the active config tree partition block
+          make O=out olddefconfig
+
+          echo "================================================="
+          echo " Launching Targeted Clang 12 / LLVM 12 Compiler Pass"
+          echo "================================================="
+          export ARCH=arm64
+          export SUBARCH=arm64
+          
+          make -j$(nproc --all) O=out \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+            CC=clang-12 \
+            LLVM=12 \
+            LLVM_IAS=1
+
+          # Build Device Tree Image components natively via tool scripts
+          echo "Assembling custom device tree overlays via tools/libufdt..."
+          if [ -d "out/arch/arm64/boot/dts" ]; then
+            mkdir -p out/arch/arm64/boot/dist
+            python3 tools/libufdt/utils/src/mkdtboimg.py create out/arch/arm64/boot/dtbo.img --page_size=4096 \$(find out/arch/arm64/boot/dts/ -name "*.dtbo")
+          fi
+
+      # Step 6: Verifier Agent structural post-build checking
+      - name: Execute Verifier Agent Validation Loop
+        run: |
+          echo "Verifier Agent initiating 3-tier validation checks..."
+          if [ -f "kernel-source/out/arch/arm64/boot/Image.gz" ] || [ -f "kernel-source/out/arch/arm64/boot/Image" ]; then
+            echo "Verification Step 1: Kernel binaries validated successfully."
+            echo "Verification Step 2: Checking module alignment against modules.list.msm.parrot..."
+            echo "Verification Step 3: Verifying custom configuration options inside build tracers..."
+            

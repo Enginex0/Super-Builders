@@ -1,0 +1,48 @@
+name: Audit - GKI Hybrid Compliance Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  audit-compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Repo Tool
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          export PATH=~/bin:$PATH
+
+      - name: Sync Google GKI Base (The Engine)
+        run: |
+          # Pull the official Google Android Common Kernel (ACK)
+          # Use the branch that corresponds to your 5.10 kernel base
+          mkdir -p kernel_workspace && cd kernel_workspace
+          repo init -u https://android.googlesource.com/kernel/manifest -b android12-5.10
+          repo sync
+
+      - name: Overlay Motorola MSM (The Vendor Hardware Layer)
+        run: |
+          # This is the repository you were provided. 
+          # We place it where the build system expects vendor-specific code.
+          git clone --depth=1 https://github.com/MotorolaMobilityLLC/kernel-msm.git \
+          kernel_workspace/private/msm-google
+
+      - name: Execute Audit Build
+        run: |
+          cd kernel_workspace
+          # Use the fingerprint (Clang 12.0.5) you identified earlier
+          export CC=clang-12
+          export LD=ld.lld-12
+          
+          # Attempt the build. If this fails, the source is demonstrably incomplete.
+          ./build/build.sh
+        continue-on-error: true
+
+      - name: Upload Audit Failure Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Compliance-Failure-Evidence
+          path: kernel_workspace/out/

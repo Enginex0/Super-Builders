@@ -1,0 +1,259 @@
+name: Genevn Custom Toolchain Build
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_target:
+        description: "Kernel target"
+        type: choice
+        default: "android12-5.10.209 (2024-05)"
+        options:
+          - "android12-5.10.209 (2024-05)"
+      quick_target:
+        description: "Quick select — type e.g. android15-6.6.58 (overrides dropdown)"
+        type: string
+        default: ""
+      ksu_variant:
+        description: "KernelSU variant"
+        type: boolean
+        options:
+           -Ksu-next
+          - SukiSU
+          - ReSukiS
+          - WKSU
+        default: "Ksu-Next"
+      add_susfs:
+        description: "Add SUSFS"
+        type: boolean
+        default: true
+      add_zeromount:
+        description: "Add ZeroMount"
+        type: boolean
+        default: true
+      add_zram:
+        description: "Add ZRAM with LZ4K"
+        type: boolean
+        default: true
+      add_bbg:
+        description: "Add Baseband Guard"
+        type: boolean
+        default: true
+      add_overlayfs_support:
+        description: "Add overlayfs support"
+        type: boolean
+        default: true
+      add_kpm:
+        description: "Add KPM"
+        type: boolean
+        default: true
+      sukisu_commit:
+        description: "KSU commit override (empty = latest)"
+        type: string
+        default: ""
+
+jobs:
+  build:
+    name: "Build Custom Kernel - Genevn"
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Parse Target Details
+        id: parse
+        run: |
+          echo "android_version=android12" >> "$GITHUB_OUTPUT"
+          echo "kernel_version=5.10" >> "$GITHUB_OUTPUT"
+          echo "sub_level=209" >> "$GITHUB_OUTPUT"
+          echo "os_patch_level=2024-05" >> "$GITHUB_OUTPUT"
+          echo "codename=Genevn" >> "$GITHUB_OUTPUT"
+
+      - name: Free Disk Space
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_tool_cache: true
+
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: |
+            device-profiles.json
+          sparse-checkout-cone-mode: false
+
+      - name: Initialize Toolchain (Clang 12 + LLVM 12)
+        run: |
+          sudo apt-get update
+         sudo apt-get install -y \
+         clang lld llvm gcc-aarch64-linux-gnu \
+         binutils bc bison flex libssl-dev libelf-dev cpio kmod python3 make \
+         libncurses5 libncursesw5 libncurses-dev \
+         device-tree-compiler \
+
+         curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+         sudo apt-get install -y nodejs
+
+
+
+      - name: Clone Kernel Source (LOCK fork branch + tag + verify HEADs)
+        run: |
+          set -euo pipefail
+
+          FORK_URL="https://github.com/015stray91/kernel-msm-1.git"
+          FORK_DIR="kernel-source"
+
+          FORK_BRANCH="android-14-release-u1tgns34.42.86-2-32"
+          FORK_TAG="MMI-U1TGNS34.42-86-2-32"
+
+          rm -rf "$FORK_DIR"
+          git clone --depth=1 "$FORK_URL" "$FORK_DIR"
+          cd "$FORK_DIR"
+
+          # Lock to branch first
+          git fetch --depth=1 origin "$FORK_BRANCH"
+          git checkout -B "$FORK_BRANCH" "origin/$FORK_BRANCH"
+          echo "After branch checkout:"
+          git status -sb
+          echo "Branch HEAD (short): $(git rev-parse --short HEAD)"
+          git --no-pager log -1 --oneline
+
+          # Then lock to tag
+          git fetch --depth=1 --tags origin "$FORK_TAG"
+          git checkout -B "tag-$FORK_TAG" "$FORK_TAG"
+          echo "After tag checkout:"
+          git status -sb
+          echo "Tag HEAD (short): $(git rev-parse --short HEAD)"
+          git --no-pager log -1 --oneline
+
+          echo "Tag points to:"
+          git rev-list -n 1 "$FORK_TAG"
+
+      - name: Clean Output Directory
+        run: |
+          cd kernel-source
+          rm -rf out/
+
+      - name: Prepare Module Lists
+        run: |
+          cp /modules.list.msm.parrot
+          cp /modules.vendor_blocklist.msm.parrot
+
+      - name: Apply Custom Patches
+        run: |
+          cd kernel-source
+          if [ -d "patches" ]; then
+            for .patch in /patches/*.patch; do
+              if [ -f "$patch" ]; then
+                git apply --check "$patch" && git apply "$patch" || echo "::warning:: Patch failed: $patch"
+              fi
+            done
+          fi
+
+      - name: Merge Config Fragments
+        run: |
+          cd kernel-source
+          ./scripts/kconfig/merge_config.sh \
+            arch/arm64/configs/ksu-nethunter.defconfig \
+            build.config.gki_kprobes \
+            build.config.aarch64 \
+            build.config.gki_kprobes.aarch64 \
+            build.config.allmodconfig \
+            build.config.allmodconfig.aarch64 \
+            build.config.moto \
+            build.config.msm.common \
+            build.config.msm.gki \
+            build.config.common \
+            build.config.db845c \
+            build.config.msm.parrot \
+            arch/arm64/configs/vendor/parrot_GKI.config \
+            arch/arm64/configs/vendor/ext_config/debug-parrot-genevn.config \
+            arch/arm64/configs/vendor/ext_config/moto-parrot-gki.config \
+            arch/arm64/configs/vendor/ext_config/debug-parrot.config \
+            arch/arm64/configs/vendor/ext_config/moto-parrot.config \
+            arch/arm64/configs/vendor/ext_config/moto-parrot-genevn.config
+
+      - name: Apply Feature Toggles
+        env:
+          KSU_VARIANT: ${{ inputs.ksu_variant }}
+          ADD_SUSFS: ${{ inputs.add_susfs }}
+          ADD_ZEROMOUNT: ${{ inputs.add_zeromount }}
+          ADD_ZRAM: ${{ inputs.add_zram }}
+          ADD_BBG: ${{ inputs.add_bbg }}
+          ADD_OVERLAYFS: ${{ inputs.add_overlayfs_support }}
+          ADD_KPM: ${{ inputs.add_kpm }}
+        run: |
+          cd kernel-source
+          if [ "$ADD_SUSFS" = "true" ]; then
+            scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/susfs.config
+          fi
+          if [ "$ADD_ZEROMOUNT" = "true" ]; then
+            scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/zeromount.config
+          fi
+          if [ "$ADD_ZRAM" = "true" ]; then
+            scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/zram.config
+          fi
+          if [ "$ADD_BBG" = "true" ]; then
+            scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/bbg.config
+          fi
+          if [ "$ADD_OVERLAYFS" = "true" ]; then
+            scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/overlayfs.config
+          fi
+          if [ "$ADD_KPM" = "true" ]; then
+            scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/kpm.config
+          fi
+          case "$KSU_VARIANT" in
+            "KernelSU-Next")
+              scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/ksu-next.config
+              ;;
+            "SukiSU")
+              scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/sukisu.config
+              ;;
+            "ReSukiSU")
+              scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/resukisu.config
+              ;;
+            "WKSU")
+              scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/wksu.config
+              ;;
+          esac
+          cp .config out/
+
+      - name: Build Kernel
+        run: |
+          cd kernel-source
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE="aarch64-linux-gnu-"
+          export LLVM=1
+          export LLVM_IAS=1
+          export CC="clang-12"
+          export LD="ld.lld-12"
+          export AR="llvm-ar-12"
+          export NM="llvm-nm-12"
+          export OBJCOPY="llvm-objcopy-12"
+          export OBJDUMP="llvm-objdump-12"
+          export STRIP="llvm-strip-12"
+          make O=out \
+            ARCH=arm64 \
+            CC=clang-12 \
+            LD=ld.lld-12 \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            Image.gz \
+            -j$(nproc --all) || exit 1
+
+      - name: Package Kernel
+        run: |
+          cd kernel-source/packages
+          ./build_boot_image.sh ../out/arch/arm64/boot/Image.gz
+          cp ../out/boot.img ../../Genevn-Kernel-Flashable.img
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Genevn-Boot-Image
+          path: Genevn-Kernel-Flashable.img
+          compression-level: 9
+          overwrite: true

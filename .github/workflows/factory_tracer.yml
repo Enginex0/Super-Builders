@@ -1,0 +1,69 @@
+name: Uncensored Motorola Configuration Merger
+
+on:
+  workflow_dispatch:
+
+jobs:
+  merge-moto-config:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Check Out Orchestrator Core
+        uses: actions/checkout@v4
+
+      - name: Fetch Pure Motorola Kernel Source Tree
+        uses: actions/checkout@v4
+        with:
+          repository: '015stray91/kernel-msm-1'
+          branch: 'android14-release-u1tgns34.42-86-2-32'
+          path: 'kernel-msm-1'
+
+      - name: Execute Native Kconfig Merge Pass
+        run: |
+          cd kernel-msm-1
+          export ARCH=arm64
+          export SUBARCH=arm64
+          
+          # Initialize our clear markdown diagnostic log
+          echo "# MOTOROLA KCONFIG MERGE INTERROGATION LOG" > merge_diagnostic.md
+          echo "\`\`\`text" >> merge_diagnostic.md
+          
+          # Define the physical text arrays matching your device architecture paths
+          BASE_GKI="arch/arm64/configs/gki_defconfig"
+          QCOM_FRAG="arch/arm64/configs/vendor/parrot_defconfig"
+          MOTO_GENEVN="arch/arm64/configs/vendor/ext_config/moto-parrot-genevn.config"
+          
+          echo "[+] Starting Native Motorola /scripts/kconfig/merge_config.sh Loop..." >> merge_diagnostic.md
+          
+          # Execute the raw merge tool, sending every single decision straight to our log file
+          # We use the -m flag to minimize variables and only apply the explicit overrides
+          ./scripts/kconfig/merge_config.sh -m -O out/ \
+              "$BASE_GKI" \
+              "$QCOM_FRAG" \
+              "$MOTO_GENEVN" 2>&1 >> raw_merge.log || true
+              
+          # Execute olddefconfig inside the out directory to resolve the dependency links
+          echo "[+] Finalizing symbol resolution via olddefconfig..." >> merge_diagnostic.md
+          make O=out/ ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig 2>&1 >> raw_merge.log || true
+
+      - name: Extract Decision Map And Contradictions
+        run: |
+          cd kernel-msm-1
+          # Post-process the merge log to look straight at the overridden values
+          # This catches exactly where the script says 'value changed:' or 'override'
+          if [ -f "raw_merge.log" ]; then
+              echo "--- LOG EXTRACTION START ---" >> merge_diagnostic.md
+              grep -E "Value|override|warning|error|failed|not found" raw_merge.log >> merge_diagnostic.md || true
+          else
+              echo "❌ ERROR: Raw merge script output log was not generated." >> merge_diagnostic.md
+          fi
+          
+          echo "\`\`\`" >> merge_diagnostic.md
+
+      - name: Upload Clean Decisional Blueprint
+        uses: actions/upload-artifact@v4
+        with:
+          name: motorola_merge_roadmap
+          path: kernel-msm-1/merge_diagnostic.md
+          compression-level: 0 # Stop the zip shuffling that scrambles text data
+          

@@ -1,0 +1,183 @@
+name: Genevn Custom Toolchain Build
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_target:
+        description: "Kernel target"
+        type: choice
+        default: "android12-5.10.209 (2024-05)"
+        options:
+          - "android12-5.10.209 (2024-05)"
+      quick_target:
+        description: "Quick select"
+        type: string
+        default: ""
+      ksu_variant:
+        description: "KernelSU variant"
+        type: choice
+        options:
+          - KernelSU-Next
+          - SukiSU
+          - ReSukiSU
+          - WKSU
+        default: "KernelSU-Next"
+      add_susfs:
+        description: "Add SUSFS"
+        type: boolean
+        default: true
+      add_zeromount:
+        description: "Add ZeroMount"
+        type: boolean
+        default: true
+      add_zram:
+        description: "Add ZRAM with LZ4K"
+        type: boolean
+        default: true
+      add_bbg:
+        description: "Add Baseband Guard"
+        type: boolean
+        default: true
+      add_overlayfs_support:
+        description: "Add overlayfs support"
+        type: boolean
+        default: true
+      add_kpm:
+        description: "Add KPM"
+        type: boolean
+        default: true
+      sukisu_commit:
+        description: "KSU commit override"
+        type: string
+        default: ""
+
+jobs:
+  build:
+    name: "Build Custom Kernel - Genevn"
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Free Disk Space
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_tool_cache: true
+
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: |
+            device-profiles.json
+            patches/
+            modules.vendor_blocklist
+            modules.list.msm.parrot
+          sparse-checkout-cone-mode: false
+
+      - name: Initialize Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-12 lld-12 llvm-12 gcc-aarch64-linux-gnu \
+            binutils bc bison flex libssl-dev libelf-dev cpio kmod python3 \
+            make device-tree-compiler
+
+      - name: Clone Kernel Source
+        run: |
+          git clone --depth=1 https://github.com/015stray91/kernel-msm-1.git kernel-msm-1
+          cd kernel-msm-1
+          git clone --depth=1 https://android.googlesource.com/kernel/common common
+
+      - name: Prepare Patches & Module Lists
+        run: |
+          cd kernel-msm-1
+          
+          sudo mv modules.vendor_blocklist.msm.parrot common 
+          sudo mv modules.list.msm.parrot common
+
+      - name: Apply Patches
+        run: |
+          cd kernel-msm-1
+          chmod +x scripts/kconfig/apply-kernel-patches.sh
+          sudo ./scripts/kconfig/apply-kernel-patches.sh kernel-msm-1 android12-5.10 kernel-msm-1/patches
+
+      - name: Apply Feature Toggles
+        env:
+          KSU_VARIANT: ${{ inputs.ksu_variant }}
+          ADD_SUSFS: ${{ inputs.add_susfs }}
+          ADD_ZEROMOUNT: ${{ inputs.add_zeromount }}
+          ADD_ZRAM: ${{ inputs.add_zram }}
+          ADD_BBG: ${{ inputs.add_bbg }}
+          ADD_OVERLAYFS: ${{ inputs.add_overlayfs_support }}
+          ADD_KPM: ${{ inputs.add_kpm }}
+        run: |
+          cd kernel-msm-1
+          [[ "$ADD_SUSFS" == "true" ]] && scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/susfs.config
+          [[ "$ADD_ZEROMOUNT" == "true" ]] && scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/zeromount.config
+          [[ "$ADD_ZRAM" == "true" ]] && scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/zram.config
+          [[ "$ADD_BBG" == "true" ]] && scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/bbg.config
+          [[ "$ADD_OVERLAYFS" == "true" ]] && scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/overlayfs.config
+          [[ "$ADD_KPM" == "true" ]] && scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/kpm.config
+          case "$KSU_VARIANT" in
+            "KernelSU-Next") scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/ksu-next.config ;;
+            "SukiSU") scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/sukisu.config ;;
+            "ReSukiSU") scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/resukisu.config ;;
+            "WKSU") scripts/kconfig/merge_config.sh .config arch/arm64/configs/vendor/ext_config/wksu.config ;;
+          esac
+
+      - name: Merge Configs
+        run: |
+          cd kernel-msm-1
+          sudo ./scripts/kconfig/merge_config.sh \
+            arch/arm64/configs/ksu-nethunter.defconfig \
+            build.config.gki_kprobes \
+            build.config.aarch64 \
+            build.config.gki_kprobes.aarch64 \
+            build.config.allmodconfig \
+            build.config.allmodconfig.aarch64 \
+            build.config.moto \
+            build.config.msm.common \
+            build.config.msm.gki \
+            build.config.common \
+            build.config.db845c \
+            build.config.msm.parrot \
+            arch/arm64/configs/vendor/parrot_GKI.config \
+            arch/arm64/configs/vendor/ext_config/debug-parrot-genevn.config \
+            arch/arm64/configs/vendor/ext_config/moto-parrot-gki.config \
+            arch/arm64/configs/vendor/ext_config/debug-parrot.config \
+            arch/arm64/configs/vendor/ext_config/moto-parrot.config \
+            arch/arm64/configs/vendor/ext_config/moto-parrot-genevn.config
+          cp .config out/
+
+      - name: Build Kernel
+        run: |
+          cd kernel-msm-1
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE="aarch64-linux-gnu-"
+          export LLVM=1
+          export LLVM_IAS=1
+          export CC="clang-12"
+          export LD="ld.lld-12"
+          export AR="llvm-ar-12"
+          export NM="llvm-nm-12"
+          export OBJCOPY="llvm-objcopy-12"
+          export OBJDUMP="llvm-objdump-12"
+          export STRIP="llvm-strip-12"
+          make O=out ARCH=arm64 CC=clang-12 LD=ld.lld-12 CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 Image.gz -j$(nproc) || exit 1
+
+      - name: Package Kernel
+        run: |
+          cd kernel-msm-1/packages
+          ./build_boot_image.sh ../out/arch/arm64/boot/Image.gz
+          cp ../out/boot.img ../../Genevn-Kernel-Flashable.img
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Genevn-Boot-Image
+          path: Genevn-Kernel-Flashable.img
+          compression-level: 9
+          overwrite: true
