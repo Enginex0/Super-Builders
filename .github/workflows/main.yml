@@ -1,5 +1,4 @@
 name: Build Kernels
-
 permissions:
   contents: write
   actions: write
@@ -15,7 +14,7 @@ on:
           - a12-5-10
           - a13-5-10
           - a13-5-15
-          - a14-5-15
+          - a13-5-15-189
           - a14-6-1
           - a15-6-6
           - a16-6-12
@@ -66,7 +65,7 @@ on:
         options:
           - generic
           - lake
-        default: "lake"
+        default: "generic"
 
 jobs:
   build-a12-5-10:
@@ -103,18 +102,10 @@ jobs:
     if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a13-5-15' }}
     uses: ./.github/workflows/kernel-a13-5.15.yml
     secrets: inherit
-    with:
-      ksu_variant: ${{ inputs.ksu_variant }}
-      add_susfs: ${{ inputs.add_susfs }}
-      add_zeromount: ${{ inputs.add_zeromount }}
-      add_zram: ${{ inputs.add_zram }}
-      add_bbg: ${{ inputs.add_bbg }}
-      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
-      add_kpm: ${{ inputs.add_kpm }}
-      sukisu_commit: ${{ inputs.sukisu_commit }}
-      device_codename: ${{ inputs.device_codename }}
+    d-a15-5-15-189: if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a15-5-15-189' }} uses: ./.github/workflows/kernel-custom.yml secrets: inherit with: kernel_target: "android13-5.15.189 (2025-09)" ksu_variant: ${{ inputs.ksu_variant }} add_susfs: ${{ inputs.add_susfs }} add_zeromount: ${{ inputs.add_zeromount }} add_zram: ${{ inputs.add_zram }} add_bbg: ${{ inputs.add_bbg }} add_overlayfs_support: ${{ inputs.add_overlayfs_support }} add_kpm: ${{ inputs.add_kpm }} sukisu_commit: ${{ inputs.sukisu_commit }} device_codename: ${{ inputs.device_codename }} 
+      
 
-  build-a14-5-15:
+  build-a15-5-15-189:
     if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a14-5-15' }}
     uses: ./.github/workflows/kernel-a14-5.15.yml
     secrets: inherit
