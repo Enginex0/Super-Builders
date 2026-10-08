@@ -1,0 +1,49 @@
+name: Run Enhanced SukiSU SUSFS Once
+run-name: "Enhanced SukiSU SUSFS — 6.1.145-android14-11-33419968-abS928BXXS6DZG1"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/susfs-2.2.0
+    paths:
+      - '.github/workflows/run-susfs-enhanced-once.yml'
+      - '.github/workflows/kernel-custom.yml'
+      - '.github/workflows/build-sukisu.yml'
+      - '.github/workflows/cache-dependencies.yml'
+      - '.github/actions/droidspaces-678/**'
+      - 'android14-6.1/defconfig.fragment'
+      - 'android14-6.1/build-helpers/**'
+      - 'android14-6.1/SukiSU-Ultra/patches/**'
+      - 'android14-6.1/sukisu-pin.txt'
+      - 'device-profiles.json'
+      - 'zram/**'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: enhanced-sukisu-susfs-e3q
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/kernel-custom.yml
+    permissions:
+      contents: write
+      actions: write
+    with:
+      kernel_target: "android14-6.1.145 (2025-09)"
+      quick_target: ""
+      ksu_variant: "SukiSU"
+      add_susfs: true
+      add_zeromount: true
+      add_droidspaces: true
+      add_zram: true
+      add_bbg: true
+      add_overlayfs_support: true
+      add_kpm: true
+      susfs_open_redirect: true
+      sukisu_commit: ""
+# Automatic rebuilds are restricted to files that affect the e3q daily kernel.

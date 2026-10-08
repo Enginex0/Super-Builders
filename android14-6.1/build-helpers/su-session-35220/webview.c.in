@@ -1,0 +1,141 @@
+/* Actual policy and hook functions, with mocked kernel storage and mount APIs. */
+typedef __SIZE_TYPE__ size_t;
+typedef _Bool bool;
+typedef unsigned int uid_t;
+typedef unsigned long long u64;
+#define true 1
+#define false 0
+#define NULL ((void *)0)
+#define CONFIG_KSU_SUSFS 1
+#define LINUX_VERSION_CODE 0x0601a2
+#define KERNEL_VERSION(a,b,c) (((a)<<16)|((b)<<8)|(c))
+#define WEBVIEW_ZYGOTE_UID 1053
+#define KSU_APP_PROFILE_VER 4
+#define KSU_APP_PROFILE_PRESERVE_UID 9999
+#define KSU_MAX_GROUPS 32
+#define GFP_KERNEL 0
+#define ENOMEM 12
+#define EINVAL 22
+#define unlikely(x) (x)
+#define likely(x) (x)
+#define READ_ONCE(x) (x)
+#define WRITE_ONCE(x,v) ((x)=(v))
+#define pr_info(...) ((void)0)
+#define pr_warn(...) ((void)0)
+#define pr_err(...) ((void)0)
+#define CHECK(x) do { checks++; if(!(x)) return __LINE__; } while(0)
+static int checks;
+void *memcpy(void *d,const void *s,size_t n) { char *a=d;const char *b=s;while(n--)*a++=*b++;return d; }
+int strcmp(const char *a,const char *b) { while(*a&&*a==*b){a++;b++;}return *a-*b; }
+size_t strnlen(const char *s,size_t n) { size_t i=0;while(i<n&&s[i])i++;return i; }
+struct non_root_profile { bool umount_modules; } default_non_root_profile;
+struct app_profile {
+    int version; char key[64]; uid_t curr_uid; bool allow_su;
+    struct { bool use_default; struct non_root_profile profile; } nrp_config;
+    struct { struct { int groups_count; char selinux_domain[64]; } profile; } rp_config;
+} stored, allocated;
+static bool has_profile, ksu_boot_completed, ksu_webview_zygote_umount_enabled;
+static int refs, saves, writes, allocation_error, write_error, frees;
+static uid_t manager_uid;
+static void rcu_read_lock(void) {}
+static void rcu_read_unlock(void) {}
+static bool ksu_is_manager_uid(uid_t uid) { return uid==manager_uid; }
+static bool __ksu_is_allow_uid(uid_t uid) { return uid==20000; }
+static struct app_profile *ksu_get_app_profile(uid_t uid) { if(has_profile && uid==stored.curr_uid){refs++;return &stored;}return NULL; }
+static void ksu_put_app_profile(struct app_profile *p) { refs--; }
+static void *kzalloc(size_t n,int flags) { if(allocation_error)return NULL;allocated=(struct app_profile){0};return &allocated; }
+static void kfree(void *p) { frees++; }
+static void ksu_persistent_allow_list(void) { saves++; }
+@@VALID@@
+static int ksu_set_app_profile(struct app_profile *p) { if(write_error)return write_error;if(!profile_valid(p))return -EINVAL;stored=*p;has_profile=true;writes++;return 0; }
+@@POLICY@@
+
+
+
+static bool ksu_kernel_umount_enabled=true, ksu_module_mounted=true;
+static bool nosu, umounted, next_umounted, pending, root_allowed;
+static int namespace_kind, schedules, mount_calls, normal_fds, manager_marks;
+struct cred { int unused; } cred;
+static const struct cred *ksu_cred=&cred;
+struct work_struct { int unused; } susfs_extra_works;
+struct task_struct { int pid; struct { int mode; void *filter; } seccomp; struct { int siglock; } *sighand; } task;
+#define current (&task)
+#define current_cred() (&cred)
+static bool is_zygote(const struct cred *c) { return namespace_kind==1; }
+static bool is_zygote_next(const struct cred *c) { return namespace_kind==2; }
+static bool is_appuid(uid_t uid) { return uid%100000>=10000 && uid%100000<=19999; }
+static bool is_isolated_process(uid_t uid) { return uid%100000>=99000; }
+static bool ksu_is_allow_uid_for_current(uid_t uid) { return root_allowed || uid==manager_uid; }
+static void ksu_set_current_proc_unprivillege(void) { nosu=true; }
+static void ksu_clear_current_proc_unprivillege(void) { nosu=false; }
+static void susfs_set_current_proc_no_su(void) { nosu=true; }
+static void susfs_set_current_proc_umounted(void) { umounted=true; }
+static void susfs_set_current_proc_umounted_for_zygote_next(void) { next_umounted=true; }
+static bool work_pending(struct work_struct *w) { return pending; }
+static void schedule_work(struct work_struct *w) { pending=true;schedules++; }
+static void spin_lock_irq(int *p) {}
+static void spin_unlock_irq(int *p) {}
+static void ksu_seccomp_allow_cache(void *p,int n) {}
+#define SECCOMP_MODE_FILTER 2
+#define __NR_reboot 142
+static void ksu_mark_manager(uid_t uid) { manager_marks++; }
+static void ksu_set_ksud_status(uid_t uid) {}
+static int ksu_install_fd(void) { normal_fds++;return 7; }
+struct mount_entry { const char *umountable; int flags; } entry_one={"/test",0};
+static int mount_list_lock, mount_list;
+#define list_for_each_entry(entry,list,member) for(entry=&entry_one;entry;entry=NULL)
+static const struct cred *override_creds(const struct cred *c) { return c; }
+static void revert_creds(const struct cred *c) {}
+static void down_read(int *l) {}
+static void up_read(int *l) {}
+static void try_umount(const char *name,int flags) { mount_calls++; }
+
+@@NEXT@@
+
+
+struct hlist_node { int unused; };
+struct perm_data { struct app_profile profile; struct hlist_node list; } entries[3];
+static int allowlist_mutex, allow_list, allow_list_count, pruned;
+#define hash_for_each_safe(table,i,tmp,np,member) for(i=0;i<3 && ((np)=&entries[i]);i++)
+static void mutex_lock(int *p) {}
+static void mutex_unlock(int *p) {}
+static void hlist_del_rcu(struct hlist_node *n) { pruned++; }
+static void put_perm_data(struct perm_data *p) {}
+static void smp_mb(void) {}
+@@PRUNE@@
+static bool invalid_uid(uid_t uid,char *key,void *data) { return false; }
+static void reset(void) {
+    has_profile=ksu_boot_completed=ksu_webview_zygote_umount_enabled=false;
+    refs=saves=writes=allocation_error=write_error=frees=0;
+    manager_uid=12345; default_non_root_profile.umount_modules=true;
+    stored=(struct app_profile){.version=KSU_APP_PROFILE_VER,.curr_uid=WEBVIEW_ZYGOTE_UID};
+    memcpy(stored.key,"webview_zygote",sizeof("webview_zygote"));
+    nosu=umounted=next_umounted=pending=root_allowed=false;
+    namespace_kind=1; schedules=mount_calls=normal_fds=manager_marks=0;
+    ksu_kernel_umount_enabled=ksu_module_mounted=true;
+    entries[0].profile.curr_uid=WEBVIEW_ZYGOTE_UID;
+    entries[1].profile.curr_uid=KSU_APP_PROFILE_PRESERVE_UID;
+    entries[2].profile.curr_uid=10055;
+    allow_list_count=3;pruned=0;
+}
+int test_main(void) {
+    checks=0;reset();
+    CHECK(profile_valid(&stored));
+    stored.allow_su=true;memcpy(stored.rp_config.profile.selinux_domain,"u:r:su:s0",sizeof("u:r:su:s0"));CHECK(!profile_valid(&stored));
+    stored.allow_su=false;stored.key[0]='x';CHECK(!profile_valid(&stored));
+    reset();has_profile=true;stored.nrp_config.use_default=false;stored.nrp_config.profile.umount_modules=true;
+    CHECK(ksu_uid_should_umount(1053));
+    namespace_kind=2;CHECK(handle_zygote_next_setresuid(1053)==0);CHECK(nosu && umounted && next_umounted);
+    CHECK(schedules==1);CHECK(refs==0);
+    reset();has_profile=true;stored.nrp_config.use_default=false;stored.nrp_config.profile.umount_modules=false;
+    CHECK(!ksu_uid_should_umount(1053));namespace_kind=2;CHECK(handle_zygote_next_setresuid(1053)==0);
+    CHECK(nosu && !umounted && !next_umounted && schedules==0);CHECK(refs==0);
+    reset();ksu_prune_allowlist(invalid_uid,NULL);CHECK(pruned==0);
+    ksu_boot_completed=true;ksu_prune_allowlist(invalid_uid,NULL);CHECK(pruned==1 && allow_list_count==2);
+    return 0;
+}
+int test_count(void) { return checks; }
+#ifndef WASM_TEST
+int printf(const char *,...);
+int main(void) { int line=test_main();printf("WebView exact-C checks: %d; failure line: %d\n",checks,line);return line?1:0; }
+#endif

@@ -10,6 +10,22 @@ diff -ruN /mnt/external/claudetest-gki-build/patch-workspace/ksu-variants/resuki
          ksu_mark_running_process();
  #endif
      }
+@@ -906,15 +906,9 @@
+ 	KSU_IOCTL(SET_SEPOLICY, "SET_SEPOLICY", do_set_sepolicy, only_root),
+ 	KSU_IOCTL(CHECK_SAFEMODE, "CHECK_SAFEMODE", do_check_safemode,
+ 		  always_allow),
+-	KSU_IOCTL(GET_ALLOW_LIST, "GET_ALLOW_LIST", do_get_allow_list,
++	KSU_IOCTL(NEW_GET_ALLOW_LIST, "NEW_GET_ALLOW_LIST", do_new_get_allow_list,
+ 		  manager_or_root),
+-	KSU_IOCTL(GET_DENY_LIST, "GET_DENY_LIST", do_get_deny_list,
+-		  manager_or_root),
+-	KSU_IOCTL(KSU_IOCTL_NEW_GET_ALLOW_LIST, "NEW_GET_ALLOW_LIST", do_new_get_allow_list,
+-		  manager_or_root),
+-	KSU_IOCTL(KSU_IOCTL_NEW_GET_DENY_LIST, "NEW_GET_DENY_LIST", do_new_get_deny_list,
++	KSU_IOCTL(NEW_GET_DENY_LIST, "NEW_GET_DENY_LIST", do_new_get_deny_list,
+ 		  manager_or_root),
+ 	KSU_IOCTL(UID_GRANTED_ROOT, "UID_GRANTED_ROOT", do_uid_granted_root,
+ 		  manager_or_root),
 @@ -1074,6 +1074,12 @@
              susfs_add_sus_kstat(arg);
              return 0;

@@ -1,0 +1,112 @@
+#![allow(dead_code, non_camel_case_types)]
+use std::sync::{Mutex,OnceLock};
+type c_int=i32;
+type RawFd=i32;
+type Result<T>=std::result::Result<T,String>;
+trait Context<T> { fn context(self, message:&str)->Result<T>; }
+impl<T,E:std::fmt::Display> Context<T> for std::result::Result<T,E> {
+    fn context(self,message:&str)->Result<T>{self.map_err(|e|format!("{message}: {e}"))}
+}
+macro_rules! bail { ($($t:tt)*)=>{return Err(format!($($t)*))} }
+macro_rules! error { ($($t:tt)*)=>{STATE.lock().unwrap().logs.push(format!($($t)*))} }
+struct State { entries:Vec<(String,String)>, read_error:bool, reads:usize,
+    original_tty:bool, original_errno:i32, wrapper_tty:bool, wrapper_error:bool, dup_error:bool,
+    wrappers:usize, dups:usize, closes:Vec<i32>, logs:Vec<String> }
+static STATE:Mutex<State>=Mutex::new(State{entries:Vec::new(),read_error:false,reads:0,
+    original_tty:true,original_errno:25,wrapper_tty:true,wrapper_error:false,dup_error:false,
+    wrappers:0,dups:0,closes:Vec::new(),logs:Vec::new()});
+mod io {
+    pub type Result<T>=std::result::Result<T,String>;
+    pub struct Error(i32);
+    impl Error {
+        pub fn last_os_error()->Self {Self(unsafe{*crate::libc::__errno()})}
+        pub fn raw_os_error(&self)->Option<i32>{Some(self.0)}
+    }
+}
+mod fs {
+    use super::{STATE,io};
+    pub struct DirEntry(String);
+    impl DirEntry { pub fn file_name(&self)->std::ffi::OsString{self.0.clone().into()} }
+    pub fn read_dir(_path:&str)->io::Result<std::vec::IntoIter<io::Result<DirEntry>>> {
+        let mut s=STATE.lock().unwrap();s.reads+=1;
+        if s.read_error {return Err("EACCES".into());}
+        Ok(s.entries.iter().map(|(n,_)|Ok(DirEntry(n.clone()))).collect::<Vec<_>>().into_iter())
+    }
+    pub fn read_link(path:&str)->io::Result<std::path::PathBuf> {
+        let s=STATE.lock().unwrap();let name=path.rsplit('/').next().unwrap();
+        s.entries.iter().find(|(n,_)|n==name).map(|(_,t)|t.into()).ok_or("ENOENT".into())
+    }
+}
+mod libc {
+    use super::STATE;
+    pub const EACCES:i32=13;
+    static mut ERRNO:i32=0;
+    pub unsafe fn __errno()->*mut i32 { &raw mut ERRNO }
+    pub unsafe fn isatty(fd:i32)->i32 {
+        let s=STATE.lock().unwrap();let tty=if fd==0{s.original_tty}else{s.wrapper_tty};
+        unsafe{ERRNO=if fd==0{s.original_errno}else{25};} i32::from(tty)
+    }
+    pub unsafe fn dup2(_from:i32,_to:i32)->i32 {
+        let mut s=STATE.lock().unwrap();s.dups+=1;unsafe{ERRNO=9;}if s.dup_error{-1}else{0}
+    }
+    pub unsafe fn close(fd:i32) {STATE.lock().unwrap().closes.push(fd);unsafe{ERRNO=0;}}
+}
+fn get_wrapped_fd(_fd:i32)->Result<i32>{let mut s=STATE.lock().unwrap();s.wrappers+=1;if s.wrapper_error{Err("denied".into())}else{Ok(7)}}
+static DRIVER_FD:OnceLock<RawFd>=OnceLock::new();
+const DRIVER_FD_NAME:&str="anon_inode:[ksu_driver]";
+const SU_DRIVER_FD_NAME:&str="anon_inode:[ksu_driver_su]";
+@@SCAN@@
+@@CLAIM@@
+@@WRAP@@
+@@UNLOAD@@
+fn main(){
+    let case=std::env::args().nth(1).unwrap();
+    match case.as_str() {
+        "scan-priority"=>{
+            STATE.lock().unwrap().entries=vec![("3".into(),DRIVER_FD_NAME.into()),("9".into(),SU_DRIVER_FD_NAME.into())];
+            assert_eq!(scan_driver_fd().unwrap(),Some(9));
+        },
+        "scan-legacy"=>{
+            STATE.lock().unwrap().entries=vec![("5".into(),DRIVER_FD_NAME.into())];
+            assert_eq!(scan_driver_fd().unwrap(),Some(5));
+        },
+        "scan-fake-name"=>{
+            STATE.lock().unwrap().entries=vec![("4".into(),"/tmp/[ksu_driver]-fake".into())];
+            assert_eq!(scan_driver_fd().unwrap(),None);
+        },
+        "scan-empty"=>assert_eq!(scan_driver_fd().unwrap(),None),
+        "scan-denied"=>{STATE.lock().unwrap().read_error=true;assert!(scan_driver_fd().is_err());assert!(claim_inherited_driver_fd().is_err());},
+        "claim-cached"=>{
+            STATE.lock().unwrap().entries=vec![("7".into(),DRIVER_FD_NAME.into())];
+            claim_inherited_driver_fd().unwrap();assert_eq!(DRIVER_FD.get(),Some(&7));
+            STATE.lock().unwrap().read_error=true;claim_inherited_driver_fd().unwrap();assert_eq!(STATE.lock().unwrap().reads,1);
+        },
+        "unload-names"=>{
+            assert!(is_ksu_fd_name(DRIVER_FD_NAME));assert!(is_ksu_fd_name(SU_DRIVER_FD_NAME));
+            assert!(is_ksu_fd_name("anon_inode:[ksu_fdwrapper]"));assert!(!is_ksu_fd_name("/tmp/[ksu_driver]"));
+            assert!(!is_ksu_fd_name("anon_inode:[ksu_driver_su_bad]"));
+        },
+        other=>{
+            {let mut s=STATE.lock().unwrap();match other {
+                "tty-ok"=>{},
+                "tty-not-tty"=>s.original_tty=false,
+                "tty-eacces"=>{s.original_tty=false;s.original_errno=13;},
+                "wrapper-not-tty"=>{s.original_tty=false;s.original_errno=13;s.wrapper_tty=false;},
+                "wrapper-failure"=>s.wrapper_error=true,
+                "dup-failure"=>s.dup_error=true,
+                _=>panic!("unknown case")
+            }}
+            wrap_tty(0);
+            let s=STATE.lock().unwrap();
+            match other {
+                "tty-ok"|"tty-eacces"=>{assert_eq!(s.wrappers,1);assert_eq!(s.dups,1);assert_eq!(s.closes,vec![7]);assert!(s.logs.is_empty());},
+                "tty-not-tty"=>{assert_eq!(s.wrappers,0);assert_eq!(s.dups,0);assert!(s.closes.is_empty());},
+                "wrapper-not-tty"=>{assert_eq!(s.wrappers,1);assert_eq!(s.dups,0);assert_eq!(s.closes,vec![7]);},
+                "wrapper-failure"=>{assert_eq!(s.wrappers,1);assert_eq!(s.dups,0);assert!(s.closes.is_empty());assert_eq!(s.logs.len(),1);},
+                "dup-failure"=>{assert_eq!(s.dups,1);assert_eq!(s.closes,vec![7]);assert!(s.logs[0].contains("errno: 9"));},
+                _=>unreachable!()
+            }
+        }
+    }
+    println!("PASS {case}");
+}

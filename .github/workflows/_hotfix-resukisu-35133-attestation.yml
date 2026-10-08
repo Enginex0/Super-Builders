@@ -1,0 +1,107 @@
+name: One-shot ReSukiSU 35133 attestation verifier fix
+
+on:
+  push:
+    branches:
+      - agent/resukisu-35133-susfs-230
+    paths:
+      - '.github/workflows/_hotfix-resukisu-35133-attestation.yml'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  patch-and-dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/resukisu-35133-susfs-230
+          fetch-depth: 0
+
+      - name: Replace invalid ASCII Image version assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('android14-6.1/build-helpers/su-session-35133/apply.py')
+          text = path.read_text(encoding='utf-8')
+
+          old_markers = '        for marker in [b"v2.3.0", b"35133", b"6.1.162-android14-11-34343818-abS928BXXU6ZZHL"]:'
+          new_markers = '        for marker in [b"v2.3.0", b"6.1.162-android14-11-34343818-abS928BXXU6ZZHL"]:'
+          if text.count(old_markers) != 1:
+              raise SystemExit(f'Expected exactly one invalid Image marker list, found {text.count(old_markers)}')
+          text = text.replace(old_markers, new_markers, 1)
+
+          image_anchor = '        image = args.image.read_bytes()\n'
+          if text.count(image_anchor) != 1:
+              raise SystemExit(f'Expected exactly one Image audit anchor, found {text.count(image_anchor)}')
+          version_gate = '\n'.join([
+              '        # KSU_VERSION is a numeric C macro; its decimal spelling is not',
+              '        # guaranteed to survive in the compressed Image. Prove 35133 from',
+              '        # the exact pinned source history plus the Kbuild formula instead.',
+              '        commit_count = int(git(ksu, "rev-list", "--count", "HEAD").strip())',
+              '        kbuild = (ksu / "kernel/Kbuild").read_text(encoding="utf-8")',
+              '        version_prefix = "KSU_VERSION := $(shell expr 30000 + $(KSU_LOCAL_VERSION) + "',
+              '        version_lines = [line for line in kbuild.splitlines()',
+              '                         if line.startswith(version_prefix) and line.endswith(")")]',
+              '        if len(version_lines) != 1:',
+              '            raise RuntimeError(f"Expected one ReSukiSU KSU_VERSION formula, found {len(version_lines)}")',
+              '        try:',
+              '            version_offset = int(version_lines[0][len(version_prefix):-1])',
+              '        except ValueError as exc:',
+              '            raise RuntimeError(f"Invalid ReSukiSU KSU_VERSION formula: {version_lines[0]}") from exc',
+              '        compiled_version = 30000 + commit_count + version_offset',
+              '        if compiled_version != 35133:',
+              '            raise RuntimeError(',
+              '                f"ReSukiSU version formula mismatch: commits={commit_count} "',
+              '                f"offset={version_offset} result={compiled_version} expected=35133"',
+              '            )',
+              '',
+          ]) + '\n'
+          text = text.replace(image_anchor, version_gate + image_anchor, 1)
+
+          receipt_anchor = '        args.receipt.write_text(json.dumps(receipt, indent=2)+"\\n", encoding="utf-8", newline="\\n")\n'
+          if text.count(receipt_anchor) != 1:
+              raise SystemExit(f'Expected exactly one receipt write anchor, found {text.count(receipt_anchor)}')
+          receipt_proof = '\n'.join([
+              '        receipt.update(resukisu_commit_count=commit_count,',
+              '                       resukisu_version_offset=version_offset,',
+              '                       resukisu_compiled_version=compiled_version)',
+              '',
+          ]) + '\n'
+          text = text.replace(receipt_anchor, receipt_proof + receipt_anchor, 1)
+
+          old_print = '        print("PASS: final config, Image identity, unique compiled functions and package attestation")'
+          new_print = '        print("PASS: final config, Image identity, ReSukiSU version formula, unique compiled functions and package attestation")'
+          if text.count(old_print) != 1:
+              raise SystemExit(f'Expected exactly one PASS message, found {text.count(old_print)}')
+          text = text.replace(old_print, new_print, 1)
+
+          path.write_text(text, encoding='utf-8', newline='\n')
+          PY
+
+          python3 -m py_compile android14-6.1/build-helpers/su-session-35133/apply.py
+          git diff --check
+          git diff -- android14-6.1/build-helpers/su-session-35133/apply.py
+
+      - name: Commit verifier fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add android14-6.1/build-helpers/su-session-35133/apply.py
+          git commit -m 'ci: verify ReSukiSU 35133 without Image ASCII assumption'
+          git push origin HEAD:agent/resukisu-35133-susfs-230
+
+      - name: Start corrected strict build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run run-resukisu-35057-strict.yml --ref agent/resukisu-35133-susfs-230

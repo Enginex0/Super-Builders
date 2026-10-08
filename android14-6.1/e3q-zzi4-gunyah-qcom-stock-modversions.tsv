@@ -1,0 +1,16 @@
+# Samsung SM-S928B / S928BXXU6ZZI4 stock vendor_boot gunyah_qcom.ko import CRC baseline
+# Source vendor_boot.img SHA256: be1a7fbb823c1b259a7cdb1f9a85ee93e459b2ad5bf7a83193ffabf61a2e1257
+# Stock gunyah_qcom.ko SHA256: 9e0103d5ff16061c99613f2a5982a7d8bbcc6add300d736c31d17a441421fade
+# Kernel release: 6.1.162-android14-11-34343818-abS928BXXU6ZZI4
+# symbol	stock_crc
+arm_smccc_1_1_get_conduit	0x6d467b08
+__arm_smccc_sve_check	0x3d93c7c2
+gh_rm_register_platform_ops	0xfd11885c
+__stack_chk_fail	0xc2c193d2
+gh_rm_unregister_platform_ops	0x057f483b
+__kmalloc	0xeb233a45
+qcom_scm_assign_mem	0xcdaced8a
+kfree	0x037a0cba
+memstart_addr	0x9688de8b
+alt_cb_patch_nops	0x1348649e
+module_layout	0xea759d7f

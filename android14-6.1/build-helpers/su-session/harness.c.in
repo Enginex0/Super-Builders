@@ -1,0 +1,260 @@
+/* Fault-injection harness. Production functions are inserted verbatim by test.py.
+ * Kernel APIs below are mocks; this is not a kernel boot or SELinux integration test. */
+typedef __SIZE_TYPE__ size_t;
+typedef unsigned long long u64;
+typedef u64 kernel_cap_t;
+typedef _Bool bool;
+#define true 1
+#define false 0
+#define NULL ((void *)0)
+#define __user
+#define CONFIG_KSU_SUSFS 1
+#define KSU_COMPAT_USE_STATIC_KEY 1
+#define KERNEL_VERSION(a,b,c) (((a)<<16)|((b)<<8)|(c))
+#define LINUX_VERSION_CODE KERNEL_VERSION(6,1,162)
+#define IS_ERR(p) ((unsigned long)(p) >= (unsigned long)-4095)
+#define IS_ERR_OR_NULL(p) (!(p) || IS_ERR(p))
+#define PTR_ERR(p) ((long)(p))
+#define ERR_PTR(n) ((void *)(long)(n))
+#define likely(x) (x)
+#define unlikely(x) (x)
+#define pr_info(...) ((void)0)
+#define pr_warn(...) ((void)0)
+#define pr_warn_once(...) ((void)0)
+#define pr_err(...) ((void)0)
+#define GFP_KERNEL 0
+#define LOOKUP_FOLLOW 0
+#define EPERM 1
+#define EBADF 9
+#define EAGAIN 11
+#define ENOMEM 12
+#define EFAULT 14
+#define EINVAL 22
+#define ENOTTY 25
+#define O_CLOEXEC 02000000
+#define O_RDWR 2
+#define AT_FDCWD -100
+#define PF_NPROC_EXCEEDED 1
+#define UCOUNT_RLIMIT_NPROC 0
+#define RLIMIT_NPROC 0
+#define MAX_ARG_STRINGS 100
+#define TIF_KSU_DISABLE_ESCAPE_WITH_ROOT 0
+#define FLAG_KSU_NO_NEW_PRIVS 1
+#define CAP_DAC_READ_SEARCH 4
+#define BUILD_BUG_ON(x) _Static_assert(!(x), "bad mock layout")
+#define CHECK(x) do { checks++; if (!(x)) return __LINE__; } while (0)
+static int checks, mock_violation;
+void *memcpy(void *d, const void *s, size_t n) { char *a=d; const char *b=s; while(n--) *a++=*b++; return d; }
+int memcmp(const void *a, const void *b, size_t n) { const unsigned char *x=a,*y=b; while(n--) { if(*x!=*y) return *x-*y; x++; y++; } return 0; }
+int strcmp(const char *a,const char *b) { while(*a && *a==*b) {a++;b++;} return *(const unsigned char *)a-*(const unsigned char *)b; }
+char *strstr(const char *a,const char *b) { for(;*a;a++) { const char *x=a,*y=b; while(*y&&*x==*y) {x++;y++;} if(!*y) return (char *)a; } return NULL; }
+
+struct user_struct { int unused; } user;
+struct cred { int uid,suid,euid,fsuid,gid,sgid,egid,fsgid,securebits; struct user_struct *user; kernel_cap_t cap_effective,cap_permitted,cap_bset; } live_cred, pending_cred, root_cred;
+static struct cred *ksu_cred=&root_cred;
+struct root_profile { int uid,gid,flags,namespaces; const char *selinux_domain; struct { u64 effective; } capabilities; } root_profile;
+struct task_struct { int pid,flags; const char *comm; } task;
+#define current (&task)
+#define current_uid() (live_cred.uid)
+#define current_euid() (live_cred.euid)
+#define current_cred() (&live_cred)
+#define ksu_get_uid_t(x) (x)
+static bool enabled, allowed, no_su, unprivileged, escape_disabled, init_cred, perm, init_key;
+struct static_key_true { int unused; } ksu_su_compat_enabled, ksud_execve_key;
+static bool static_branch_unlikely(const struct static_key_true *key) { return key==&ksu_su_compat_enabled ? enabled : init_key; }
+#define static_branch_likely static_branch_unlikely
+static int cred_fault, ucounts_error, commits, aborts, profile_refs, ksud_missing, boot_hooks, init_hooks;
+static struct cred *prepare_creds(void) { pending_cred=live_cred; return cred_fault==1?NULL:&pending_cred; }
+static struct user_struct *alloc_uid(int id) { return cred_fault==2?NULL:&user; }
+static void free_uid(struct user_struct *u) {}
+static int set_cred_ucounts(struct cred *c) { return ucounts_error; }
+static struct root_profile *ksu_get_root_profile(int uid) { profile_refs++; return &root_profile; }
+static void ksu_put_root_profile(struct root_profile *p) { profile_refs--; }
+static void abort_creds(struct cred *c) { aborts++; }
+static void commit_creds(struct cred *c) { commits++; live_cred=*c; }
+static void setup_groups(struct root_profile *p,struct cred *c) {}
+static void setup_selinux(const char *s,struct cred *c) {}
+static void disable_seccomp(void) {}
+static void setup_mount_ns(int n) {}
+static bool test_thread_flag(int flag) { return escape_disabled; }
+static void set_thread_flag(int flag) { escape_disabled=true; }
+static bool is_init(const struct cred *c) { return init_cred; }
+static bool ksu_is_allow_uid_for_current(int uid) { return allowed; }
+static bool ksu_is_current_proc_unprivillege(void) { return unprivileged; }
+static void ksu_set_current_proc_unprivillege(void) { unprivileged=true; }
+static bool susfs_is_current_proc_no_su(void) { return no_su; }
+static void escape_to_root_for_init(void) { init_hooks++; }
+struct user_arg_ptr { int n; };
+static int ksu_adb_root_handle_execve_manual(const char *s,struct user_arg_ptr *p) { return 0; }
+static void ksu_handle_execveat_ksud(const char *s,void *a,void *e,int *f) { boot_hooks++; }
+struct filename { const char *name; };
+struct dentry { void *d_fsdata; const void *d_op; } original_dentry, wrapper_dentry;
+struct path { struct dentry *dentry; } allocated_path;
+static int kern_path(const char *s,int flags,struct path *p) { return ksud_missing; }
+static void path_put(struct path *p) {}
+static void path_get(struct path *p) {}
+#define KSUD_PATH "/data/adb/ksud"
+static const char su_path[]="/system/bin/su", sh_path[]="/system/bin/sh", ksud_path[]=KSUD_PATH;
+struct ksu_sulog_pending_event { int unused; };
+static struct ksu_sulog_pending_event *ksu_sulog_capture_sucompat_manual(const char *s,struct user_arg_ptr a,int g) { return NULL; }
+#define ksu_sulog_capture_root_execve_manual ksu_sulog_capture_sucompat_manual
+static void ksu_sulog_emit_pending(struct ksu_sulog_pending_event *p,int r,int g) {}
+
+@@PROFILE@@
+@@SUCOMPAT@@
+
+struct inode_security_struct { int sid; } wrapper_security;
+struct inode { int i_mode; const void *i_fop; } original_inode, wrapper_inode;
+struct file_operations { int unused; };
+struct file { const struct file_operations *f_op; void *private_data; int f_flags; struct path f_path; struct inode *inode; } anon_file, orig_file, wrapper_file;
+static const struct file_operations anon_ksu_fops={0};
+static const char ksu_su_session_cookie;
+static int fd_error, anon_error, reserve_calls, releases, installs, reserved_flags, installed_flags, exec_done;
+static const char *anon_name;
+static void *anon_private;
+static int get_unused_fd_flags(int flags) { reserve_calls++; reserved_flags=flags; return fd_error?fd_error:7; }
+static void put_unused_fd(int fd) { releases++; }
+static struct file *anon_inode_getfile(const char *name,const struct file_operations *ops,void *priv,int flags) {
+    anon_name=name; anon_private=priv;
+    if(anon_error) return ERR_PTR(anon_error);
+    anon_file=(struct file){.f_op=ops,.private_data=priv,.f_flags=flags}; return &anon_file;
+}
+static int override_active, override_calls, revert_calls;
+static void fd_install(int fd,struct file *file) { installs++; installed_flags=file->f_flags; if(override_active) mock_violation++; }
+@@INSTALL@@
+
+@@SUPERCALL_TYPES@@
+static bool only_root(void) { return perm; }
+#define manager_or_root only_root
+#define only_manager only_root
+#define allowed_for_su only_root
+static bool always_allow(void) { return true; }
+@@DISPATCH_STUBS@@
+@@DISPATCH@@
+
+static int wrapper_fault, original_puts, wrapper_puts, wrapper_releases;
+struct ksu_file_wrapper { struct file_operations ops; } wrapper_data;
+static const int ksu_file_wrapper_inode_fops, ksu_file_wrapper_d_ops, ksu_file_sid=42;
+static struct file *fget(int fd) { return wrapper_fault==1?NULL:&orig_file; }
+static void fput(struct file *f) { if(f==&orig_file) original_puts++; else wrapper_puts++; }
+static struct ksu_file_wrapper *ksu_create_file_wrapper(struct file *f) { return wrapper_fault==2?ERR_PTR(-ENOMEM):&wrapper_data; }
+static void ksu_release_file_wrapper(struct ksu_file_wrapper *w) { wrapper_releases++; }
+static const struct cred *override_creds(const struct cred *c) { if(c!=ksu_cred||override_active) mock_violation++; override_active=1; override_calls++; return &live_cred; }
+static void revert_creds(const struct cred *c) { if(c!=&live_cred||!override_active) mock_violation++; override_active=0; revert_calls++; }
+static struct file *ksu_anon_inode_create_getfile_compat(const char *name,const struct file_operations *ops,void *data,int flags,void *ctx) {
+    if(!override_active) mock_violation++;
+    return wrapper_fault==3?ERR_PTR(-EPERM):&wrapper_file;
+}
+static struct inode *file_inode(struct file *f) { return f->inode; }
+static struct inode_security_struct *selinux_inode(struct inode *i) { return &wrapper_security; }
+static void *kmalloc(size_t n,int flags) { return wrapper_fault==4?NULL:&allocated_path; }
+@@WRAPPER@@
+
+struct linux_binprm { int argc,envc; const char *filename; unsigned long exec,p; } binprm;
+static int exec_result, exec_fault, exec_stage, freed, putnames, overlimit;
+static int step(void) { return ++exec_stage==exec_fault?-EFAULT:0; }
+static int current_ucounts(void) { return 0; }
+static int rlimit(int n) { return 0; }
+static int is_rlimit_overlimit(int a,int b,int c) { return overlimit; }
+static struct linux_binprm *alloc_bprm(int fd,struct filename *f) { if(step()) return ERR_PTR(-ENOMEM); binprm.filename=f->name; return &binprm; }
+static int count(struct user_arg_ptr a,int max) { return step()?-EFAULT:a.n; }
+static int bprm_stack_limits(struct linux_binprm *p) { return step(); }
+static int copy_string_kernel(const char *s,struct linux_binprm *p) { return step(); }
+static int copy_strings(int n,struct user_arg_ptr a,struct linux_binprm *p) { return step(); }
+static int bprm_execve(struct linux_binprm *p,int fd,struct filename *f,int flags) {
+    /* Model exec closing all previous CLOEXEC FDs. A premature install fails tests. */
+    installs=0; exec_done++; return exec_result;
+}
+static void free_bprm(struct linux_binprm *p) { freed++; }
+static void putname(struct filename *f) { putnames++; }
+@@EXEC@@
+
+static void reset(void) {
+    enabled=allowed=true; no_su=unprivileged=escape_disabled=init_cred=perm=init_key=false;
+    cred_fault=ucounts_error=commits=aborts=profile_refs=ksud_missing=boot_hooks=init_hooks=0;
+    fd_error=anon_error=reserve_calls=releases=installs=reserved_flags=installed_flags=exec_done=0;
+    override_active=override_calls=revert_calls=wrapper_fault=original_puts=wrapper_puts=wrapper_releases=0;
+    exec_result=exec_fault=exec_stage=freed=putnames=overlimit=mock_violation=0;
+    task=(struct task_struct){.pid=123,.comm="test"};
+    live_cred=(struct cred){.uid=10123,.euid=10123};
+    root_profile=(struct root_profile){.uid=0,.gid=0};
+    anon_file=(struct file){0}; anon_name=NULL; anon_private=NULL;
+    orig_file=(struct file){.f_path={&original_dentry},.inode=&original_inode};
+    wrapper_file=(struct file){.f_path={&wrapper_dentry},.inode=&wrapper_inode};
+}
+static int run_exec(const char *path,int fd,int flags,int argc) {
+    char name[128]={0}; size_t i=0; while(path[i]) {name[i]=path[i];i++;}
+    struct filename f={name};
+    return do_execveat_common(fd,&f,(struct user_arg_ptr){argc},(struct user_arg_ptr){1},flags);
+}
+int test_main(void) {
+    checks=0;
+    reset(); CHECK(run_exec(su_path,AT_FDCWD,0,1)==0); CHECK(exec_done==1 && installs==1 && commits==1);
+    CHECK(reserved_flags==O_CLOEXEC && (installed_flags&O_CLOEXEC)); CHECK(ksu_is_su_session_fd(&anon_file));
+    CHECK(strcmp(anon_name,"[ksu_driver]")==0); CHECK(profile_refs==0);
+    reset(); root_profile.uid=2000; root_profile.flags=FLAG_KSU_NO_NEW_PRIVS;
+    CHECK(run_exec(su_path,AT_FDCWD,0,1)==0); CHECK(live_cred.uid==2000 && installs==1 && escape_disabled);
+    reset(); CHECK(run_exec("/system/bin/true",AT_FDCWD,0,1)==0); CHECK(reserve_calls==0 && commits==0);
+    reset(); allowed=false; CHECK(run_exec(su_path,AT_FDCWD,0,1)==0); CHECK(reserve_calls==0 && commits==0);
+    reset(); enabled=false; CHECK(run_exec(su_path,AT_FDCWD,0,1)==0); CHECK(reserve_calls==0 && commits==0);
+    reset(); no_su=true; CHECK(run_exec(su_path,AT_FDCWD,0,1)==0); CHECK(reserve_calls==0 && commits==0);
+    reset(); unprivileged=true; CHECK(run_exec(su_path,AT_FDCWD,0,1)==0); CHECK(reserve_calls==0 && commits==0);
+    reset(); escape_disabled=true; CHECK(run_exec(su_path,AT_FDCWD,0,1)==0); CHECK(reserve_calls==0 && commits==0);
+    reset(); CHECK(run_exec(su_path,3,0,1)==0); CHECK(reserve_calls==0 && commits==0);
+    reset(); CHECK(run_exec(su_path,AT_FDCWD,1,1)==0); CHECK(reserve_calls==0 && commits==0);
+    reset(); ksud_missing=1; CHECK(run_exec(su_path,AT_FDCWD,0,1)==0); CHECK(reserve_calls==0 && commits==1);
+    for(int f=1;f<=3;f++) {
+        reset(); if(f<3) cred_fault=f; else ucounts_error=-ENOMEM;
+        CHECK(run_exec(su_path,AT_FDCWD,0,1)==0); CHECK(commits==0 && reserve_calls==0 && profile_refs==0);
+    }
+    reset(); exec_result=-EPERM; CHECK(run_exec(su_path,AT_FDCWD,0,1)==-EPERM); CHECK(exec_done==1 && reserve_calls==0);
+    for(int f=1;f<=8;f++) {
+        reset(); exec_fault=f; CHECK(run_exec(su_path,AT_FDCWD,0,0)<0); CHECK(exec_done==0 && reserve_calls==0 && putnames==1);
+    }
+    reset(); task.flags=PF_NPROC_EXCEEDED; overlimit=1;
+    CHECK(run_exec(su_path,AT_FDCWD,0,1)==-EAGAIN); CHECK(exec_done==0 && reserve_calls==0);
+    reset(); fd_error=-24; CHECK(run_exec(su_path,AT_FDCWD,0,1)==0); CHECK(reserve_calls==1 && installs==0);
+    reset(); anon_error=-ENOMEM; CHECK(run_exec(su_path,AT_FDCWD,0,1)==0); CHECK(installs==0 && releases==1);
+    reset(); CHECK(run_exec(su_path,AT_FDCWD,0,0)==0); CHECK(installs==1);
+    reset(); init_key=true; CHECK(run_exec("/system/bin/app_process64",AT_FDCWD,0,1)==0); CHECK(boot_hooks==1 && reserve_calls==0);
+    reset(); init_cred=true; CHECK(run_exec(KSUD_PATH,AT_FDCWD,0,1)==0); CHECK(init_hooks==1 && reserve_calls==0);
+    reset(); int fd=AT_FDCWD, flags=0; struct filename *bad=ERR_PTR(-EFAULT);
+    CHECK(!ksu_handle_execveat_su_session(&fd,NULL,NULL,NULL,&flags));
+    CHECK(!ksu_handle_execveat_su_session(&fd,&bad,NULL,NULL,&flags));
+    bad=NULL; CHECK(!ksu_handle_execveat_su_session(&fd,&bad,NULL,NULL,&flags));
+    CHECK(do_execveat_common(fd,ERR_PTR(-EFAULT),(struct user_arg_ptr){1},(struct user_arg_ptr){1},0)==-EFAULT);
+    CHECK(reserve_calls==0 && putnames==0);
+    reset(); CHECK(ksu_install_fd()==7); CHECK(!ksu_is_su_session_fd(&anon_file)); CHECK(anon_private==NULL);
+    CHECK(!ksu_is_su_session_fd(NULL));
+    struct file normal=anon_file;
+    CHECK(ksu_install_su_fd()==7); struct file session=anon_file;
+    struct file foreign=session; static const struct file_operations other_ops={0}; foreign.f_op=&other_ops;
+    CHECK(!ksu_is_su_session_fd(&foreign));
+    for(int i=0;ksu_ioctl_handlers[i].handler;i++) {
+        const struct ksu_ioctl_cmd_map *m=&ksu_ioctl_handlers[i];
+        int expected=m->perm_check==always_allow?123:-EPERM;
+        CHECK(ksu_supercall_handle_ioctl(&normal,m->cmd,NULL)==expected);
+        CHECK(ksu_supercall_handle_ioctl(&foreign,m->cmd,NULL)==expected);
+        bool scoped=m->cmd==KSU_IOCTL_GET_WRAPPER_FD || m->cmd==KSU_IOCTL_DISABLE_ESCAPE_TO_ROOT;
+        CHECK(m->allow_su_session==scoped);
+        CHECK(ksu_supercall_handle_ioctl(&session,m->cmd,NULL)==(scoped?123:expected));
+        perm=true; CHECK(ksu_supercall_handle_ioctl(&normal,m->cmd,NULL)==123); perm=false;
+    }
+    CHECK(ksu_supercall_handle_ioctl(&session,0xdead,NULL)==-ENOTTY);
+    for(int f=0;f<=5;f++) {
+        reset(); if(f==5) fd_error=-24; else wrapper_fault=f;
+        int ret=ksu_install_file_wrapper(1);
+        CHECK((f==0 && ret==7) || (f!=0 && ret<0));
+        CHECK(override_active==0 && override_calls==revert_calls && mock_violation==0);
+        CHECK(override_calls==((f==0||f==3||f==4)?1:0));
+        CHECK(original_puts==(f==1?0:1)); CHECK(installs==(f==0?1:0));
+        CHECK(releases==((f==2||f==3||f==4)?1:0));
+        CHECK(wrapper_puts==(f==4?1:0)); CHECK(wrapper_releases==(f==3?1:0));
+    }
+    return 0;
+}
+int test_count(void) { return checks; }
+#ifndef WASM_TEST
+int printf(const char *,...);
+int main(void) { int line=test_main(); printf("su-session exact-C checks: %d; failure line: %d\n",checks,line); return line?1:0; }
+#endif

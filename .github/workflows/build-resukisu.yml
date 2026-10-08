@@ -1,4 +1,4 @@
-name: Build ReSukiSU
+name: Build BakaSU
 
 permissions:
   contents: write
@@ -22,7 +22,14 @@ on:
       add_susfs:
         type: boolean
         default: true
+      susfs_uid_gated_hiding:
+        description: 'Local UIDGate-v1 extension for pinned BakaSU 35220 / SUSFS 24743360'
+        type: boolean
+        default: false
       add_zeromount:
+        type: boolean
+        default: true
+      add_droidspaces:
         type: boolean
         default: true
       add_zram:
@@ -37,6 +44,13 @@ on:
       add_kpm:
         type: boolean
         default: false
+      susfs_open_redirect:
+        type: boolean
+        default: false
+      susfs_su_session:
+        description: "Native SUSFS v2 port: WebView app profiles and post-exec su FD for ReSukiSU 35119 / Android 14 / Linux 6.1"
+        type: boolean
+        default: false
       add_ptrace_fix:
         type: boolean
         default: true
@@ -46,22 +60,106 @@ on:
       sukisu_commit:
         type: string
         default: ""
+      resukisu_source_branch:
+        type: string
+        default: "main"
+      resukisu_version_code:
+        type: string
+        default: "35220"
+      resukisu_expected_size:
+        type: string
+        default: ""
+      resukisu_expected_hash:
+        type: string
+        default: ""
       device_codename:
         type: string
         default: ""
+      kmi_mode:
+        description: "runtime-compat, symtypes, or strict"
+        type: string
+        default: "runtime-compat"
+      kmi_profile:
+        description: "Unique label for a non-flashable KMI diagnostic variant"
+        type: string
+        default: "full"
+      kmi_minimal_config:
+        description: "Use only the minimum BakaSU config for CRC attribution"
+        type: boolean
+        default: false
+      package_strict_anykernel:
+        description: "Package the exact e3q full-strict KMI gate as a flashable AnyKernel ZIP"
+        type: boolean
+        default: false
 
 jobs:
   build:
-    name: "ReSukiSU ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
-    runs-on: ubuntu-latest
+    name: "BakaSU ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      KSU_VARIANT: ReSukiSU
+      KSU_VARIANT: BakaSU
       KSU_DIR: KernelSU
+      RESUKISU_VERSION_CODE: ${{ inputs.resukisu_version_code }}
+      RESUKISU_VERSION_LABEL: ${{ inputs.resukisu_version_code }}
+      RESUKISU_VERSION_FULL: BakaSU-${{ inputs.resukisu_version_code }}
 
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v6
+
+    - name: Validate UID-gated hiding target
+      if: inputs.susfs_uid_gated_hiding
+      env:
+        ANDROID: ${{ inputs.android_version }}
+        KERNEL: ${{ inputs.kernel_version }}
+        KSU_PIN: ${{ inputs.sukisu_commit }}
+        ADD_SUSFS: ${{ inputs.add_susfs }}
+        MINIMAL: ${{ inputs.kmi_minimal_config }}
+      run: |
+        set -euo pipefail
+        [[ "$ANDROID" == android14 && "$KERNEL" == 6.1 && "$ADD_SUSFS" == true && "$MINIMAL" == false ]]
+        [[ "$KSU_PIN" == 8450dd287ef6ee25ca2b6b858b43c9354c73060c ]]
+
+    - name: Validate KMI build mode
+      env:
+        KMI_MODE: ${{ inputs.kmi_mode }}
+        KMI_PROFILE: ${{ inputs.kmi_profile }}
+        KMI_MINIMAL_CONFIG: ${{ inputs.kmi_minimal_config }}
+        PACKAGE_STRICT_ANYKERNEL: ${{ inputs.package_strict_anykernel }}
+        DEVICE_CODENAME: ${{ inputs.device_codename }}
+      run: |
+        set -euo pipefail
+        case "$KMI_MODE" in
+          runtime-compat|symtypes|strict) ;;
+          *) echo "::error::Unsupported KMI mode: $KMI_MODE"; exit 1 ;;
+        esac
+        [[ "$KMI_PROFILE" =~ ^[a-z0-9][a-z0-9-]*$ ]] || {
+          echo "::error::Invalid KMI profile label: $KMI_PROFILE"
+          exit 1
+        }
+        if [[ "$KMI_MODE" == "runtime-compat" && "$KMI_MINIMAL_CONFIG" == "true" ]]; then
+          echo "::error::Minimal config is diagnostic-only"
+          exit 1
+        fi
+        if [[ "$PACKAGE_STRICT_ANYKERNEL" == "true" ]]; then
+          [[ "$KMI_MODE" == "strict" ]] || {
+            echo "::error::Strict AnyKernel packaging requires kmi_mode=strict"
+            exit 1
+          }
+          [[ "$KMI_PROFILE" == "full-strict" ]] || {
+            echo "::error::Strict AnyKernel packaging is restricted to kmi_profile=full-strict"
+            exit 1
+          }
+          [[ "$KMI_MINIMAL_CONFIG" == "false" ]] || {
+            echo "::error::Strict AnyKernel packaging cannot use the diagnostic minimal config"
+            exit 1
+          }
+          [[ "$DEVICE_CODENAME" == "e3q" ]] || {
+            echo "::error::Strict AnyKernel packaging is restricted to device_codename=e3q"
+            exit 1
+          }
+        fi
 
     - name: Free Disk Space
       uses: endersonmenezes/free-disk-space@v3
@@ -140,11 +238,152 @@ jobs:
         ANDROID_VER: ${{ inputs.android_version }}
         KERNEL_VER: ${{ inputs.kernel_version }}
         OS_PATCH: ${{ inputs.os_patch_level }}
+        DEVICE_CODENAME: ${{ inputs.device_codename }}
       run: |
+        set -euo pipefail
         FORMATTED_BRANCH="${ANDROID_VER}-${KERNEL_VER}-${OS_PATCH}"
+        MANIFEST_BRANCH="common-${FORMATTED_BRANCH}"
 
-        repo init -u https://android.googlesource.com/kernel/manifest \
-          -b "common-${FORMATTED_BRANCH}" --depth=1
+        if [[ "$DEVICE_CODENAME" == "e3q" ]]; then
+          SOURCE_PROFILE="$GITHUB_WORKSPACE/$VERSION_DIR/samsung-s928bxxu6zzhl-source.env"
+          TARGET_PROFILE="$GITHUB_WORKSPACE/$VERSION_DIR/samsung-s928bxxu6zzi4-target.env"
+          test -s "$SOURCE_PROFILE"
+          test -s "$TARGET_PROFILE"
+          # shellcheck disable=SC1090
+          source "$SOURCE_PROFILE"
+          # shellcheck disable=SC1090
+          source "$TARGET_PROFILE"
+          test "$SAMSUNG_MODEL" = "SM-S928B"
+          test "$SAMSUNG_DEVICE" = "e3q"
+          test "$SAMSUNG_CSC" = "EUX"
+          test "$SAMSUNG_FIRMWARE" = "S928BXXS6DZG1"
+          test "$SAMSUNG_SOURCE_FIRMWARE" = "S928BXXS6DZG1"
+          test "$SAMSUNG_TARGET_MODEL" = "SM-S928B"
+          test "$SAMSUNG_TARGET_DEVICE" = "e3q"
+          test "$SAMSUNG_TARGET_CSC" = "EUX"
+          test "$SAMSUNG_TARGET_FIRMWARE" = "S928BXXU6ZZI4"
+          test "$SAMSUNG_TARGET_AP" = "S928BXXU6ZZI4"
+          test "$SAMSUNG_TARGET_CSC_BUILD" = "S928BOXM6ZZI4"
+          test "$SAMSUNG_TARGET_CP" = "S928BXXU6EZI4"
+          test "$SAMSUNG_TARGET_PACKAGE" = "AP_S928BXXU6ZZI4_S928BXXU6ZZI4_MQB114374451_REV00_user_low_ship_MULTI_CERT_meta_OS17.tar.md5"
+          test "$SAMSUNG_TARGET_AP_TAR_MD5" = "not-supplied-component-images-verified"
+          test "$SAMSUNG_TARGET_AP_ARCHIVE_SHA256" = "not-supplied-component-images-verified"
+          test "$SAMSUNG_TARGET_CP_PACKAGE" = "CP_S928BXXU6EZI4_CP36200554_MQB114374451_REV00_user_low_ship_MULTI_CERT.tar.md5"
+          test "$SAMSUNG_TARGET_CP_TAR_MD5" = "ce09f6271f54f8aa1c2920d76cbb4974"
+          test "$SAMSUNG_TARGET_CP_ARCHIVE_SHA256" = "aeb17904cc7b8d037d2ae2b840853fb6b583f8e7537cf32ce3b0b9405fc642cd"
+          test "$SAMSUNG_TARGET_CSC_PACKAGE" = "CSC_OXM_S928BOXM6ZZI4_MQB114374451_REV00_user_low_ship_MULTI_CERT.tar.md5"
+          test "$SAMSUNG_TARGET_CSC_TAR_MD5" = "ba072dccbeb55149608aca301289907a"
+          test "$SAMSUNG_TARGET_CSC_ARCHIVE_SHA256" = "262e30760c3f62015b8c725393385bbe2a71f96cc62feca55144fa48f6c4a8fe"
+          test "$SAMSUNG_TARGET_HOME_CSC_PACKAGE" = "HOME_CSC_OXM_S928BOXM6ZZI4_MQB114374451_REV00_user_low_ship_MULTI_CERT.tar.md5"
+          test "$SAMSUNG_TARGET_HOME_CSC_TAR_MD5" = "8a03458bfb4bff67c853b8e79d9c1239"
+          test "$SAMSUNG_TARGET_HOME_CSC_ARCHIVE_SHA256" = "a5a94a327350095816e3b890d9c4171adcffcd4672bedbf8af5d1a5b25f22f94"
+          test "$SAMSUNG_KEEP_BL_TAR_MD5" = "1ae4d250893d70be14b70a5045121b2d"
+          test "$SAMSUNG_KEEP_BL_PACKAGE" = "BL_S928BXXU6ZZI4_KEEP_OEM_UNLOCK.tar.md5"
+          test "$SAMSUNG_KEEP_BL_ARCHIVE_SHA256" = "186b3572fef908255bde2404b0e01b000fe15496c4c1ae5015ea5663d85afab9"
+          test "$SAMSUNG_KEEP_BL_VBMETA_SHA256" = "67b8d114c5c1af81c473fb649f5b47cca340a5744baed548db9660e5907a4535"
+          test "$SAMSUNG_KEEP_BL_VBMETA_FLAGS" = "3"
+          test "$SAMSUNG_KEEP_BL_COMPATIBILITY" = "avb-flags-3-intentional-keep-oem-unlock"
+          test "$SAMSUNG_TARGET_OTA_SOURCE" = "full-odin-zzi4-component-set"
+          test "$SAMSUNG_TARGET_OTA_SHA256" = "not-applicable-full-odin-components"
+          test "$SAMSUNG_TARGET_KERNEL_RELEASE" = "6.1.162-android14-11-34343818-abS928BXXU6ZZI4"
+          test "$SAMSUNG_TARGET_BOOT_IMAGE_SHA256" = "abc5a0297fd47e9cdfb4d0b84ecb907e1de0dc45303ab8d5c28107b0f6bd5cd5"
+          test "$SAMSUNG_TARGET_INIT_BOOT_IMAGE_SHA256" = "f61c74bab1781862e48f8abc4a8b7865f0ba661658a3807431395edc1ce069c8"
+          test "$SAMSUNG_TARGET_APNHLOS_IMAGE_SHA256" = "6d69aa52669f28178e86fa15dacf77b279d9e5762ca7c2eefd640aa8702184ce"
+          test "$SAMSUNG_TARGET_MODEM_IMAGE_SHA256" = "c063c91f7314d9db4c855945454904506dae1efb2ee8cf0a579420e2d40efd28"
+          test "$SAMSUNG_TARGET_VENDOR_BOOT_IMAGE_SHA256" = "be1a7fbb823c1b259a7cdb1f9a85ee93e459b2ad5bf7a83193ffabf61a2e1257"
+          test "$SAMSUNG_TARGET_SYSTEM_DLKM_IMAGE_SHA256" = "4bbb76c7ac047596254e4c6a8503276464573a93d7e3a7bafa0411b887bc1462"
+          test "$SAMSUNG_TARGET_DTBO_IMAGE_SHA256" = "65b35a505cb4ba6cb6965a261053a43ea6f4807abeebb81468374e6b44db7f82"
+          test "$SAMSUNG_TARGET_VBMETA_IMAGE_SHA256" = "not-supplied-keep-oem-unlock-vbmeta-only"
+          test "$SAMSUNG_TARGET_GUNYAH_QCOM_SHA256" = "9e0103d5ff16061c99613f2a5982a7d8bbcc6add300d736c31d17a441421fade"
+          test "$SAMSUNG_TARGET_VENDOR_BOOT_MODULE_COUNT" = "411"
+          test "$SAMSUNG_TARGET_VENDOR_BOOT_BASELINE_OVERLAP" = "2152"
+          test "$SAMSUNG_TARGET_VENDOR_BOOT_CRC_CHANGES" = "0"
+          test "$SAMSUNG_TARGET_VENDOR_DLKM_IMAGE_SHA256" = "be9def7fde78c0a97db01af9ecd13480e0d21ae8099a375a8096dc23fd83d582"
+          test "$SAMSUNG_TARGET_VENDOR_DLKM_MODULE_COUNT" = "351"
+          test "$SAMSUNG_TARGET_VENDOR_DLKM_IMPORT_SYMBOL_COUNT" = "4111"
+          test "$SAMSUNG_TARGET_VENDOR_DLKM_BASELINE_OVERLAP" = "2485"
+          test "$SAMSUNG_TARGET_VENDOR_DLKM_CRC_CHANGES" = "0"
+          test "$SAMSUNG_TARGET_TOTAL_STOCK_MODULE_COUNT" = "762"
+          test "$SAMSUNG_TARGET_TOTAL_IMPORT_SYMBOL_COUNT" = "4900"
+          test "$SAMSUNG_TARGET_TOTAL_CRC_CONFLICTS" = "0"
+          test "$SAMSUNG_BUILD_TARGET" = "e3q_eur_openx"
+          test "$SAMSUNG_CHIPSET" = "pineapple"
+          test "$SAMSUNG_OSS_SHA256" = "512c0a0b74646ddbb64ac8adea7c396c90458c2c12cf7f437e9d20282a33fa3c"
+          test "$AOSP_MANIFEST_BRANCH" = "$MANIFEST_BRANCH"
+          [[ "$AOSP_MANIFEST_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$AOSP_COMMON_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          MANIFEST_BRANCH="$AOSP_MANIFEST_BRANCH"
+          {
+            echo "SAMSUNG_SOURCE_PROFILE=$SOURCE_PROFILE"
+            echo "SAMSUNG_TARGET_PROFILE=$TARGET_PROFILE"
+            echo "SAMSUNG_SOURCE_FIRMWARE=$SAMSUNG_SOURCE_FIRMWARE"
+            echo "SAMSUNG_SOURCE_KERNEL_RELEASE=$SAMSUNG_SOURCE_KERNEL_RELEASE"
+            echo "SAMSUNG_OSS_PACKAGE=$SAMSUNG_OSS_PACKAGE"
+            echo "SAMSUNG_OSS_UPLOAD_ID=$SAMSUNG_OSS_UPLOAD_ID"
+            echo "SAMSUNG_OSS_SHA256=$SAMSUNG_OSS_SHA256"
+            echo "SAMSUNG_BUILD_TARGET=$SAMSUNG_BUILD_TARGET"
+            echo "SAMSUNG_CHIPSET=$SAMSUNG_CHIPSET"
+            echo "SAMSUNG_COMMON_OVERLAY_SHA256=$SAMSUNG_COMMON_OVERLAY_SHA256"
+            echo "SAMSUNG_TARGET_CSC=$SAMSUNG_TARGET_CSC"
+            echo "SAMSUNG_TARGET_FIRMWARE=$SAMSUNG_TARGET_FIRMWARE"
+            echo "SAMSUNG_TARGET_PACKAGE=$SAMSUNG_TARGET_PACKAGE"
+            echo "SAMSUNG_TARGET_AP=$SAMSUNG_TARGET_AP"
+            echo "SAMSUNG_TARGET_CSC_BUILD=$SAMSUNG_TARGET_CSC_BUILD"
+            echo "SAMSUNG_TARGET_CP=$SAMSUNG_TARGET_CP"
+            echo "SAMSUNG_TARGET_AP_TAR_MD5=$SAMSUNG_TARGET_AP_TAR_MD5"
+            echo "SAMSUNG_TARGET_AP_ARCHIVE_SHA256=$SAMSUNG_TARGET_AP_ARCHIVE_SHA256"
+            echo "SAMSUNG_TARGET_CP_PACKAGE=$SAMSUNG_TARGET_CP_PACKAGE"
+            echo "SAMSUNG_TARGET_CP_TAR_MD5=$SAMSUNG_TARGET_CP_TAR_MD5"
+            echo "SAMSUNG_TARGET_CP_ARCHIVE_SHA256=$SAMSUNG_TARGET_CP_ARCHIVE_SHA256"
+            echo "SAMSUNG_TARGET_CSC_PACKAGE=$SAMSUNG_TARGET_CSC_PACKAGE"
+            echo "SAMSUNG_TARGET_CSC_TAR_MD5=$SAMSUNG_TARGET_CSC_TAR_MD5"
+            echo "SAMSUNG_TARGET_CSC_ARCHIVE_SHA256=$SAMSUNG_TARGET_CSC_ARCHIVE_SHA256"
+            echo "SAMSUNG_TARGET_HOME_CSC_PACKAGE=$SAMSUNG_TARGET_HOME_CSC_PACKAGE"
+            echo "SAMSUNG_TARGET_HOME_CSC_TAR_MD5=$SAMSUNG_TARGET_HOME_CSC_TAR_MD5"
+            echo "SAMSUNG_TARGET_HOME_CSC_ARCHIVE_SHA256=$SAMSUNG_TARGET_HOME_CSC_ARCHIVE_SHA256"
+            echo "SAMSUNG_TARGET_OTA_SOURCE=$SAMSUNG_TARGET_OTA_SOURCE"
+            echo "SAMSUNG_TARGET_OTA_SHA256=$SAMSUNG_TARGET_OTA_SHA256"
+            echo "SAMSUNG_TARGET_KERNEL_RELEASE=$SAMSUNG_TARGET_KERNEL_RELEASE"
+            echo "SAMSUNG_TARGET_BOOT_IMAGE_SHA256=$SAMSUNG_TARGET_BOOT_IMAGE_SHA256"
+            echo "SAMSUNG_TARGET_INIT_BOOT_IMAGE_SHA256=$SAMSUNG_TARGET_INIT_BOOT_IMAGE_SHA256"
+            echo "SAMSUNG_TARGET_VENDOR_BOOT_IMAGE_SHA256=$SAMSUNG_TARGET_VENDOR_BOOT_IMAGE_SHA256"
+            echo "SAMSUNG_TARGET_VENDOR_DLKM_IMAGE_SHA256=$SAMSUNG_TARGET_VENDOR_DLKM_IMAGE_SHA256"
+            echo "SAMSUNG_TARGET_SYSTEM_DLKM_IMAGE_SHA256=$SAMSUNG_TARGET_SYSTEM_DLKM_IMAGE_SHA256"
+            echo "SAMSUNG_TARGET_DTBO_IMAGE_SHA256=$SAMSUNG_TARGET_DTBO_IMAGE_SHA256"
+            echo "SAMSUNG_TARGET_VBMETA_IMAGE_SHA256=$SAMSUNG_TARGET_VBMETA_IMAGE_SHA256"
+            echo "SAMSUNG_TARGET_APNHLOS_IMAGE_SHA256=$SAMSUNG_TARGET_APNHLOS_IMAGE_SHA256"
+            echo "SAMSUNG_TARGET_MODEM_IMAGE_SHA256=$SAMSUNG_TARGET_MODEM_IMAGE_SHA256"
+            echo "SAMSUNG_KEEP_BL_PACKAGE=$SAMSUNG_KEEP_BL_PACKAGE"
+            echo "SAMSUNG_KEEP_BL_TAR_MD5=$SAMSUNG_KEEP_BL_TAR_MD5"
+            echo "SAMSUNG_KEEP_BL_ARCHIVE_SHA256=$SAMSUNG_KEEP_BL_ARCHIVE_SHA256"
+            echo "SAMSUNG_KEEP_BL_VBMETA_SHA256=$SAMSUNG_KEEP_BL_VBMETA_SHA256"
+            echo "SAMSUNG_KEEP_BL_VBMETA_FLAGS=$SAMSUNG_KEEP_BL_VBMETA_FLAGS"
+            echo "SAMSUNG_KEEP_BL_COMPATIBILITY=$SAMSUNG_KEEP_BL_COMPATIBILITY"
+            echo "SAMSUNG_TARGET_GUNYAH_QCOM_SHA256=$SAMSUNG_TARGET_GUNYAH_QCOM_SHA256"
+            echo "SAMSUNG_TARGET_VENDOR_BOOT_MODULE_COUNT=$SAMSUNG_TARGET_VENDOR_BOOT_MODULE_COUNT"
+            echo "SAMSUNG_TARGET_VENDOR_BOOT_BASELINE_OVERLAP=$SAMSUNG_TARGET_VENDOR_BOOT_BASELINE_OVERLAP"
+            echo "SAMSUNG_TARGET_VENDOR_BOOT_CRC_CHANGES=$SAMSUNG_TARGET_VENDOR_BOOT_CRC_CHANGES"
+            echo "SAMSUNG_TARGET_VENDOR_DLKM_MODULE_COUNT=$SAMSUNG_TARGET_VENDOR_DLKM_MODULE_COUNT"
+            echo "SAMSUNG_TARGET_VENDOR_DLKM_IMPORT_SYMBOL_COUNT=$SAMSUNG_TARGET_VENDOR_DLKM_IMPORT_SYMBOL_COUNT"
+            echo "SAMSUNG_TARGET_VENDOR_DLKM_BASELINE_OVERLAP=$SAMSUNG_TARGET_VENDOR_DLKM_BASELINE_OVERLAP"
+            echo "SAMSUNG_TARGET_VENDOR_DLKM_CRC_CHANGES=$SAMSUNG_TARGET_VENDOR_DLKM_CRC_CHANGES"
+            echo "SAMSUNG_TARGET_TOTAL_STOCK_MODULE_COUNT=$SAMSUNG_TARGET_TOTAL_STOCK_MODULE_COUNT"
+            echo "SAMSUNG_TARGET_TOTAL_IMPORT_SYMBOL_COUNT=$SAMSUNG_TARGET_TOTAL_IMPORT_SYMBOL_COUNT"
+            echo "SAMSUNG_TARGET_TOTAL_CRC_CONFLICTS=$SAMSUNG_TARGET_TOTAL_CRC_CONFLICTS"
+          } >> "$GITHUB_ENV"
+        fi
+
+        if [[ "$DEVICE_CODENAME" == "e3q" ]]; then
+          # Repo accepts an immutable commit as -b when its containing branch
+          # is supplied separately. This keeps the manifest meta-project
+          # configured and avoids detached-HEAD sync falling back to master.
+          repo init -u https://android.googlesource.com/kernel/manifest \
+            -b "$AOSP_MANIFEST_COMMIT" \
+            --manifest-upstream-branch "$AOSP_MANIFEST_BRANCH" --depth=1
+        else
+          repo init -u https://android.googlesource.com/kernel/manifest \
+            -b "$MANIFEST_BRANCH" --depth=1
+        fi
 
         REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common "${FORMATTED_BRANCH}")
         if grep -q deprecated <<< "$REMOTE_BRANCH"; then
@@ -153,9 +392,93 @@ jobs:
 
         repo --trace sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
 
+        if [[ "$DEVICE_CODENAME" == "e3q" ]]; then
+          # The manifest commit is immutable, but its common project still
+          # names a moving branch. Restore the audited Samsung base explicitly
+          # when that branch advances after the source profile was recorded.
+          RESOLVED_COMMON_COMMIT=$(git -C common rev-parse HEAD)
+          if [[ "$RESOLVED_COMMON_COMMIT" != "$AOSP_COMMON_COMMIT" ]]; then
+            echo "::notice::common resolved to $RESOLVED_COMMON_COMMIT; restoring audited pin $AOSP_COMMON_COMMIT"
+            git -C common fetch --depth=1 --no-tags \
+              https://android.googlesource.com/kernel/common "$AOSP_COMMON_COMMIT"
+            git -C common checkout --detach "$AOSP_COMMON_COMMIT"
+          fi
+        fi
+
+        COMMON_UPSTREAM_COMMIT=$(git -C common rev-parse HEAD)
+        MANIFEST_UPSTREAM_COMMIT=$(git -C .repo/manifests rev-parse HEAD)
+        if [[ "$DEVICE_CODENAME" == "e3q" ]]; then
+          [[ "$COMMON_UPSTREAM_COMMIT" == "$AOSP_COMMON_COMMIT" ]] || {
+            echo "::error::AOSP common pin mismatch: expected $AOSP_COMMON_COMMIT, got $COMMON_UPSTREAM_COMMIT"
+            exit 1
+          }
+          [[ "$MANIFEST_UPSTREAM_COMMIT" == "$AOSP_MANIFEST_COMMIT" ]] || {
+            echo "::error::AOSP manifest pin mismatch: expected $AOSP_MANIFEST_COMMIT, got $MANIFEST_UPSTREAM_COMMIT"
+            exit 1
+          }
+        fi
+        {
+          echo "COMMON_UPSTREAM_COMMIT=$COMMON_UPSTREAM_COMMIT"
+          echo "MANIFEST_UPSTREAM_COMMIT=$MANIFEST_UPSTREAM_COMMIT"
+          echo "MANIFEST_UPSTREAM_BRANCH=$MANIFEST_BRANCH"
+        } >> "$GITHUB_ENV"
+        printf 'Synced %s at common=%s manifest=%s\n' \
+          "$MANIFEST_BRANCH" "$COMMON_UPSTREAM_COMMIT" "$MANIFEST_UPSTREAM_COMMIT"
+
+    - name: Apply SM-S928B Samsung source port for ZZI4 / 6.1.162
+      if: inputs.device_codename == 'e3q'
+      run: |
+        set -euo pipefail
+        SOURCE_PROFILE="$GITHUB_WORKSPACE/$VERSION_DIR/samsung-s928bxxu6zzhl-source.env"
+        # shellcheck disable=SC1090
+        source "$SOURCE_PROFILE"
+        OVERLAY="$GITHUB_WORKSPACE/$SAMSUNG_COMMON_OVERLAY"
+        HELPER="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/apply-s928b-zzhl-source-port.sh"
+        chmod +x "$HELPER"
+        "$HELPER" \
+          "$KERNEL_ROOT/common" \
+          "$OVERLAY" \
+          "$SAMSUNG_COMMON_OVERLAY_SHA256" \
+          "$AOSP_COMMON_COMMIT"
+        {
+          echo "SAMSUNG_SOURCE_BASE_APPLIED=true"
+          echo "SAMSUNG_COMMON_CHANGED_COUNT=$SAMSUNG_COMMON_CHANGED_COUNT"
+          echo "SAMSUNG_COMMON_ADDED_COUNT=$SAMSUNG_COMMON_ADDED_COUNT"
+          echo "SAMSUNG_COMMON_DELETED_COUNT=$SAMSUNG_COMMON_DELETED_COUNT"
+        } >> "$GITHUB_ENV"
+
+    - name: Avoid high-order Gunyah VM metadata allocations
+      if: inputs.device_codename == 'e3q'
+      run: |
+        set -euo pipefail
+        HELPER="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/apply-e3q-gunyah-vm-metadata-allocation.sh"
+        chmod +x "$HELPER"
+        "$HELPER" "$KERNEL_ROOT/common"
+
+    - name: Validate and apply extent-budget-aware Gunyah backing
+      if: inputs.device_codename == 'e3q'
+      run: |
+        set -euo pipefail
+        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
+        # Apply after every immutable baseline/QCOM transform, so the new
+        # allocator cannot be overwritten by a nested pinned generator.
+        python3 "$HELPERS/test-e3q-gunyah-adaptive-backing.py"
+        python3 "$HELPERS/patch-e3q-gunyah-adaptive-backing.py" "$KERNEL_ROOT/common"
+        echo 'GUNYAH_ADAPTIVE_BACKING=1' >> "$GITHUB_ENV"
+
+    - name: Apply fail-closed Gunyah reclaim and test exact generated C
+      if: inputs.device_codename == 'e3q'
+      run: |
+        set -euo pipefail
+        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
+        python3 "$HELPERS/patch-e3q-gunyah-reclaim.py" "$KERNEL_ROOT/common"
+        python3 "$HELPERS/test-e3q-gunyah-reclaim.py" --kernel "$KERNEL_ROOT/common"
+        echo 'GUNYAH_RECLAIM_V1=1' >> "$GITHUB_ENV"
+
     - name: Extract Sublevel
       env:
         INPUT_SUB_LEVEL: ${{ inputs.sub_level }}
+        SUSFS_OPEN_REDIRECT_TEST: ${{ inputs.susfs_open_redirect }}
       run: |
         SUBLEVEL="$INPUT_SUB_LEVEL"
         if [[ -f "$KERNEL_ROOT/common/Makefile" ]]; then
@@ -163,28 +486,53 @@ jobs:
           [[ -n "$EXTRACTED" ]] && SUBLEVEL="$EXTRACTED"
         fi
 
-        ARTIFACT_BASE="${KERNEL_VER}.${SUBLEVEL}-${ANDROID_VER}-${OS_PATCH}-ReSukiSU"
+        ARTIFACT_BASE="${KERNEL_VER}.${SUBLEVEL}-${ANDROID_VER}-${OS_PATCH}-BakaSU-${RESUKISU_VERSION_LABEL}"
+        [[ "${{ inputs.susfs_uid_gated_hiding }}" == "true" ]] && ARTIFACT_BASE+="-UIDGate-v1"
+        [[ "${GUNYAH_ADAPTIVE_BACKING:-0}" == "1" ]] && ARTIFACT_BASE+="-GunyahAdaptive-v1"
+        [[ "${GUNYAH_RECLAIM_V1:-0}" == "1" ]] && ARTIFACT_BASE+="-Reclaim-v1"
+        [[ "$SUSFS_OPEN_REDIRECT_TEST" == "true" ]] && ARTIFACT_BASE+="-OpenRedirect-Test"
+        if [[ "${{ inputs.kmi_mode }}" != "runtime-compat" ]]; then
+          ARTIFACT_BASE+="-KMI-${{ inputs.kmi_profile }}-${{ inputs.kmi_mode }}"
+        fi
         {
           echo "SUBLEVEL=$SUBLEVEL"
           echo "ARTIFACT_BASE=$ARTIFACT_BASE"
           echo "FILE_NAME=$ARTIFACT_BASE"
         } >> "$GITHUB_ENV"
 
-    - name: Setup ReSukiSU
+    - name: Setup BakaSU
       working-directory: ${{ env.KERNEL_ROOT }}
       env:
         SUKISU_COMMIT: ${{ inputs.sukisu_commit }}
+        SOURCE_BRANCH: ${{ inputs.resukisu_source_branch }}
+        TARGET_VERSION_CODE: ${{ inputs.resukisu_version_code }}
+        MANAGER_CERT_SIZE: ${{ inputs.resukisu_expected_size }}
+        MANAGER_CERT_HASH: ${{ inputs.resukisu_expected_hash }}
       run: |
-        curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s susfs-ksud
+        PIN="${SUKISU_COMMIT:-$(tr -d '[:space:]' < "$GITHUB_WORKSPACE/$VERSION_DIR/resukisu-pin.txt" 2>/dev/null || true)}"
+        [ -n "$PIN" ] || { echo "::error::BakaSU commit pin is required"; exit 1; }
+        curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/${PIN}/kernel/setup.sh" | bash -s "$PIN"
         [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
 
-        PIN="${SUKISU_COMMIT:-$(cat "$GITHUB_WORKSPACE/$VERSION_DIR/resukisu-pin.txt" 2>/dev/null || true)}"
         if [ -n "$PIN" ]; then
           cd "$KERNEL_ROOT/$KSU_DIR"
-          git fetch origin
-          git checkout "$PIN"
-          echo "Pinned ReSukiSU to $(git rev-parse --short=7 HEAD)"
+          git fetch origin "$PIN"
+          git checkout --detach "$PIN"
+          git fetch origin "$SOURCE_BRANCH:refs/remotes/origin/$SOURCE_BRANCH"
+          ACTUAL_PIN=$(git rev-parse HEAD)
+          [ "$ACTUAL_PIN" = "$PIN" ] || {
+            echo "::error::BakaSU pin mismatch: expected $PIN, got $ACTUAL_PIN"
+            exit 1
+          }
+          echo "Pinned BakaSU to $ACTUAL_PIN"
         fi
+
+        RELEASE_CONFIG="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/configure-resukisu-release.sh"
+        bash "$RELEASE_CONFIG" "$KERNEL_ROOT/$KSU_DIR" "$SOURCE_BRANCH" "$PIN" \
+          "$TARGET_VERSION_CODE" "$MANAGER_CERT_SIZE" "$MANAGER_CERT_HASH"
+        RELEASE_TAG=$(git -C "$KERNEL_ROOT/$KSU_DIR" describe --abbrev=0 --tags)
+        echo "RESUKISU_VERSION_FULL=${RELEASE_TAG}-${TARGET_VERSION_CODE}" >> "$GITHUB_ENV"
+        echo "Resolved BakaSU release: ${RELEASE_TAG}-${TARGET_VERSION_CODE}"
 
         cd "$KERNEL_ROOT/common"
 
@@ -202,40 +550,136 @@ jobs:
         FIX_SCRIPT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-old-kernel-compat.sh"
         [ -f "$FIX_SCRIPT" ] && bash "$FIX_SCRIPT" "$KERNEL_ROOT/common" "$SUBLEVEL" || true
 
-    - name: Apply Upstream SUSFS Patch
+    - name: Apply pinned SUSFS
       if: inputs.add_susfs
+      uses: ./.github/actions/susfs-v2.2
+      with:
+        android_version: ${{ inputs.android_version }}
+        kernel_version: ${{ inputs.kernel_version }}
+        sub_level: ${{ env.SUBLEVEL }}
+        os_patch_level: ${{ inputs.os_patch_level }}
+
+    - name: Apply and test native BakaSU SUSFS v2 backport
+      if: inputs.susfs_su_session
+      env:
+        ADD_SUSFS: ${{ inputs.add_susfs }}
+      run: |
+        set -euo pipefail
+        [[ "$ADD_SUSFS" == "true" && "$ANDROID_VER" == "android14" && "$KERNEL_VER" == "6.1" && "$RESUKISU_VERSION_CODE" == "35119" ]] || {
+          echo "::error::Su-session backport requires SUSFS and ReSukiSU 35119 on Android 14 / Linux 6.1"
+          exit 1
+        }
+        PORT="$GITHUB_WORKSPACE/android14-6.1/build-helpers/su-session"
+        python3 "$PORT/apply.py" --common "$KERNEL_ROOT/common" --ksu "$KERNEL_ROOT/$KSU_DIR" \
+          --susfs-commit "$SUSFS_PINNED_COMMIT"
+        python3 "$PORT/test.py" --common "$KERNEL_ROOT/common" --ksu "$KERNEL_ROOT/$KSU_DIR" \
+          --work-dir "$RUNNER_TEMP/su-session-tests"
+        {
+          echo "RESUKISU_SU_SESSION_PORT=ReSukiSU-35119-SUSFS-Native-v2"
+          echo "ARTIFACT_BASE=${ARTIFACT_BASE}-SUSFS-Native-v2"
+          echo "FILE_NAME=${ARTIFACT_BASE}-SUSFS-Native-v2"
+        } >> "$GITHUB_ENV"
+
+    - name: Apply Enhanced SUSFS features
+      if: inputs.add_susfs
+      run: |
+        set -euo pipefail
+        HELPER="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/apply-enhanced-susfs-v2.2.sh"
+        PATCH="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/51_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
+        chmod +x "$HELPER"
+        "$HELPER" "$KERNEL_ROOT/common" "$KERNEL_ROOT/$KSU_DIR" "$PATCH"
+
+    - name: Apply SUSFS bootconfig static-key runtime fix
+      if: inputs.add_susfs
+      run: |
+        set -euo pipefail
+        HELPER="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/apply-susfs-bootconfig-static-key-fix.sh"
+        chmod +x "$HELPER"
+        "$HELPER" "$KERNEL_ROOT/common"
+
+    - name: Apply ZeroMount to pinned SUSFS
+      if: inputs.add_susfs && inputs.add_zeromount
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
-        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/ReSukiSU/patches/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
+        set -euo pipefail
+        PATCH="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
+        FILTERED_PATCH="$RUNNER_TEMP/zeromount-${ANDROID_VER}-${KERNEL_VER}-without-task-mmu.patch"
+        # The pinned SUSFS stack already modifies show_map_vma(). The legacy ZeroMount
+        # metadata hook overlaps that code and caused an Oops while apexd read
+        # /proc/*/maps on SM-S928B. Keep the remaining ZeroMount facilities.
+        # stat.c uses structural insertion because its legacy context moved.
+        awk '
+          /^--- a\/fs\/proc\/task_mmu\.c/ { skip = 1; next }
+          /^--- a\/fs\/stat\.c/ { skip = 1; next }
+          skip && /^--- a\// { skip = 0 }
+          !skip { print }
+        ' "$PATCH" > "$FILTERED_PATCH"
+        patch -p1 -F3 --no-backup-if-mismatch < "$FILTERED_PATCH"
+        python3 "$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/apply-enhanced-susfs-vfs.py" \
+          zeromount "$KERNEL_ROOT/common" "$PATCH"
 
-    - name: Apply Enhanced SUSFS Patch
+    - name: Apply UID-gated SUSFS visibility consumers
+      if: inputs.susfs_uid_gated_hiding
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_WORKSPACE/android14-6.1/build-helpers/susfs-uid-gated/apply.py" \
+          --common "$KERNEL_ROOT/common" --ksu "$KERNEL_ROOT/$KSU_DIR" \
+          --susfs-commit "$SUSFS_PINNED_COMMIT"
+
+    - name: Apply audited Samsung XHCI hooks for ZZI4
+      if: inputs.device_codename == 'e3q'
+      run: |
+        set -euo pipefail
+        HELPER="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/apply-s928b-dzg1-xhci-hooks.sh"
+        chmod +x "$HELPER"
+        "$HELPER" "$KERNEL_ROOT/common"
+
+    - name: Keep SUSFS logging switchable and default off
       if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
-        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/ReSukiSU/patches/51_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
+        HELPER="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/configure-susfs-log-default.sh"
+        chmod +x "$HELPER"
+        "$HELPER" "$KERNEL_ROOT/common"
 
-    - name: Apply KSU Safety Patch
-      if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}
+    - name: Verify complete ZeroMount and SUSFS source integration
+      if: inputs.add_susfs && inputs.add_zeromount
       run: |
-        PATCH="$GITHUB_WORKSPACE/$VERSION_DIR/ReSukiSU/patches/70_ksu_safety-resukisu-${KERNEL_VER}.patch"
-        [ -s "$PATCH" ] && patch -p1 --no-backup-if-mismatch < "$PATCH" || echo "No 70_ patch needed"
+        set -euo pipefail
+        HELPER="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/verify-zeromount-susfs-source.sh"
+        chmod +x "$HELPER"
+        "$HELPER" "$KERNEL_ROOT/common" "$KERNEL_ROOT/$KSU_DIR"
 
-    - name: Apply ZeroMount Patch
-      if: inputs.add_zeromount && inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/ReSukiSU/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
+    - name: Apply Droidspaces 6_7_8 patches
+      if: inputs.add_droidspaces
+      uses: ./.github/actions/droidspaces-678
+      with:
+        android_version: ${{ inputs.android_version }}
+        kernel_version: ${{ inputs.kernel_version }}
 
-    - name: Fix SUSFS Compatibility
-      if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
+    - name: Keep CGROUP_PIDS compatible with Samsung e3q WALT
+      if: inputs.add_droidspaces && inputs.device_codename == 'e3q'
       run: |
-        FIX="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-susfs-compat.sh"
-        [ -f "$FIX" ] && bash "$FIX" . "$SUBLEVEL" "$ANDROID_VER" "$KERNEL_VER" "$KERNEL_PATCHES" || true
+        HELPER="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/apply-e3q-cgroup-pids-compat.sh"
+        chmod +x "$HELPER"
+        "$HELPER" "$KERNEL_ROOT/common"
+
+    - name: Leave e3q CPUFreq policy to Samsung PowerHAL
+      if: inputs.device_codename == 'e3q'
+      run: |
+        HELPER="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/apply-e3q-cmdline-governor-compat.sh"
+        chmod +x "$HELPER"
+        "$HELPER" "$KERNEL_ROOT/common"
+
+    - name: Record Droidspaces SUSFS runtime requirement
+      if: inputs.add_susfs && inputs.add_droidspaces
+      run: echo "::notice::Droidspaces compatibility keeps SUSFS Hide SUS Mounts for All Processes disabled; packaging validates the setting."
 
     - name: Apply Kernel Patches
-      if: inputs.add_ptrace_fix || inputs.add_perf_patches
+      # Android 14 / 6.1 always needs this helper for the base NTSYNC and
+      # BBRv3 sources selected by defconfig.fragment.  The minimal KMI control
+      # deliberately omits those features; ADD_PTRACE/ADD_PERF still decide
+      # whether their independent optional patches are applied.
+      if: inputs.add_ptrace_fix || inputs.add_perf_patches || (inputs.kmi_mode != 'runtime-compat' && inputs.kmi_minimal_config == false)
       working-directory: ${{ env.KERNEL_ROOT }}/common
       env:
         ADD_PTRACE: ${{ inputs.add_ptrace_fix }}
@@ -261,7 +705,14 @@ jobs:
           rm -f lib/lz4/lz4_compress.c lib/lz4/lz4_decompress.c lib/lz4/lz4defs.h lib/lz4/lz4hc_compress.c
           cp -r "$ZRAM_DIR/lz4/"* ./lib/lz4/ 2>/dev/null || true
           cp -r "$ZRAM_DIR/include/linux/"* ./include/linux/ 2>/dev/null || true
-          [ -f "$ZRAM_DIR/$KERNEL_VER/lz4_1.10.0.patch" ] && patch -p1 -F3 < "$ZRAM_DIR/$KERNEL_VER/lz4_1.10.0.patch" || true
+          LZ4_PATCH="$ZRAM_DIR/$KERNEL_VER/lz4_1.10.0.patch"
+          if [[ "${SAMSUNG_SOURCE_BASE_APPLIED:-false}" == "true" ]]; then
+            test -s "$LZ4_PATCH"
+            patch -p1 -F3 --forward --batch --dry-run --no-backup-if-mismatch < "$LZ4_PATCH"
+            patch -p1 -F3 --forward --batch --no-backup-if-mismatch < "$LZ4_PATCH"
+          elif [[ -f "$LZ4_PATCH" ]]; then
+            patch -p1 -F3 < "$LZ4_PATCH" || true
+          fi
         fi
 
     - name: Add LZ4K/LZ4KD Compression
@@ -273,28 +724,116 @@ jobs:
         cp -r "$SUKISU/other/zram/lz4k/lib/"* ./lib/
         cp -r "$SUKISU/other/zram/lz4k/crypto/"* ./crypto/
         cp -r "$SUKISU/other/zram/lz4k_oplus" ./lib/
-        [ -f "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch" ] && patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch" || true
-        [ -f "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch" ] && patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch" || true
+        apply_zram_patch() {
+          local patch_file="$1"
+          if [[ "${SAMSUNG_SOURCE_BASE_APPLIED:-false}" == "true" ]]; then
+            test -s "$patch_file"
+            patch -p1 -F3 --forward --batch --dry-run --no-backup-if-mismatch < "$patch_file"
+            patch -p1 -F3 --forward --batch --no-backup-if-mismatch < "$patch_file"
+          elif [[ -f "$patch_file" ]]; then
+            patch -p1 -F3 < "$patch_file" || true
+          fi
+        }
+        apply_zram_patch "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch"
+        apply_zram_patch "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch"
+        if [[ "${SAMSUNG_SOURCE_BASE_APPLIED:-false}" == "true" ]]; then
+          [[ ! -f kernel/module/main.c.rej ]]
+          grep -qF 'static char *custom_module_blacklist[] = {' kernel/module/main.c
+          grep -qF 'custom_blacklist:' kernel/module/main.c
+        fi
+
+    - name: Install KASAN-off KMI compatibility stub
+      if: inputs.android_version == 'android14' && inputs.kernel_version == '6.1' && inputs.device_codename == 'e3q' && !inputs.kmi_minimal_config
+      run: |
+        set -euo pipefail
+        HELPER="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/apply-kasan-kmi-stub.sh"
+        chmod +x "$HELPER"
+        "$HELPER" "$KERNEL_ROOT/common"
 
     - name: Configure Kernel
       working-directory: ${{ env.KERNEL_ROOT }}
       env:
         ADD_SUSFS: ${{ inputs.add_susfs }}
+        ADD_SUSFS_UID_GATE: ${{ inputs.susfs_uid_gated_hiding }}
+        ADD_ZEROMOUNT: ${{ inputs.add_zeromount }}
+        ADD_DROIDSPACES: ${{ inputs.add_droidspaces }}
         ADD_OVERLAYFS: ${{ inputs.add_overlayfs_support }}
         ADD_ZRAM: ${{ inputs.add_zram }}
         ADD_KPM: ${{ inputs.add_kpm }}
+        SUSFS_OPEN_REDIRECT_TEST: ${{ inputs.susfs_open_redirect }}
+        DEVICE_CODENAME: ${{ inputs.device_codename }}
+        KMI_MODE: ${{ inputs.kmi_mode }}
+        KMI_PROFILE: ${{ inputs.kmi_profile }}
+        KMI_MINIMAL_CONFIG: ${{ inputs.kmi_minimal_config }}
       run: |
         FRAGMENT="$GITHUB_WORKSPACE/$VERSION_DIR/defconfig.fragment"
         HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
 
-        ASSEMBLE_FLAGS=""
-        [[ "$ADD_SUSFS" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --susfs"
-        [[ "$ADD_OVERLAYFS" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --overlayfs"
-        [[ "$ADD_ZRAM" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --zram"
-        [[ "$ADD_KPM" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --kpm"
-        [ ! -f "$KERNEL_ROOT/build/build.sh" ] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --kleaf"
+        if [[ "$SUSFS_OPEN_REDIRECT_TEST" == "true" ]]; then
+          [[ "$ADD_SUSFS" == "true" ]] || { echo "::error::Open Redirect requires SUSFS"; exit 1; }
+          [[ "$ANDROID_VER" == "android14" && "$KERNEL_VER" == "6.1" ]] || { echo "::error::Open Redirect test is validated only for android14-6.1"; exit 1; }
+          sed -i 's/^CONFIG_KSU_SUSFS_OPEN_REDIRECT=.*/CONFIG_KSU_SUSFS_OPEN_REDIRECT=y/' "$FRAGMENT"
+        fi
 
-        bash "$HELPERS/assemble-defconfig.sh" "$FRAGMENT" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG" $ASSEMBLE_FLAGS
+        if [[ "$KMI_MINIMAL_CONFIG" == "true" ]]; then
+          for optional in "$ADD_SUSFS" "$ADD_ZEROMOUNT" "$ADD_DROIDSPACES" "$ADD_OVERLAYFS" "$ADD_ZRAM" "$ADD_KPM"; do
+            [[ "$optional" == "false" ]] || {
+              echo "::error::Minimal KMI config cannot enable optional feature sections"
+              exit 1
+            }
+          done
+          cat > "$DEFCONFIG_FRAGMENT" <<'EOF'
+        CONFIG_KSU=y
+        CONFIG_KSU_MULTI_MANAGER_SUPPORT=y
+        # CONFIG_LOCALVERSION_AUTO is not set
+        EOF
+        else
+          ASSEMBLE_FLAGS=""
+          [[ "$ADD_SUSFS" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --susfs"
+          [[ "$ADD_SUSFS_UID_GATE" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --susfs-uid-gated-hiding"
+          [[ "$ADD_ZEROMOUNT" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --zeromount"
+          [[ "$ADD_DROIDSPACES" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --droidspaces"
+          [[ "$ADD_OVERLAYFS" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --overlayfs"
+          [[ "$ADD_ZRAM" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --zram"
+          [[ "$ADD_KPM" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --kpm"
+          [ ! -f "$KERNEL_ROOT/build/build.sh" ] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --kleaf"
+
+          bash "$HELPERS/assemble-defconfig.sh" "$FRAGMENT" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG" $ASSEMBLE_FLAGS
+        fi
+
+        if [[ "$DEVICE_CODENAME" == "e3q" && "$KMI_MINIMAL_CONFIG" != "true" ]]; then
+          BUILD_MODE=legacy
+          [ ! -f "$KERNEL_ROOT/build/build.sh" ] && BUILD_MODE=kleaf
+          DAILY_CONFIG="$HELPERS/enforce-s928b-daily-config.sh"
+          chmod +x "$DAILY_CONFIG"
+          "$DAILY_CONFIG" "$KERNEL_ROOT/common" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG" "$BUILD_MODE"
+        fi
+
+        if [[ "$DEVICE_CODENAME" == "e3q" && "$KMI_MODE" == "strict" ]]; then
+          # Samsung's stock DLKMs were compiled with seven cgroup subsystems and
+          # the compact MGLRU statistics layout. Enabling these two options
+          # changes exported type layouts; rewriting their CRCs would hide a
+          # real ABI mismatch and can make vendor modules dereference bad data.
+          CONFIG_TOOL="$KERNEL_ROOT/common/scripts/config"
+          "$CONFIG_TOOL" --file "$DEFCONFIG_FRAGMENT" --disable CGROUP_PIDS
+          "$CONFIG_TOOL" --file "$DEFCONFIG_FRAGMENT" --disable LRU_GEN_STATS
+          grep -qx '# CONFIG_CGROUP_PIDS is not set' "$DEFCONFIG_FRAGMENT"
+          grep -qx '# CONFIG_LRU_GEN_STATS is not set' "$DEFCONFIG_FRAGMENT"
+
+          # ZeroMount and BBG are custom fragment options. Move any assignment
+          # from the base GKI defconfig into the fragment so Kleaf can keep its
+          # base savedefconfig normalized without changing the final values.
+          for SYMBOL in ZEROMOUNT BBG; do
+            if ! grep -qx "CONFIG_${SYMBOL}=y" "$DEFCONFIG_FRAGMENT"; then
+              grep -qx "CONFIG_${SYMBOL}=y" "$DEFCONFIG"
+              "$CONFIG_TOOL" --file "$DEFCONFIG_FRAGMENT" --enable "$SYMBOL"
+            fi
+            grep -qx "CONFIG_${SYMBOL}=y" "$DEFCONFIG_FRAGMENT"
+            "$CONFIG_TOOL" --file "$DEFCONFIG" --undefine "$SYMBOL"
+            ! grep -Eq "^(CONFIG_${SYMBOL}=|# CONFIG_${SYMBOL} is not set)" "$DEFCONFIG"
+          done
+          echo "Strict Samsung KMI config: CGROUP_PIDS=n and LRU_GEN_STATS=n"
+        fi
 
         while IFS='=' read -r cfg _; do
           symbol="${cfg#CONFIG_}"
@@ -306,7 +845,128 @@ jobs:
           sed -i '/^CONFIG_KSU_SUSFS_/d' "$DEFCONFIG_FRAGMENT" "$DEFCONFIG"
         fi
 
-        bash "$HELPERS/bypass-abi-check.sh" . "$ANDROID_VER" "$KERNEL_VER"
+        if [[ "$ADD_SUSFS" == "true" ]]; then
+          grep -qx 'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y' "$DEFCONFIG_FRAGMENT"
+
+          for symbol in \
+            CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT \
+            CONFIG_KSU_SUSFS_UNICODE_FILTER \
+            CONFIG_KSU_SUSFS_HIDDEN_NAME; do
+            kconfig_symbol="${symbol#CONFIG_}"
+            grep -Rqx "config ${kconfig_symbol}" common/ "$KSU_DIR/" --include='Kconfig*' 2>/dev/null || {
+              echo "::error::Required SUSFS Kconfig symbol is missing: ${symbol}"
+              exit 1
+            }
+            grep -qx "${symbol}=y" "$DEFCONFIG_FRAGMENT" || {
+              echo "::error::Required SUSFS option was not retained: ${symbol}=y"
+              exit 1
+            }
+          done
+        fi
+
+        if [[ "$SUSFS_OPEN_REDIRECT_TEST" == "true" ]]; then
+          grep -Rqx 'config KSU_SUSFS_OPEN_REDIRECT' common/ "$KSU_DIR/" --include='Kconfig*'
+          grep -qx 'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' "$DEFCONFIG_FRAGMENT"
+        fi
+
+        if [[ "$DEVICE_CODENAME" == "e3q" && "$KMI_MODE" == "strict" && "$KMI_MINIMAL_CONFIG" != "true" && ! -f "$KERNEL_ROOT/build/build.sh" ]]; then
+          NORMALIZER="$HELPERS/normalize-s928b-kleaf-defconfig.sh"
+          chmod +x "$NORMALIZER"
+          "$NORMALIZER" "$KERNEL_ROOT/common" "$DEFCONFIG"
+        fi
+
+        if [[ "$KMI_MODE" != "strict" ]]; then
+          bash "$HELPERS/bypass-abi-check.sh" . "$ANDROID_VER" "$KERNEL_VER"
+        else
+          echo "Strict KMI mode: build-time ABI and defconfig checks remain enabled."
+        fi
+
+    - name: Verify WebView profile and su-session integration after downstream patches
+      if: inputs.susfs_su_session
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_WORKSPACE/android14-6.1/build-helpers/su-session/apply.py" \
+          --common "$KERNEL_ROOT/common" --ksu "$KERNEL_ROOT/$KSU_DIR" \
+          --susfs-commit "$SUSFS_PINNED_COMMIT" --verify-only
+
+    - name: Test BakaSU 35220 and latest SUSFS with exact C fault injection
+      if: inputs.add_susfs && inputs.add_zeromount && inputs.resukisu_version_code == '35220'
+      run: |
+        set -euo pipefail
+        PORT="$GITHUB_WORKSPACE/android14-6.1/build-helpers/su-session-35220"
+        python3 "$PORT/apply.py" --common "$KERNEL_ROOT/common" --ksu "$KERNEL_ROOT/$KSU_DIR" \
+          --susfs-commit "$SUSFS_PINNED_COMMIT" --verify-only
+        python3 "$PORT/test.py" --common "$KERNEL_ROOT/common" --ksu "$KERNEL_ROOT/$KSU_DIR" \
+          --work-dir "$GITHUB_WORKSPACE/samsung-dlkm-crc-audit/session-tests" --cc gcc
+        python3 "$GITHUB_WORKSPACE/android14-6.1/build-helpers/bakasu_35220_uapi.py" \
+          "$KERNEL_ROOT/$KSU_DIR" --cc gcc \
+          --work-dir "$GITHUB_WORKSPACE/samsung-dlkm-crc-audit/service-tests" \
+          --receipt "$GITHUB_WORKSPACE/samsung-dlkm-crc-audit/RESUKISU-UAPI5-SERVICES.json"
+        echo "RESUKISU_SU_SESSION_PORT=BakaSU-35220-SUSFS-24743360-UAPI5" >> "$GITHUB_ENV"
+
+    - name: Reverify UID gate after downstream patches and test exact policy C
+      if: inputs.susfs_uid_gated_hiding
+      run: |
+        set -euo pipefail
+        PORT="$GITHUB_WORKSPACE/android14-6.1/build-helpers/susfs-uid-gated"
+        python3 "$PORT/apply.py" --common "$KERNEL_ROOT/common" --ksu "$KERNEL_ROOT/$KSU_DIR" \
+          --susfs-commit "$SUSFS_PINNED_COMMIT" --verify-only
+        python3 "$PORT/test.py" --common "$KERNEL_ROOT/common" --ksu "$KERNEL_ROOT/$KSU_DIR" \
+          --work-dir "$GITHUB_WORKSPACE/samsung-dlkm-crc-audit/uid-gate-tests" --cc gcc
+        grep -qx 'CONFIG_KSU_SUSFS_UID_GATED_HIDING=y' "$DEFCONFIG_FRAGMENT"
+
+    - name: Verify BakaSU build identity
+      if: inputs.device_codename == 'e3q'
+      env:
+        EXPECTED_PIN: ${{ inputs.sukisu_commit }}
+        EXPECTED_BRANCH: ${{ inputs.resukisu_source_branch }}
+        EXPECTED_VERSION_CODE: ${{ inputs.resukisu_version_code }}
+        EXPECTED_MANAGER_SIZE: ${{ inputs.resukisu_expected_size }}
+        EXPECTED_MANAGER_HASH: ${{ inputs.resukisu_expected_hash }}
+        ADD_KPM: ${{ inputs.add_kpm }}
+        ADD_SUSFS: ${{ inputs.add_susfs }}
+        ADD_ZEROMOUNT: ${{ inputs.add_zeromount }}
+      run: |
+        set -euo pipefail
+        test "$KSU_VARIANT" = "BakaSU"
+
+        PIN="${EXPECTED_PIN:-$(tr -d '[:space:]' < "$GITHUB_WORKSPACE/$VERSION_DIR/resukisu-pin.txt")}"
+        test "$(git -C "$KERNEL_ROOT/$KSU_DIR" rev-parse HEAD)" = "$PIN"
+
+        RELEASE_CONFIG="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/configure-resukisu-release.sh"
+        bash "$RELEASE_CONFIG" "$KERNEL_ROOT/$KSU_DIR" "$EXPECTED_BRANCH" "$PIN" \
+          "$EXPECTED_VERSION_CODE" "$EXPECTED_MANAGER_SIZE" "$EXPECTED_MANAGER_HASH"
+
+        if [[ "$ADD_SUSFS" == "true" ]]; then
+          test -n "${SUSFS_EXPECTED_VERSION:-}"
+          test -n "${SUSFS_PINNED_COMMIT:-}"
+          grep -qxF "#define SUSFS_VERSION \"${SUSFS_EXPECTED_VERSION}\"" "$KERNEL_ROOT/common/include/linux/susfs.h"
+          grep -q 'ksu_susfs_dispatch_path_compat' "$KERNEL_ROOT/$KSU_DIR/kernel/supercall/dispatch.c"
+          grep -q 'case CMD_SUSFS_SET_ANDROID_DATA_ROOT_PATH:' "$KERNEL_ROOT/$KSU_DIR/kernel/supercall/dispatch.c"
+          grep -q 'case CMD_SUSFS_SET_SDCARD_ROOT_PATH:' "$KERNEL_ROOT/$KSU_DIR/kernel/supercall/dispatch.c"
+        fi
+        if [[ "$ADD_ZEROMOUNT" == "true" ]]; then
+          grep -qx 'CONFIG_ZEROMOUNT=y' "$DEFCONFIG_FRAGMENT"
+          test -f "$KERNEL_ROOT/common/fs/zeromount.c"
+        fi
+        if [[ "$ADD_KPM" == "true" ]]; then
+          grep -qx 'CONFIG_KPM=y' "$DEFCONFIG_FRAGMENT"
+        else
+          ! grep -Rqx 'config KPM' "$KERNEL_ROOT/$KSU_DIR" --include='Kconfig*'
+        fi
+
+        echo "BakaSU: ${RESUKISU_VERSION_FULL}"
+        echo "RESUKISU_VERSION_CODE=${RESUKISU_VERSION_CODE}"
+        echo "RESUKISU_SOURCE_BRANCH=${EXPECTED_BRANCH}"
+        echo "RESUKISU_COMMIT=$PIN"
+        if [[ "$ADD_SUSFS" == "true" ]]; then
+          echo "SUSFS_VERSION=${SUSFS_EXPECTED_VERSION}"
+          echo "SUSFS_COMMIT=${SUSFS_PINNED_COMMIT}"
+        else
+          echo "SUSFS disabled for KMI attribution"
+        fi
+        [[ "$ADD_ZEROMOUNT" == "true" ]] && echo "ZeroMount SUSFS ${SUSFS_EXPECTED_VERSION:-unknown} dual-ABI compatibility enabled" || echo "ZeroMount disabled for KMI attribution"
+        [[ "$ADD_KPM" == "true" ]] && echo "KPM enabled" || echo "KPM unavailable in BakaSU ${RESUKISU_VERSION_CODE}"
 
     - name: Clean Module Lists
       if: inputs.add_zram
@@ -316,6 +976,7 @@ jobs:
         bash "$HELPERS/clean-module-list.sh" .
 
     - name: Apply Module Check Bypass
+      if: inputs.kmi_mode == 'runtime-compat'
       working-directory: ${{ env.KERNEL_ROOT }}
       env:
         KERNEL_VER: ${{ inputs.kernel_version }}
@@ -331,7 +992,7 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
-        bash "$HELPERS/clean-build-flags.sh" . "$KERNEL_VER" "ReSukiSU"
+        bash "$HELPERS/clean-build-flags.sh" . "$KERNEL_VER" "BakaSU" "${{ inputs.kmi_mode }}"
 
     - name: Set Stock Build Identity
       working-directory: ${{ env.KERNEL_ROOT }}/common
@@ -366,9 +1027,109 @@ jobs:
 
         STOCK_RELEASE=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.release" "$PROFILE_FILE")
         STOCK_VERSION=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.version_string" "$PROFILE_FILE")
+        STOCK_BUILD_TIMESTAMP=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.build_timestamp // empty" "$PROFILE_FILE")
         STOCK_BUILD_USER=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.build_user" "$PROFILE_FILE")
         STOCK_BUILD_HOST=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.build_host" "$PROFILE_FILE")
         STOCK_COMPILER=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.compiler_info // empty" "$PROFILE_FILE")
+        STOCK_FIRMWARE=$(jq -r ".devices.${DEVICE_CODENAME}.firmware // empty" "$PROFILE_FILE")
+        STOCK_PACKAGE=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_package // empty" "$PROFILE_FILE")
+        STOCK_AP=$(jq -r ".devices.${DEVICE_CODENAME}.ap // empty" "$PROFILE_FILE")
+        STOCK_CSC_BUILD=$(jq -r ".devices.${DEVICE_CODENAME}.csc_build // empty" "$PROFILE_FILE")
+        STOCK_CP=$(jq -r ".devices.${DEVICE_CODENAME}.cp // empty" "$PROFILE_FILE")
+        STOCK_CSC=$(jq -r ".devices.${DEVICE_CODENAME}.csc // empty" "$PROFILE_FILE")
+        STOCK_AP_TAR_MD5=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.ap.tar_md5 // empty" "$PROFILE_FILE")
+        STOCK_AP_ARCHIVE_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.ap.sha256 // empty" "$PROFILE_FILE")
+        STOCK_CP_PACKAGE=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.cp.name // empty" "$PROFILE_FILE")
+        STOCK_CP_TAR_MD5=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.cp.tar_md5 // empty" "$PROFILE_FILE")
+        STOCK_CP_ARCHIVE_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.cp.sha256 // empty" "$PROFILE_FILE")
+        STOCK_CSC_PACKAGE=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.csc.name // empty" "$PROFILE_FILE")
+        STOCK_CSC_TAR_MD5=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.csc.tar_md5 // empty" "$PROFILE_FILE")
+        STOCK_CSC_ARCHIVE_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.csc.sha256 // empty" "$PROFILE_FILE")
+        STOCK_HOME_CSC_PACKAGE=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.home_csc.name // empty" "$PROFILE_FILE")
+        STOCK_HOME_CSC_TAR_MD5=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.home_csc.tar_md5 // empty" "$PROFILE_FILE")
+        STOCK_HOME_CSC_ARCHIVE_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.home_csc.sha256 // empty" "$PROFILE_FILE")
+        STOCK_KEEP_BL_PACKAGE=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.keep_oem_unlock_bl.name // empty" "$PROFILE_FILE")
+        STOCK_KEEP_BL_TAR_MD5=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.keep_oem_unlock_bl.tar_md5 // empty" "$PROFILE_FILE")
+        STOCK_KEEP_BL_ARCHIVE_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.keep_oem_unlock_bl.sha256 // empty" "$PROFILE_FILE")
+        STOCK_KEEP_BL_VBMETA_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.keep_oem_unlock_bl.vbmeta_img_sha256 // empty" "$PROFILE_FILE")
+        STOCK_KEEP_BL_VBMETA_FLAGS=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.keep_oem_unlock_bl.vbmeta_flags // empty" "$PROFILE_FILE")
+        STOCK_KEEP_BL_COMPATIBILITY=$(jq -r ".devices.${DEVICE_CODENAME}.firmware_archives.keep_oem_unlock_bl.compatibility // empty" "$PROFILE_FILE")
+        STOCK_BOOT_IMAGE_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.stock_images.boot_img_sha256 // empty" "$PROFILE_FILE")
+        STOCK_INIT_BOOT_IMAGE_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.stock_images.init_boot_img_sha256 // empty" "$PROFILE_FILE")
+        STOCK_VENDOR_BOOT_IMAGE_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.stock_images.vendor_boot_img_sha256 // empty" "$PROFILE_FILE")
+        STOCK_VENDOR_DLKM_IMAGE_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.stock_images.vendor_dlkm_img_sha256 // empty" "$PROFILE_FILE")
+        STOCK_SYSTEM_DLKM_IMAGE_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.stock_images.system_dlkm_img_sha256 // empty" "$PROFILE_FILE")
+        STOCK_DTBO_IMAGE_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.stock_images.dtbo_img_sha256 // empty" "$PROFILE_FILE")
+        STOCK_VBMETA_IMAGE_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.stock_images.vbmeta_img_sha256 // empty" "$PROFILE_FILE")
+        STOCK_APNHLOS_IMAGE_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.stock_images.apnhlos_bin_sha256 // empty" "$PROFILE_FILE")
+        STOCK_MODEM_IMAGE_SHA256=$(jq -r ".devices.${DEVICE_CODENAME}.stock_images.modem_bin_sha256 // empty" "$PROFILE_FILE")
+
+        if [ "$DEVICE_CODENAME" = "e3q" ]; then
+          [ "$STOCK_FIRMWARE" = "$SAMSUNG_TARGET_FIRMWARE" ] || {
+            echo "::error::e3q firmware profile must be $SAMSUNG_TARGET_FIRMWARE, got $STOCK_FIRMWARE"
+            exit 1
+          }
+          [ "$STOCK_CSC" = "EUX" ] || {
+            echo "::error::e3q CSC profile must be EUX, got $STOCK_CSC"
+            exit 1
+          }
+          [ "$STOCK_PACKAGE" = "$SAMSUNG_TARGET_PACKAGE" ] || {
+            echo "::error::e3q firmware package does not match the ZZI4 target"
+            exit 1
+          }
+          [ "$STOCK_AP" = "$SAMSUNG_TARGET_AP" ] && \
+            [ "$STOCK_CSC_BUILD" = "$SAMSUNG_TARGET_CSC_BUILD" ] && \
+            [ "$STOCK_CP" = "$SAMSUNG_TARGET_CP" ] || {
+              echo "::error::e3q AP/CSC/CP identity does not match the ZZI4 target"
+              exit 1
+            }
+          [ "$STOCK_AP_TAR_MD5" = "$SAMSUNG_TARGET_AP_TAR_MD5" ] && \
+            [ "$STOCK_AP_ARCHIVE_SHA256" = "$SAMSUNG_TARGET_AP_ARCHIVE_SHA256" ] && \
+            [ "$STOCK_CP_PACKAGE" = "$SAMSUNG_TARGET_CP_PACKAGE" ] && \
+            [ "$STOCK_CP_TAR_MD5" = "$SAMSUNG_TARGET_CP_TAR_MD5" ] && \
+            [ "$STOCK_CP_ARCHIVE_SHA256" = "$SAMSUNG_TARGET_CP_ARCHIVE_SHA256" ] && \
+            [ "$STOCK_CSC_PACKAGE" = "$SAMSUNG_TARGET_CSC_PACKAGE" ] && \
+            [ "$STOCK_CSC_TAR_MD5" = "$SAMSUNG_TARGET_CSC_TAR_MD5" ] && \
+            [ "$STOCK_CSC_ARCHIVE_SHA256" = "$SAMSUNG_TARGET_CSC_ARCHIVE_SHA256" ] && \
+            [ "$STOCK_HOME_CSC_PACKAGE" = "$SAMSUNG_TARGET_HOME_CSC_PACKAGE" ] && \
+            [ "$STOCK_HOME_CSC_TAR_MD5" = "$SAMSUNG_TARGET_HOME_CSC_TAR_MD5" ] && \
+            [ "$STOCK_HOME_CSC_ARCHIVE_SHA256" = "$SAMSUNG_TARGET_HOME_CSC_ARCHIVE_SHA256" ] || {
+              echo "::error::e3q full Odin firmware archive identity does not match the ZZI4 target"
+              exit 1
+            }
+          [ "$STOCK_KEEP_BL_PACKAGE" = "$SAMSUNG_KEEP_BL_PACKAGE" ] && \
+            [ "$STOCK_KEEP_BL_TAR_MD5" = "$SAMSUNG_KEEP_BL_TAR_MD5" ] && \
+            [ "$STOCK_KEEP_BL_ARCHIVE_SHA256" = "$SAMSUNG_KEEP_BL_ARCHIVE_SHA256" ] && \
+            [ "$STOCK_KEEP_BL_VBMETA_SHA256" = "$SAMSUNG_KEEP_BL_VBMETA_SHA256" ] && \
+            [ "$STOCK_KEEP_BL_VBMETA_FLAGS" = "$SAMSUNG_KEEP_BL_VBMETA_FLAGS" ] && \
+            [ "$STOCK_KEEP_BL_COMPATIBILITY" = "$SAMSUNG_KEEP_BL_COMPATIBILITY" ] || {
+              echo "::error::e3q KEEP_OEM_UNLOCK BL identity does not match the audited flags-3 package"
+              exit 1
+            }
+          [ "$STOCK_BOOT_IMAGE_SHA256" = "$SAMSUNG_TARGET_BOOT_IMAGE_SHA256" ] && \
+            [ "$STOCK_INIT_BOOT_IMAGE_SHA256" = "$SAMSUNG_TARGET_INIT_BOOT_IMAGE_SHA256" ] && \
+            [ "$STOCK_VENDOR_BOOT_IMAGE_SHA256" = "$SAMSUNG_TARGET_VENDOR_BOOT_IMAGE_SHA256" ] && \
+            [ "$STOCK_VENDOR_DLKM_IMAGE_SHA256" = "$SAMSUNG_TARGET_VENDOR_DLKM_IMAGE_SHA256" ] && \
+            [ "$STOCK_SYSTEM_DLKM_IMAGE_SHA256" = "$SAMSUNG_TARGET_SYSTEM_DLKM_IMAGE_SHA256" ] && \
+            [ "$STOCK_DTBO_IMAGE_SHA256" = "$SAMSUNG_TARGET_DTBO_IMAGE_SHA256" ] && \
+            [ "$STOCK_VBMETA_IMAGE_SHA256" = "$SAMSUNG_TARGET_VBMETA_IMAGE_SHA256" ] && \
+            [ "$STOCK_APNHLOS_IMAGE_SHA256" = "$SAMSUNG_TARGET_APNHLOS_IMAGE_SHA256" ] && \
+            [ "$STOCK_MODEM_IMAGE_SHA256" = "$SAMSUNG_TARGET_MODEM_IMAGE_SHA256" ] || {
+              echo "::error::e3q stock-image hashes do not match the ZZI4 target"
+              exit 1
+            }
+          case "$STOCK_RELEASE" in
+            *"ab${STOCK_FIRMWARE}") ;;
+            *)
+              echo "::error::Stock kernel release does not match firmware $STOCK_FIRMWARE: $STOCK_RELEASE"
+              exit 1
+              ;;
+          esac
+          [ "${KERNEL_VER}.${SUBLEVEL}${STOCK_RELEASE}" = "$SAMSUNG_TARGET_KERNEL_RELEASE" ] || {
+            echo "::error::Stock kernel release must be $SAMSUNG_TARGET_KERNEL_RELEASE"
+            exit 1
+          }
+        fi
 
         # 5.10–6.1: Makefile prepends KERNELVERSION, setlocalversion outputs suffix only
         # 6.6+: Makefile delegates entirely to setlocalversion, must output full version
@@ -387,8 +1148,21 @@ jobs:
         sed -i "s|RELEASE_OUTPUT_PLACEHOLDER|${RELEASE_OUTPUT}|g" scripts/setlocalversion
         chmod +x scripts/setlocalversion
 
+        [ -n "$STOCK_BUILD_TIMESTAMP" ] || {
+          echo "::error::Stock build timestamp is missing for $DEVICE_CODENAME"
+          exit 1
+        }
+
+        # Android 6.1 generates UTS_VERSION in init/Makefile. Patching
+        # scripts/mkcompile_h cannot affect uname or /proc/version on this tree.
+        grep -q '^build-timestamp = ' init/Makefile || {
+          echo "::error::Android 6.1 build-timestamp assignment was not found"
+          exit 1
+        }
+        sed -i "s|^build-timestamp = .*|build-timestamp = ${STOCK_BUILD_TIMESTAMP}|" init/Makefile
+        grep -qxF "build-timestamp = ${STOCK_BUILD_TIMESTAMP}" init/Makefile
+
         if [ -f "scripts/mkcompile_h" ]; then
-          sed -i "s|UTS_VERSION=.*|UTS_VERSION=\"${STOCK_VERSION}\"|" scripts/mkcompile_h
           if grep -q "LINUX_COMPILE_BY=" scripts/mkcompile_h; then
             sed -i "s|LINUX_COMPILE_BY=.*|LINUX_COMPILE_BY=\"${STOCK_BUILD_USER}\"|" scripts/mkcompile_h
             sed -i "s|LINUX_COMPILE_HOST=.*|LINUX_COMPILE_HOST=\"${STOCK_BUILD_HOST}\"|" scripts/mkcompile_h
@@ -401,32 +1175,210 @@ jobs:
         {
           echo "KBUILD_BUILD_USER=$STOCK_BUILD_USER"
           echo "KBUILD_BUILD_HOST=$STOCK_BUILD_HOST"
+          echo "KBUILD_BUILD_TIMESTAMP=$STOCK_BUILD_TIMESTAMP"
+          echo "STOCK_RELEASE_EXPECTED=$STOCK_RELEASE"
+          echo "STOCK_VERSION_EXPECTED=$STOCK_VERSION"
+          echo "STOCK_BUILD_TIMESTAMP_EXPECTED=$STOCK_BUILD_TIMESTAMP"
+          echo "STOCK_BUILD_USER_EXPECTED=$STOCK_BUILD_USER"
+          echo "STOCK_BUILD_HOST_EXPECTED=$STOCK_BUILD_HOST"
+          echo "STOCK_COMPILER_EXPECTED=$STOCK_COMPILER"
+          echo "STOCK_FIRMWARE_EXPECTED=$STOCK_FIRMWARE"
+          echo "STOCK_CSC_EXPECTED=$STOCK_CSC"
+          echo "FILE_NAME=${ARTIFACT_BASE}-${STOCK_FIRMWARE}-${STOCK_CSC}"
+          echo "DEVICE_CODENAME=$DEVICE_CODENAME"
           echo "IDENTITY_STATUS=Applied ($DEVICE_CODENAME)"
         } >> "$GITHUB_ENV"
 
     - name: Build Kernel
       working-directory: ${{ env.KERNEL_ROOT }}
+      env:
+        KMI_MODE: ${{ inputs.kmi_mode }}
       run: |
-        BUILD_RC=0
+        set -euo pipefail
         LTO_MODE=thin
         [[ "$ANDROID_VER" == android16* || "$KERNEL_VER" == "6.12" ]] && LTO_MODE=none
         if [ -f "build/build.sh" ]; then
-          KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=/usr/bin/ld.lld GKI_DEFCONFIG_FRAGMENT="$DEFCONFIG_FRAGMENT" LTO=$LTO_MODE BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || BUILD_RC=$?
+          SYMTYPES=0
+          STRICT_MODE=0
+          [[ "$KMI_MODE" != "runtime-compat" ]] && SYMTYPES=1
+          [[ "$KMI_MODE" == "strict" ]] && STRICT_MODE=1
+          KBUILD_SYMTYPES=$SYMTYPES KMI_SYMBOL_LIST_STRICT_MODE=$STRICT_MODE HOSTLD=/usr/bin/ld.lld GKI_DEFCONFIG_FRAGMENT="$DEFCONFIG_FRAGMENT" LTO=$LTO_MODE BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
         else
           # Prebuilt clang sysroot lacks glibc 2.39 C23 symbols — link against system libc
           if [ -f common/tools/bpf/resolve_btfids/Makefile ]; then
             echo 'override KBUILD_HOSTLDFLAGS += --sysroot=/' >> common/tools/bpf/resolve_btfids/Makefile
             echo 'override LDFLAGS += --sysroot=/' >> common/tools/bpf/resolve_btfids/Makefile
           fi
-          tools/bazel build --config=fast --lto=$LTO_MODE --defconfig_fragment=//common:arch/arm64/configs/sukisu_gki.fragment //common:kernel_aarch64_dist || BUILD_RC=$?
+          BAZEL_FLAGS=(build --config=fast --lto="$LTO_MODE")
+          [[ "$KMI_MODE" != "runtime-compat" ]] && BAZEL_FLAGS+=(--kbuild_symtypes)
+          if [[ "$KMI_MODE" == "symtypes" ]]; then
+            # Reduced attribution profiles intentionally omit exports. Keep
+            # the strict module loader, but defer symbol-list enforcement to
+            # the separate full strict gate after CRC convergence.
+            BAZEL_FLAGS+=(--nokmi_symbol_list_strict_mode --nokmi_symbol_list_violations_check)
+          elif [[ "$KMI_MODE" == "strict" ]]; then
+            # These Kleaf checks default to enabled. The wrapper exposes only
+            # the --no* escape hatches, so strict mode enables them by simply
+            # omitting those disabling flags.
+            echo "Strict KMI: using Kleaf's default symbol-list and violations checks"
+          fi
+          BAZEL_FLAGS+=(--defconfig_fragment=//common:arch/arm64/configs/sukisu_gki.fragment)
+          tools/bazel "${BAZEL_FLAGS[@]}" //common:kernel_aarch64_dist
         fi
-        if [ "$BUILD_RC" -ne 0 ]; then
-          if find . -name "Image" -type f 2>/dev/null | grep -q .; then
-            echo "::warning::Build exited $BUILD_RC but Image exists (likely depmod failure)"
-          else
-            exit "$BUILD_RC"
+        echo "KERNEL_BUILD_EXIT_CODE=0" >> "$GITHUB_ENV"
+        echo "Kernel build command completed with exit code 0"
+
+    - name: Verify Android 14 6.1 feature config
+      if: inputs.android_version == 'android14' && inputs.kernel_version == '6.1'
+      working-directory: ${{ env.KERNEL_ROOT }}
+      env:
+        ADD_DROIDSPACES: ${{ inputs.add_droidspaces }}
+        ADD_ZRAM: ${{ inputs.add_zram }}
+        ADD_KPM: ${{ inputs.add_kpm }}
+        REQUIRE_CUSTOM_MANAGER: ${{ inputs.resukisu_expected_hash != '' }}
+        DEVICE_CODENAME: ${{ inputs.device_codename }}
+        KMI_MODE: ${{ inputs.kmi_mode }}
+        KMI_PROFILE: ${{ inputs.kmi_profile }}
+        KMI_MINIMAL_CONFIG: ${{ inputs.kmi_minimal_config }}
+      run: |
+        CONFIG_FILE="$KERNEL_ROOT/out/${ANDROID_VER}-${KERNEL_VER}/common/.config"
+        if [ ! -f "$CONFIG_FILE" ]; then
+          CONFIG_FILE=""
+          for ROOT in "$KERNEL_ROOT/bazel-bin/common" "$KERNEL_ROOT/out/${ANDROID_VER}-${KERNEL_VER}"; do
+            [ -e "$ROOT" ] || continue
+            while IFS= read -r CANDIDATE; do
+              if grep -qx 'CONFIG_ARM64=y' "$CANDIDATE" 2>/dev/null; then
+                CONFIG_FILE="$CANDIDATE"
+                break 2
+              fi
+            done < <(find -L "$ROOT" -type f \
+              \( -name .config -o -name '*kernel*aarch64*config*' -o -name defconfig \) \
+              -print 2>/dev/null)
+          done
+        fi
+        [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ] || {
+          echo "::error::Final kernel .config was not found in legacy or Kleaf outputs"
+          find -L "$KERNEL_ROOT/bazel-bin/common" -maxdepth 3 -type f \
+            \( -name .config -o -name '*config*' \) -print 2>/dev/null | head -50 || true
+          exit 1
+        }
+
+        if [[ "$KMI_MINIMAL_CONFIG" == "true" ]]; then
+          REQUIRED=(CONFIG_KSU CONFIG_KSU_MULTI_MANAGER_SUPPORT)
+        else
+          REQUIRED=(CONFIG_SECCOMP CONFIG_SECCOMP_FILTER)
+          if [ "$ADD_DROIDSPACES" = "true" ]; then
+            REQUIRED+=(
+              CONFIG_NAMESPACES CONFIG_UTS_NS CONFIG_IPC_NS CONFIG_PID_NS
+              CONFIG_NET_NS CONFIG_USER_NS CONFIG_CGROUPS CONFIG_CGROUP_BPF
+              CONFIG_ANDROID_BINDERFS CONFIG_SYSVIPC
+              CONFIG_POSIX_MQUEUE
+            )
+            [[ "$KMI_MODE" != "strict" ]] && REQUIRED+=(CONFIG_CGROUP_PIDS)
+          fi
+          if [ "$ADD_ZRAM" = "true" ]; then
+            REQUIRED+=(
+              CONFIG_ZSMALLOC CONFIG_ZSMALLOC_STAT CONFIG_ZRAM
+              CONFIG_ZRAM_WRITEBACK CONFIG_ZRAM_MEMORY_TRACKING
+              CONFIG_LRU_GEN
+            )
+            [[ "$KMI_MODE" != "strict" ]] && REQUIRED+=(CONFIG_LRU_GEN_STATS)
           fi
         fi
+
+        if [[ "$DEVICE_CODENAME" == "e3q" && "$KMI_MINIMAL_CONFIG" != "true" ]]; then
+          REQUIRED+=(
+            CONFIG_EROFS_FS CONFIG_EROFS_FS_ZIP CONFIG_EROFS_FS_ZIP_LZMA
+            CONFIG_XZ_DEC CONFIG_XZ_DEC_MICROLZMA
+          )
+        fi
+
+        MISSING=()
+        for SYMBOL in "${REQUIRED[@]}"; do
+          grep -qx "${SYMBOL}=y" "$CONFIG_FILE" || MISSING+=("$SYMBOL")
+        done
+        if (("${#MISSING[@]}" > 0)); then
+          printf '::error::Required final config options missing: %s\n' "${MISSING[*]}"
+          exit 1
+        fi
+
+        if [[ "$KMI_MODE" == "strict" ]]; then
+          for SYMBOL in CONFIG_CGROUP_PIDS CONFIG_LRU_GEN_STATS; do
+            grep -qx "# ${SYMBOL} is not set" "$CONFIG_FILE" || {
+              echo "::error::Strict Samsung KMI requires ${SYMBOL}=n"
+              exit 1
+            }
+          done
+        fi
+
+        if [[ "$KMI_MINIMAL_CONFIG" != "true" ]]; then
+          grep -qx 'CONFIG_IP6_NF_NAT=y' "$CONFIG_FILE" || {
+            echo "::error::CONFIG_IP6_NF_NAT must be enabled in the real final build config"
+            exit 1
+          }
+        fi
+
+        if grep -qx 'CONFIG_LOCALVERSION_AUTO=y' "$CONFIG_FILE"; then
+          echo "::error::CONFIG_LOCALVERSION_AUTO must stay disabled for stable kernelrelease metadata"
+          exit 1
+        fi
+
+        if [ "$DEVICE_CODENAME" = "e3q" ]; then
+          if [[ "$KMI_MINIMAL_CONFIG" != "true" && ( "$KMI_MODE" == "runtime-compat" || "$KMI_PROFILE" == "full" || "$KMI_MODE" == "strict" ) ]]; then
+            DAILY_AUDIT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/audit-s928b-daily-config.sh"
+            chmod +x "$DAILY_AUDIT"
+            "$DAILY_AUDIT" "$CONFIG_FILE" "$ADD_KPM" "$REQUIRE_CUSTOM_MANAGER" "$KMI_MODE"
+          fi
+
+          if [[ "$KMI_MINIMAL_CONFIG" != "true" ]]; then
+            KASAN_KMI_AUDIT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/verify-kasan-kmi-stub.sh"
+            chmod +x "$KASAN_KMI_AUDIT"
+            "$KASAN_KMI_AUDIT" "$KERNEL_ROOT" "$KERNEL_ROOT/common" "$CONFIG_FILE"
+          fi
+
+          SAMSUNG_DLKM_CRC_AUDIT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/verify-samsung-dlkm-crcs.sh"
+          SAMSUNG_DLKM_CRC_BASELINE="$GITHUB_WORKSPACE/$VERSION_DIR/samsung-e3q-zzi4-dlkm-crc-baseline.tsv"
+          chmod +x "$SAMSUNG_DLKM_CRC_AUDIT"
+          "$SAMSUNG_DLKM_CRC_AUDIT" "$KERNEL_ROOT" "$SAMSUNG_DLKM_CRC_BASELINE" \
+            "$GITHUB_WORKSPACE/samsung-dlkm-crc-audit" "$KMI_MODE" "${{ inputs.kmi_profile }}"
+        fi
+
+        echo "FINAL_CONFIG_FILE=$CONFIG_FILE" >> "$GITHUB_ENV"
+
+        {
+          echo "## Android 14 / 6.1 config verification"
+          echo ""
+          echo "Verified ${#REQUIRED[@]} required options in \`${CONFIG_FILE#"$KERNEL_ROOT/"}\`."
+          echo "CONFIG_LOCALVERSION_AUTO is disabled."
+          if [ "$DEVICE_CODENAME" = "e3q" ]; then
+            echo "S928B profile ${KMI_PROFILE}, KMI mode ${KMI_MODE}, config and Samsung DLKM CRC audits completed."
+            echo "Kernel-side KVM is present; functional /dev/kvm still requires EL2/HYP handoff by the Samsung bootloader."
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Collect KMI symtypes diagnostics
+      if: always() && inputs.kmi_mode != 'runtime-compat'
+      env:
+        KMI_MODE: ${{ inputs.kmi_mode }}
+        KMI_PROFILE: ${{ inputs.kmi_profile }}
+      run: |
+        if [[ ! -s "$GITHUB_WORKSPACE/samsung-dlkm-crc-audit/Module.symvers" ]]; then
+          echo "::warning::Skipping symtypes collection because the kernel build produced no audited Module.symvers"
+          exit 0
+        fi
+        COLLECTOR="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/collect-kmi-symtypes.sh"
+        chmod +x "$COLLECTOR"
+        "$COLLECTOR" "$KERNEL_ROOT" "$GITHUB_WORKSPACE/samsung-dlkm-crc-audit" \
+          "$KMI_PROFILE" "$KMI_MODE"
+
+    - name: Upload Samsung DLKM CRC audit
+      if: always() && inputs.device_codename == 'e3q'
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ env.FILE_NAME }}-Samsung-DLKM-CRC-Audit
+        path: samsung-dlkm-crc-audit/
+        if-no-files-found: warn
+        compression-level: 9
 
     - name: Dump Build Errors
       if: failure()
@@ -438,7 +1390,11 @@ jobs:
         done
 
     - name: Prepare AnyKernel3
+      if: inputs.kmi_mode == 'runtime-compat' || inputs.package_strict_anykernel
+      env:
+        PACKAGE_STRICT_ANYKERNEL: ${{ inputs.package_strict_anykernel }}
       run: |
+        set -euo pipefail
         if [ -f "$KERNEL_ROOT/out/${ANDROID_VER}-${KERNEL_VER}/dist/Image" ]; then
           cp "$KERNEL_ROOT/out/${ANDROID_VER}-${KERNEL_VER}/dist/Image" "$ANYKERNEL3/Image"
         elif [ -f "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" ]; then
@@ -448,6 +1404,354 @@ jobs:
           find "$KERNEL_ROOT" -name "Image" -type f 2>/dev/null
           exit 1
         fi
+
+        if [[ "$PACKAGE_STRICT_ANYKERNEL" == "true" ]]; then
+          if grep -qE '^[[:space:]]*patch_cmdline "log_buf_len=?" ' "$ANYKERNEL3/anykernel.sh"; then
+            sed -i -E 's|^[[:space:]]*patch_cmdline "log_buf_len=?" "[^"]*"|patch_cmdline "log_buf_len=" "log_buf_len=4M"|' \
+              "$ANYKERNEL3/anykernel.sh"
+          else
+            sed -i '/patch_cmdline "kasan=" "kasan=off"/a patch_cmdline "log_buf_len=" "log_buf_len=4M"' \
+              "$ANYKERNEL3/anykernel.sh"
+          fi
+
+          cat > "$ANYKERNEL3/STRICT-KMI.txt" <<EOF
+        S928B strict Samsung DLKM KMI build
+        ===================================
+        BakaSU: ${RESUKISU_VERSION_FULL}
+        Target firmware: ${STOCK_FIRMWARE_EXPECTED} (${STOCK_CSC_EXPECTED})
+        Target package: ${SAMSUNG_TARGET_PACKAGE}
+        Full Odin AP tar MD5: ${SAMSUNG_TARGET_AP_TAR_MD5}
+        Full Odin AP SHA-256: ${SAMSUNG_TARGET_AP_ARCHIVE_SHA256}
+        Full Odin CP package: ${SAMSUNG_TARGET_CP_PACKAGE}
+        Full Odin CP tar MD5: ${SAMSUNG_TARGET_CP_TAR_MD5}
+        Full Odin CP SHA-256: ${SAMSUNG_TARGET_CP_ARCHIVE_SHA256}
+        Full Odin CSC package: ${SAMSUNG_TARGET_CSC_PACKAGE}
+        Full Odin CSC tar MD5: ${SAMSUNG_TARGET_CSC_TAR_MD5}
+        Full Odin CSC SHA-256: ${SAMSUNG_TARGET_CSC_ARCHIVE_SHA256}
+        Full Odin HOME_CSC package: ${SAMSUNG_TARGET_HOME_CSC_PACKAGE}
+        Full Odin HOME_CSC tar MD5: ${SAMSUNG_TARGET_HOME_CSC_TAR_MD5}
+        Full Odin HOME_CSC SHA-256: ${SAMSUNG_TARGET_HOME_CSC_ARCHIVE_SHA256}
+        Source OTA: ${SAMSUNG_TARGET_OTA_SOURCE}
+        Source OTA SHA-256: ${SAMSUNG_TARGET_OTA_SHA256}
+        Kernel identity: ${KERNEL_VER}.${SUBLEVEL}${STOCK_RELEASE_EXPECTED}
+        Stock boot.img SHA-256: ${SAMSUNG_TARGET_BOOT_IMAGE_SHA256}
+        Stock init_boot.img SHA-256: ${SAMSUNG_TARGET_INIT_BOOT_IMAGE_SHA256}
+        Stock vendor_boot.img SHA-256: ${SAMSUNG_TARGET_VENDOR_BOOT_IMAGE_SHA256}
+        Stock vendor_dlkm.img SHA-256: ${SAMSUNG_TARGET_VENDOR_DLKM_IMAGE_SHA256}
+        Stock system_dlkm.img SHA-256: ${SAMSUNG_TARGET_SYSTEM_DLKM_IMAGE_SHA256}
+        Stock dtbo.img SHA-256: ${SAMSUNG_TARGET_DTBO_IMAGE_SHA256}
+        Stock vbmeta.img SHA-256: ${SAMSUNG_TARGET_VBMETA_IMAGE_SHA256}
+        Stock NON-HLOS.bin SHA-256: ${SAMSUNG_TARGET_APNHLOS_IMAGE_SHA256}
+        Stock modem.bin SHA-256: ${SAMSUNG_TARGET_MODEM_IMAGE_SHA256}
+        KEEP_OEM_UNLOCK BL package: ${SAMSUNG_KEEP_BL_PACKAGE}
+        KEEP_OEM_UNLOCK BL tar MD5: ${SAMSUNG_KEEP_BL_TAR_MD5}
+        KEEP_OEM_UNLOCK BL SHA-256: ${SAMSUNG_KEEP_BL_ARCHIVE_SHA256}
+        KEEP_OEM_UNLOCK vbmeta.img SHA-256: ${SAMSUNG_KEEP_BL_VBMETA_SHA256}
+        KEEP_OEM_UNLOCK vbmeta flags: ${SAMSUNG_KEEP_BL_VBMETA_FLAGS}
+        KEEP_OEM_UNLOCK policy: ${SAMSUNG_KEEP_BL_COMPATIBILITY}
+        Stock vbmeta was not supplied; the intentional flags-3 KEEP_OEM_UNLOCK vbmeta is tracked separately.
+        Samsung source baseline: ${SAMSUNG_SOURCE_FIRMWARE} / ${SAMSUNG_OSS_PACKAGE} (${SAMSUNG_OSS_SHA256})
+        Exact ZZI4 Samsung OSS source: not published when this build was prepared.
+        Source method: audited DZG1 Samsung delta ported onto AOSP common ${COMMON_UPSTREAM_COMMIT}.
+        Source port archive SHA-256: ${SAMSUNG_COMMON_OVERLAY_SHA256}
+        Samsung build target: ${SAMSUNG_BUILD_TARGET} / ${SAMSUNG_CHIPSET}
+        Samsung common delta: ${SAMSUNG_COMMON_CHANGED_COUNT} changed,
+        ${SAMSUNG_COMMON_ADDED_COUNT} added, ${SAMSUNG_COMMON_DELETED_COUNT} removed.
+        KMI profile: full-strict
+        All ${SAMSUNG_TARGET_VENDOR_DLKM_BASELINE_OVERLAP} target Samsung DLKM symbols must match exactly.
+        Samsung XHCI and nf_conn alloc/free hooks are declared, exported, KMI-retained,
+        and active at the real runtime call sites.
+        CRC mismatches are rejected by the module loader.
+        ZZI4 vendor_boot validation covered ${SAMSUNG_TARGET_VENDOR_BOOT_MODULE_COUNT}
+        modules and ${SAMSUNG_TARGET_VENDOR_BOOT_BASELINE_OVERLAP} baseline-overlap
+        symbols with ${SAMSUNG_TARGET_VENDOR_BOOT_CRC_CHANGES} CRC changes.
+        ZZI4 vendor_dlkm validation covered all ${SAMSUNG_TARGET_VENDOR_DLKM_MODULE_COUNT}
+        modules and all ${SAMSUNG_TARGET_VENDOR_DLKM_BASELINE_OVERLAP} strict baseline
+        symbols with ${SAMSUNG_TARGET_VENDOR_DLKM_CRC_CHANGES} CRC changes.
+        Combined vendor_boot/vendor_dlkm validation covered
+        ${SAMSUNG_TARGET_TOTAL_STOCK_MODULE_COUNT} modules and
+        ${SAMSUNG_TARGET_TOTAL_IMPORT_SYMBOL_COUNT} imports with
+        ${SAMSUNG_TARGET_TOTAL_CRC_CONFLICTS} CRC conflicts.
+        CONFIG_EROFS_FS_ZIP_LZMA and CONFIG_XZ_DEC_MICROLZMA are enabled for
+        One UI 9 EROFS-LZMA images and verified in the final kernel config.
+        CONFIG_CGROUP_PIDS and CONFIG_LRU_GEN_STATS are disabled to retain
+        the stock Samsung structure layouts; CONFIG_LRU_GEN remains enabled.
+        KASAN is disabled and the inactive KMI compatibility layout is retained.
+        AnyKernel removes invalid bare off/4M tokens and writes
+        log_buf_len=4M to the kernel command line.
+        Android GKI bootconfig is owned by vendor_boot and remains untouched.
+        EOF
+        fi
+
+    - name: Audit and record native SUSFS v2 kernel artifact
+      if: inputs.susfs_su_session && (inputs.kmi_mode == 'runtime-compat' || inputs.package_strict_anykernel)
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_WORKSPACE/android14-6.1/build-helpers/su-session/apply.py" \
+          --common "$KERNEL_ROOT/common" --ksu "$KERNEL_ROOT/$KSU_DIR" \
+          --susfs-commit "$SUSFS_PINNED_COMMIT" --verify-only \
+          --config "$FINAL_CONFIG_FILE" --image "$ANYKERNEL3/Image" \
+          --receipt "$ANYKERNEL3/RESUKISU-SU-SESSION.json"
+        test -s "$ANYKERNEL3/RESUKISU-SU-SESSION.json"
+
+    - name: Verify BakaSU 35220 compiled integration and attest package
+      if: inputs.add_susfs && inputs.add_zeromount && inputs.resukisu_version_code == '35220' && (inputs.kmi_mode == 'runtime-compat' || inputs.package_strict_anykernel)
+      run: |
+        set -euo pipefail
+        VMLINUX="$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/vmlinux"
+        [[ -s "$VMLINUX" ]] || VMLINUX="$KERNEL_ROOT/out/${ANDROID_VER}-${KERNEL_VER}/dist/vmlinux"
+        test -s "$VMLINUX"
+        python3 "$GITHUB_WORKSPACE/android14-6.1/build-helpers/su-session-35220/apply.py" \
+          --common "$KERNEL_ROOT/common" --ksu "$KERNEL_ROOT/$KSU_DIR" \
+          --susfs-commit "$SUSFS_PINNED_COMMIT" --verify-only \
+          --config "$FINAL_CONFIG_FILE" --image "$ANYKERNEL3/Image" --vmlinux "$VMLINUX" \
+          --receipt "$ANYKERNEL3/RESUKISU-SUSFS-INTEGRATION.json"
+        cp "$FINAL_CONFIG_FILE" "$ANYKERNEL3/BUILD-CONFIG.txt"
+        cp "$GITHUB_WORKSPACE"/samsung-dlkm-crc-audit/session-tests/session35220-*/result.json \
+          "$ANYKERNEL3/RESUKISU-SUSFS-TESTS.json"
+        test -s "$ANYKERNEL3/RESUKISU-SUSFS-INTEGRATION.json"
+        python3 "$GITHUB_WORKSPACE/android14-6.1/build-helpers/bakasu_35220_uapi.py" \
+          "$KERNEL_ROOT/$KSU_DIR"
+        cp "$GITHUB_WORKSPACE/samsung-dlkm-crc-audit/RESUKISU-UAPI5-SERVICES.json" "$ANYKERNEL3/"
+
+    - name: Attest UID gate in packaged Image and embedded config
+      if: inputs.susfs_uid_gated_hiding && (inputs.kmi_mode == 'runtime-compat' || inputs.package_strict_anykernel)
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_WORKSPACE/android14-6.1/build-helpers/susfs-uid-gated/apply.py" \
+          --common "$KERNEL_ROOT/common" --ksu "$KERNEL_ROOT/$KSU_DIR" \
+          --susfs-commit "$SUSFS_PINNED_COMMIT" --verify-only \
+          --config "$FINAL_CONFIG_FILE" --image "$ANYKERNEL3/Image" \
+          --receipt "$ANYKERNEL3/SUSFS-UID-GATE.json"
+        cp "$GITHUB_WORKSPACE/samsung-dlkm-crc-audit/uid-gate-tests/result.json" "$ANYKERNEL3/SUSFS-UID-GATE-TESTS.json"
+        test -s "$ANYKERNEL3/SUSFS-UID-GATE.json"
+        echo 'SUSFS_UID_GATE_ATTESTED=Image-IKCONFIG-and-feature-string' >> "$GITHUB_ENV"
+
+    - name: Audit S928B daily AnyKernel3
+      if: inputs.device_codename == 'e3q' && (inputs.kmi_mode == 'runtime-compat' || inputs.package_strict_anykernel)
+      env:
+        ADD_KPM: ${{ inputs.add_kpm }}
+        REQUIRE_CUSTOM_MANAGER: ${{ inputs.resukisu_expected_hash != '' }}
+        EXPECTED_MANAGER_HASH: ${{ inputs.resukisu_expected_hash }}
+        KMI_MODE: ${{ inputs.kmi_mode }}
+        PACKAGE_STRICT_ANYKERNEL: ${{ inputs.package_strict_anykernel }}
+      run: |
+        set -euo pipefail
+        test -f "$ANYKERNEL3/Image"
+
+        IMAGE_COUNT=$(find "$ANYKERNEL3" -maxdepth 1 -type f \
+          \( -name Image -o -name Image.gz -o -name Image.lz4 \) | wc -l)
+        test "$IMAGE_COUNT" -eq 1 || {
+          echo "::error::AnyKernel3 must contain exactly one kernel image"
+          exit 1
+        }
+
+        if grep -R -n -I --exclude='Image*' 'performance' "$ANYKERNEL3"; then
+          echo "::error::AnyKernel3 text files still contain a forced performance policy"
+          exit 1
+        fi
+        if grep -aF 'cpufreq.default_governor=performance' "$ANYKERNEL3/Image"; then
+          echo "::error::Kernel image still contains the forbidden CPUFreq assignment"
+          exit 1
+        fi
+        if grep -qF 'patch_cmdline "kpti=" "kpti=0"' "$ANYKERNEL3/anykernel.sh"; then
+          echo "::error::AnyKernel3 still forces kpti=0"
+          exit 1
+        fi
+        grep -qF 'patch_cmdline "cpufreq.default_governor=" ""' "$ANYKERNEL3/anykernel.sh"
+        grep -qF 'patch_cmdline "kpti=" ""' "$ANYKERNEL3/anykernel.sh"
+        grep -qF 'patch_cmdline "kasan=" "kasan=off"' "$ANYKERNEL3/anykernel.sh"
+        CMDLINE_AUDIT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/audit-s928b-anykernel-cmdline.py"
+        CMDLINE_AUDIT_ARGS=()
+        if [[ "$PACKAGE_STRICT_ANYKERNEL" == "true" ]]; then
+          CMDLINE_AUDIT_ARGS+=(--require-log-buf)
+        fi
+        python3 "$CMDLINE_AUDIT" "$ANYKERNEL3" "${CMDLINE_AUDIT_ARGS[@]}"
+        grep -qF 'susfs_log=0' "$ANYKERNEL3/anykernel.sh"
+        grep -qF 'set_shell_value "$SUSFS_CFG" avc_log_spoofing 1' "$ANYKERNEL3/anykernel.sh"
+        grep -qF 'set_shell_value "$SUSFS_CFG" hide_sus_mnts_for_all_or_non_su_procs 0' "$ANYKERNEL3/anykernel.sh"
+        grep -qF 'set_json_bool "$NATIVE_SUSFS_JSON" enabled false' "$ANYKERNEL3/anykernel.sh"
+        grep -qF 'set_toml_bool "$ZEROMOUNT_CFG" hide_sus_mounts false' "$ANYKERNEL3/anykernel.sh"
+        grep -aqF 'kasan_flag_enabled' "$ANYKERNEL3/Image" || {
+          echo "::error::Kernel image is missing the GKI-required kasan_flag_enabled export"
+          exit 1
+        }
+
+        IKCONFIG="$RUNNER_TEMP/s928b-final-ikconfig"
+        "$KERNEL_ROOT/common/scripts/extract-ikconfig" "$ANYKERNEL3/Image" > "$IKCONFIG"
+        test -s "$IKCONFIG"
+        DAILY_AUDIT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/audit-s928b-daily-config.sh"
+        chmod +x "$DAILY_AUDIT"
+        "$DAILY_AUDIT" "$IKCONFIG" "$ADD_KPM" "$REQUIRE_CUSTOM_MANAGER" "$KMI_MODE"
+        grep -qx 'CONFIG_IP6_NF_NAT=n' "$IKCONFIG" || {
+          echo "::error::Embedded IKCONFIG did not receive the IPv6 NAT masking patch"
+          exit 1
+        }
+        grep -aF 'tcp_bbr3' "$ANYKERNEL3/Image" >/dev/null || {
+          echo "::error::BBRv3 code is missing from the kernel image"
+          exit 1
+        }
+        grep -aF '/dev/ntsync' "$ANYKERNEL3/Image" >/dev/null || {
+          echo "::error::NTSYNC code is missing from the kernel image"
+          exit 1
+        }
+        if [[ "$REQUIRE_CUSTOM_MANAGER" == "true" ]]; then
+          grep -aF "$EXPECTED_MANAGER_HASH" "$ANYKERNEL3/Image" >/dev/null || {
+            echo "::error::Paired manager certificate hash is missing from the kernel image"
+            exit 1
+          }
+        fi
+        grep -aF 'd3469712b6214462764a1d8d3e5cbe1d6819a0b629791b9f4101867821f1df64' "$ANYKERNEL3/Image" >/dev/null || {
+          echo "::error::Official BakaSU manager certificate hash is missing from the kernel image"
+          exit 1
+        }
+
+        if [[ "$PACKAGE_STRICT_ANYKERNEL" == "true" ]]; then
+          test "$SAMSUNG_SOURCE_BASE_APPLIED" = "true"
+          test "$SAMSUNG_COMMON_CHANGED_COUNT" = "402"
+          test "$SAMSUNG_COMMON_ADDED_COUNT" = "421"
+          test "$SAMSUNG_COMMON_DELETED_COUNT" = "308"
+          test "$SAMSUNG_DLKM_BASELINE_COUNT" = "2485"
+          test "$SAMSUNG_DLKM_EXACT_COUNT" = "2485"
+          test "$SAMSUNG_DLKM_COMPATIBLE_COUNT" = "0"
+          test "$SAMSUNG_DLKM_UNEXPECTED_COUNT" = "0"
+          test "$SAMSUNG_DLKM_MISSING_COUNT" = "0"
+          test "$SAMSUNG_DLKM_RUNTIME_FALLBACK" = "strict-rejection"
+          grep -qx '# CONFIG_CGROUP_PIDS is not set' "$IKCONFIG"
+          grep -qx '# CONFIG_LRU_GEN_STATS is not set' "$IKCONFIG"
+          grep -qx 'CONFIG_LRU_GEN=y' "$IKCONFIG"
+          grep -qx 'CONFIG_EROFS_FS_ZIP_LZMA=y' "$IKCONFIG"
+          grep -qx 'CONFIG_XZ_DEC_MICROLZMA=y' "$IKCONFIG"
+          test "$STOCK_FIRMWARE_EXPECTED" = "S928BXXU6ZZI4"
+          test "$STOCK_CSC_EXPECTED" = "EUX"
+          grep -qF 'patch_cmdline "log_buf_len=" "log_buf_len=4M"' "$ANYKERNEL3/anykernel.sh"
+          grep -qF 'Target firmware: S928BXXU6ZZI4 (EUX)' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Target package: AP_S928BXXU6ZZI4_S928BXXU6ZZI4_MQB114374451_REV00_user_low_ship_MULTI_CERT_meta_OS17.tar.md5' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Full Odin AP tar MD5: not-supplied-component-images-verified' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Full Odin AP SHA-256: not-supplied-component-images-verified' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Full Odin CP package: CP_S928BXXU6EZI4_CP36200554_MQB114374451_REV00_user_low_ship_MULTI_CERT.tar.md5' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Full Odin CP tar MD5: ce09f6271f54f8aa1c2920d76cbb4974' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Full Odin CP SHA-256: aeb17904cc7b8d037d2ae2b840853fb6b583f8e7537cf32ce3b0b9405fc642cd' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Full Odin CSC package: CSC_OXM_S928BOXM6ZZI4_MQB114374451_REV00_user_low_ship_MULTI_CERT.tar.md5' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Full Odin CSC tar MD5: ba072dccbeb55149608aca301289907a' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Full Odin CSC SHA-256: 262e30760c3f62015b8c725393385bbe2a71f96cc62feca55144fa48f6c4a8fe' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Full Odin HOME_CSC package: HOME_CSC_OXM_S928BOXM6ZZI4_MQB114374451_REV00_user_low_ship_MULTI_CERT.tar.md5' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Full Odin HOME_CSC tar MD5: 8a03458bfb4bff67c853b8e79d9c1239' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Full Odin HOME_CSC SHA-256: a5a94a327350095816e3b890d9c4171adcffcd4672bedbf8af5d1a5b25f22f94' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Source OTA SHA-256: not-applicable-full-odin-components' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Stock init_boot.img SHA-256: f61c74bab1781862e48f8abc4a8b7865f0ba661658a3807431395edc1ce069c8' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Stock vendor_dlkm.img SHA-256: be9def7fde78c0a97db01af9ecd13480e0d21ae8099a375a8096dc23fd83d582' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Stock system_dlkm.img SHA-256: 4bbb76c7ac047596254e4c6a8503276464573a93d7e3a7bafa0411b887bc1462' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Stock dtbo.img SHA-256: 65b35a505cb4ba6cb6965a261053a43ea6f4807abeebb81468374e6b44db7f82' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Stock vbmeta.img SHA-256: not-supplied-keep-oem-unlock-vbmeta-only' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Stock NON-HLOS.bin SHA-256: 6d69aa52669f28178e86fa15dacf77b279d9e5762ca7c2eefd640aa8702184ce' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Stock modem.bin SHA-256: c063c91f7314d9db4c855945454904506dae1efb2ee8cf0a579420e2d40efd28' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'KEEP_OEM_UNLOCK BL package: BL_S928BXXU6ZZI4_KEEP_OEM_UNLOCK.tar.md5' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'KEEP_OEM_UNLOCK BL tar MD5: 1ae4d250893d70be14b70a5045121b2d' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'KEEP_OEM_UNLOCK BL SHA-256: 186b3572fef908255bde2404b0e01b000fe15496c4c1ae5015ea5663d85afab9' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'KEEP_OEM_UNLOCK vbmeta.img SHA-256: 67b8d114c5c1af81c473fb649f5b47cca340a5744baed548db9660e5907a4535' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'KEEP_OEM_UNLOCK vbmeta flags: 3' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'KEEP_OEM_UNLOCK policy: avb-flags-3-intentional-keep-oem-unlock' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Samsung source baseline: S928BXXS6DZG1 / SM-S928B_16_Opensource.zip (512c0a0b74646ddbb64ac8adea7c396c90458c2c12cf7f437e9d20282a33fa3c)' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Exact ZZI4 Samsung OSS source: not published when this build was prepared.' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Source method: audited DZG1 Samsung delta ported onto AOSP common 4bd1b41bff8bb87bed8c3621fa2bb5b2e96f5d8c.' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Source port archive SHA-256: a9538364b3539754fcc4be676a02fff81694af61504a0afdcc0212a803042346' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Samsung common delta: 402 changed,' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF '421 added, 308 removed.' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'All 2485 target Samsung DLKM symbols must match exactly.' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'Samsung XHCI and nf_conn alloc/free hooks are declared, exported, KMI-retained,' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'CRC mismatches are rejected by the module loader.' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'symbols with 0 CRC changes.' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'ZZI4 vendor_dlkm validation covered all 351' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF 'modules and all 2485 strict baseline' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF '762 modules and' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF '4900 imports with' "$ANYKERNEL3/STRICT-KMI.txt"
+          grep -qF '0 CRC conflicts.' "$ANYKERNEL3/STRICT-KMI.txt"
+        fi
+
+        IMAGE_STRINGS="$RUNNER_TEMP/s928b-image-strings"
+        strings "$ANYKERNEL3/Image" > "$IMAGE_STRINGS"
+        if [[ "${GUNYAH_ADAPTIVE_BACKING:-0}" == "1" ]]; then
+          grep -qF 'allocated adaptive bounded backing' "$IMAGE_STRINGS" || {
+            echo '::error::Packaged Image lacks the adaptive Gunyah allocator marker'
+            exit 1
+          }
+          printf '%s\n' \
+            'Gunyah adaptive backing V1: original request-size ABI retained.' \
+            'At most 8192 allocator chunks and 8192 RM parcel entries.' \
+            'Image marker verified; device VM startup remains unverified.' \
+            > "$ANYKERNEL3/GUNYAH-ADAPTIVE.txt"
+        fi
+        grep -qF "${KERNEL_VER}.${SUBLEVEL}${STOCK_RELEASE_EXPECTED}" "$IMAGE_STRINGS"
+        grep -qF "$STOCK_VERSION_EXPECTED" "$IMAGE_STRINGS"
+        grep -qF "${STOCK_BUILD_USER_EXPECTED}@${STOCK_BUILD_HOST_EXPECTED}" "$IMAGE_STRINGS"
+        grep -qF "$STOCK_COMPILER_EXPECTED" "$IMAGE_STRINGS"
+        if [[ "$PACKAGE_STRICT_ANYKERNEL" == "true" ]]; then
+          for SYMBOL in \
+            __tracepoint_android_rvh_nf_conn_alloc \
+            __tracepoint_android_rvh_nf_conn_free \
+            __tracepoint_android_vh_xhci_suspend \
+            __tracepoint_android_vh_xhci_resume; do
+            grep -qF "$SYMBOL" "$IMAGE_STRINGS" || {
+              echo "::error::Packaged strict Image lacks required Samsung KMI symbol: $SYMBOL"
+              exit 1
+            }
+          done
+        fi
+        if grep -qF 'Thu Jan  1 00:00:00 UTC 1970' "$IMAGE_STRINGS"; then
+          echo "::error::Kernel image still contains the zero-epoch UTS timestamp"
+          exit 1
+        fi
+
+        ANYKERNEL_ZIP="$RUNNER_TEMP/${FILE_NAME}-AnyKernel3.zip"
+        (cd "$ANYKERNEL3" && zip -X -qr "$ANYKERNEL_ZIP" .)
+        unzip -l "$ANYKERNEL_ZIP"
+        unzip -p "$ANYKERNEL_ZIP" anykernel.sh | grep -F 'susfs_log=0'
+        unzip -p "$ANYKERNEL_ZIP" anykernel.sh | grep -F 'patch_cmdline "kpti=" ""'
+        unzip -p "$ANYKERNEL_ZIP" anykernel.sh | grep -F 'patch_cmdline "kasan=" "kasan=off"'
+        unzip -p "$ANYKERNEL_ZIP" anykernel.sh | grep -F 'avc_log_spoofing 1'
+        unzip -p "$ANYKERNEL_ZIP" anykernel.sh | grep -F 'hide_sus_mnts_for_all_or_non_su_procs 0'
+        if unzip -p "$ANYKERNEL_ZIP" anykernel.sh | grep -F 'performance'; then
+          echo "::error::Audited AnyKernel ZIP still contains a forced performance policy"
+          exit 1
+        fi
+        if [[ "$PACKAGE_STRICT_ANYKERNEL" == "true" ]]; then
+          unzip -p "$ANYKERNEL_ZIP" anykernel.sh | grep -F 'patch_cmdline "log_buf_len=" "log_buf_len=4M"'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Target firmware: S928BXXU6ZZI4 (EUX)'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Target package: AP_S928BXXU6ZZI4_S928BXXU6ZZI4_MQB114374451_REV00_user_low_ship_MULTI_CERT_meta_OS17.tar.md5'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Full Odin AP tar MD5: not-supplied-component-images-verified'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Full Odin AP SHA-256: not-supplied-component-images-verified'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Full Odin CP package: CP_S928BXXU6EZI4_CP36200554_MQB114374451_REV00_user_low_ship_MULTI_CERT.tar.md5'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Full Odin CP tar MD5: ce09f6271f54f8aa1c2920d76cbb4974'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Full Odin CP SHA-256: aeb17904cc7b8d037d2ae2b840853fb6b583f8e7537cf32ce3b0b9405fc642cd'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Full Odin CSC package: CSC_OXM_S928BOXM6ZZI4_MQB114374451_REV00_user_low_ship_MULTI_CERT.tar.md5'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Full Odin CSC tar MD5: ba072dccbeb55149608aca301289907a'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Full Odin CSC SHA-256: 262e30760c3f62015b8c725393385bbe2a71f96cc62feca55144fa48f6c4a8fe'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Full Odin HOME_CSC package: HOME_CSC_OXM_S928BOXM6ZZI4_MQB114374451_REV00_user_low_ship_MULTI_CERT.tar.md5'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Full Odin HOME_CSC tar MD5: 8a03458bfb4bff67c853b8e79d9c1239'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Full Odin HOME_CSC SHA-256: a5a94a327350095816e3b890d9c4171adcffcd4672bedbf8af5d1a5b25f22f94'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Source OTA SHA-256: not-applicable-full-odin-components'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Stock init_boot.img SHA-256: f61c74bab1781862e48f8abc4a8b7865f0ba661658a3807431395edc1ce069c8'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Stock vendor_dlkm.img SHA-256: be9def7fde78c0a97db01af9ecd13480e0d21ae8099a375a8096dc23fd83d582'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Stock system_dlkm.img SHA-256: 4bbb76c7ac047596254e4c6a8503276464573a93d7e3a7bafa0411b887bc1462'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Stock dtbo.img SHA-256: 65b35a505cb4ba6cb6965a261053a43ea6f4807abeebb81468374e6b44db7f82'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Stock vbmeta.img SHA-256: not-supplied-keep-oem-unlock-vbmeta-only'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Stock NON-HLOS.bin SHA-256: 6d69aa52669f28178e86fa15dacf77b279d9e5762ca7c2eefd640aa8702184ce'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Stock modem.bin SHA-256: c063c91f7314d9db4c855945454904506dae1efb2ee8cf0a579420e2d40efd28'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'KEEP_OEM_UNLOCK BL package: BL_S928BXXU6ZZI4_KEEP_OEM_UNLOCK.tar.md5'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'KEEP_OEM_UNLOCK vbmeta flags: 3'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'KEEP_OEM_UNLOCK policy: avb-flags-3-intentional-keep-oem-unlock'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Samsung source baseline: S928BXXS6DZG1 / SM-S928B_16_Opensource.zip (512c0a0b74646ddbb64ac8adea7c396c90458c2c12cf7f437e9d20282a33fa3c)'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Exact ZZI4 Samsung OSS source: not published when this build was prepared.'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'Source method: audited DZG1 Samsung delta ported onto AOSP common 4bd1b41bff8bb87bed8c3621fa2bb5b2e96f5d8c.'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'All 2485 target Samsung DLKM symbols must match exactly.'
+          unzip -p "$ANYKERNEL_ZIP" STRICT-KMI.txt | grep -F 'ZZI4 vendor_dlkm validation covered all 351'
+          mkdir -p "$GITHUB_WORKSPACE/strict-flash"
+          cp "$ANYKERNEL_ZIP" "$GITHUB_WORKSPACE/strict-flash/"
+          sha256sum "$GITHUB_WORKSPACE/strict-flash/$(basename "$ANYKERNEL_ZIP")" \
+            > "$GITHUB_WORKSPACE/strict-flash/$(basename "$ANYKERNEL_ZIP").sha256"
+        fi
+        sha256sum "$ANYKERNEL_ZIP" "$ANYKERNEL3/Image"
 
     - name: Scan Patch Rejects
       if: always()
@@ -469,12 +1773,23 @@ jobs:
         fi
 
     - name: Upload Artifact
+      if: inputs.kmi_mode == 'runtime-compat' || inputs.package_strict_anykernel
       uses: actions/upload-artifact@v7
       with:
         name: ${{ env.FILE_NAME }}-AnyKernel3
         path: ./AnyKernel3/**
         if-no-files-found: error
         compression-level: 9
+
+    - name: Upload exact flashable Strict KMI ZIP
+      if: inputs.package_strict_anykernel
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ env.FILE_NAME }}-Strict-AnyKernel3-Flash
+        path: strict-flash/
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 7
 
     - name: Upload Rejects
       if: always() && env.REJ_COUNT > 0
@@ -490,31 +1805,52 @@ jobs:
       env:
         ADD_SUSFS: ${{ inputs.add_susfs }}
         ADD_ZEROMOUNT: ${{ inputs.add_zeromount }}
+        ADD_DROIDSPACES: ${{ inputs.add_droidspaces }}
         ADD_ZRAM: ${{ inputs.add_zram }}
         ADD_BBG: ${{ inputs.add_bbg }}
         ADD_OVERLAYFS: ${{ inputs.add_overlayfs_support }}
         ADD_KPM: ${{ inputs.add_kpm }}
+        SUSFS_OPEN_REDIRECT_TEST: ${{ inputs.susfs_open_redirect }}
+        KMI_MODE: ${{ inputs.kmi_mode }}
+        KMI_PROFILE: ${{ inputs.kmi_profile }}
       run: |
         S() { [[ "$1" == "true" ]] && echo "Enabled" || echo "Disabled"; }
         {
-          echo "## ReSukiSU | ${KERNEL_VER}.${SUBLEVEL}"
+          echo "## BakaSU | ${KERNEL_VER}.${SUBLEVEL}"
           echo ""
           echo "| Feature | Status |"
           echo "|---------|--------|"
           echo "| **Kernel** | ${KERNEL_VER}.${SUBLEVEL} |"
           echo "| **Android** | ${ANDROID_VER} |"
           echo "| **OS Patch Level** | ${OS_PATCH} |"
+          if [[ "$ADD_SUSFS" == "true" ]]; then
+            echo "| **SUSFS source** | ${SUSFS_EXPECTED_VERSION:-not-recorded} @ ${SUSFS_PINNED_COMMIT:-not-recorded} |"
+          fi
+          echo "| **Native SUSFS port** | ${RESUKISU_SU_SESSION_PORT:-disabled} |"
+          echo "| **UIDGate-v1 requested** | ${{ inputs.susfs_uid_gated_hiding }} |"
+          echo "| **UIDGate-v1 packaged Image proof** | ${SUSFS_UID_GATE_ATTESTED:-not-attested} |"
           echo "| **Enhanced SUSFS** | $(S "$ADD_SUSFS") |"
+          echo "| **SUSFS Open Redirect (Test)** | $(S "$SUSFS_OPEN_REDIRECT_TEST") |"
           echo "| **ZeroMount** | $(S "$ADD_ZEROMOUNT") |"
+          echo "| **Droidspaces 6_7_8** | $(S "$ADD_DROIDSPACES") |"
           echo "| **ZRAM (LZ4K/LZ4KD)** | $(S "$ADD_ZRAM") |"
           echo "| **LZ4 v1.10.0** | $(S "$ADD_ZRAM") |"
           echo "| **Overlayfs Support** | $(S "$ADD_OVERLAYFS") |"
           echo "| **Unicode Filter** | Enabled |"
           echo "| **Baseband Guard** | $(S "$ADD_BBG") |"
           echo "| **KPM** | $(S "$ADD_KPM") |"
+          echo "| **KASAN** | Disabled; inactive KMI static-key stub retained |"
+          echo "| **KMI mode** | ${KMI_MODE} (${KMI_PROFILE}) |"
+          echo "| **Gunyah adaptive backing** | ${GUNYAH_ADAPTIVE_BACKING:-0} (device startup unverified) |"
+          echo "| **Samsung DLKM CRCs** | ${SAMSUNG_DLKM_EXACT_COUNT:-not-recorded} exact, ${SAMSUNG_DLKM_COMPATIBLE_COUNT:-not-recorded} known differences, ${SAMSUNG_DLKM_UNEXPECTED_COUNT:-not-recorded} unexpected |"
+          echo "| **Kernel build exit** | ${KERNEL_BUILD_EXIT_CODE:-not-recorded} |"
           echo "| **Device Profile** | ${IDENTITY_STATUS:-Generic} |"
           echo "| **Rejects** | ${REJ_COUNT:-0} |"
-          echo "| **Artifact** | ${FILE_NAME} |"
+          if [[ "$KMI_MODE" == "runtime-compat" || "${{ inputs.package_strict_anykernel }}" == "true" ]]; then
+            echo "| **Artifact** | ${FILE_NAME} |"
+          else
+            echo "| **Artifact** | Non-flashable KMI diagnostics only |"
+          fi
         } >> "$GITHUB_STEP_SUMMARY"
         REPORT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/report-config.sh"
         [ -f "$REPORT" ] && bash "$REPORT" "$KERNEL_ROOT" "$ANDROID_VER" "$KERNEL_VER" || true

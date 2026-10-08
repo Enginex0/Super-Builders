@@ -1,0 +1,174 @@
+name: ReSukiSU KMI Runtime Compatibility
+
+# Recovery build after the strict MODVERSIONS variant bootlooped on SM-S928B.
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/kmi-runtime-compat
+    paths:
+      - .github/workflows/run-kmi-module-loader-audit.yml
+      - .github/workflows/build-resukisu.yml
+      - android14-6.1/build-helpers/clean-build-flags.sh
+      - android14-6.1/build-helpers/verify-samsung-dlkm-crcs.sh
+      - android14-6.1/samsung-e3q-dlkm-crc-baseline.tsv
+      - android14-6.1/resukisu-pin.txt
+
+# ReSukiSU v4.1.0-35056 with Samsung DLKM runtime compatibility.
+jobs:
+  dependencies:
+    uses: ./.github/workflows/cache-dependencies.yml
+
+  build:
+    needs: dependencies
+    uses: ./.github/workflows/build-resukisu.yml
+    with:
+      android_version: android14
+      kernel_version: "6.1"
+      sub_level: "145"
+      os_patch_level: "2025-09"
+      add_susfs: true
+      add_zeromount: true
+      add_droidspaces: true
+      add_zram: true
+      add_bbg: true
+      add_overlayfs_support: true
+      add_kpm: false
+      susfs_open_redirect: false
+      add_ptrace_fix: true
+      add_perf_patches: true
+      sukisu_commit: ca62a37fc328e6cb836ea6d77b7eab0c073104a6
+      resukisu_source_branch: main
+      resukisu_version_code: "35056"
+      device_codename: e3q
+
+  package-runtime-compat-zip:
+    name: Package KMI-compatible Log4M flashable ZIP
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_ARTIFACT: 6.1.145-android14-2025-09-ReSukiSU-35056-AnyKernel3
+      OUTPUT_BASENAME: 6.1.145-android14-2025-09-ReSukiSU-35056-AnyKernel3-KMICompat-Log4M-Audited
+    steps:
+      - name: Download successful build artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ env.SOURCE_ARTIFACT }}
+          path: AnyKernel3
+
+      - name: Set 4M kernel log buffer in flash package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s AnyKernel3/Image
+          test -s AnyKernel3/anykernel.sh
+
+          # Keep the compiled kernel identity unchanged. AnyKernel patches the
+          # boot cmdline at flash time so early Samsung DLKM/KMI diagnostics
+          # survive long enough to be captured over ADB.
+          if grep -qE '^[[:space:]]*patch_cmdline "log_buf_len=?" ' AnyKernel3/anykernel.sh; then
+            sed -i -E 's|^[[:space:]]*patch_cmdline "log_buf_len=?" "[^"]*"|patch_cmdline "log_buf_len=" "log_buf_len=4M"|' AnyKernel3/anykernel.sh
+          else
+            sed -i '/patch_cmdline "kasan=" "kasan=off"/a patch_cmdline "log_buf_len=" "log_buf_len=4M"' AnyKernel3/anykernel.sh
+          fi
+
+          grep -qF 'patch_cmdline "log_buf_len=" "log_buf_len=4M"' AnyKernel3/anykernel.sh
+          if grep -qF 'patch_cmdline "log_buf_len=" "log_buf_len=256K"' AnyKernel3/anykernel.sh; then
+            echo "::error::AnyKernel3 still requests log_buf_len=256K"
+            exit 1
+          fi
+
+      - name: Create and audit exact flashable ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s AnyKernel3/Image
+          test -s AnyKernel3/anykernel.sh
+
+          cat > AnyKernel3/KMI-RUNTIME-COMPAT.txt <<'EOF'
+          S928B KMI runtime compatibility build
+          =====================================
+          All live S928B ABI-import and validated build CRC pairs are pinned.
+          Missing symbols, new CRCs, or unapproved differences fail the build.
+          The 795 known Samsung/GKI CRC differences require the audited
+          bad_version runtime fallback used by this device-compatible kernel.
+          Genuine module blacklist matches still fail with -EPERM.
+          Patch reject files remain fatal before compilation.
+          KASAN remains disabled.
+          SUSFS logging remains compiled in but runtime-default OFF.
+          AnyKernel sets log_buf_len=4M for early-boot diagnostics.
+          This replaces the strict-CRC audited build that caused a bootloop.
+          EOF
+
+          FLASH_ZIP="$RUNNER_TEMP/${OUTPUT_BASENAME}.zip"
+          SHA_FILE="$RUNNER_TEMP/${OUTPUT_BASENAME}.zip.sha256"
+          rm -f "$FLASH_ZIP" "$SHA_FILE"
+
+          (cd AnyKernel3 && zip -X -qr "$FLASH_ZIP" .)
+          unzip -t "$FLASH_ZIP"
+          unzip -l "$FLASH_ZIP"
+
+          unzip -p "$FLASH_ZIP" anykernel.sh | grep -F 'susfs_log=0'
+          unzip -p "$FLASH_ZIP" anykernel.sh | grep -F 'patch_cmdline "kpti=" ""'
+          unzip -p "$FLASH_ZIP" anykernel.sh | grep -F 'patch_cmdline "kasan=" "kasan=off"'
+          unzip -p "$FLASH_ZIP" anykernel.sh | grep -F 'patch_cmdline "log_buf_len=" "log_buf_len=4M"'
+          unzip -p "$FLASH_ZIP" anykernel.sh | grep -F 'avc_log_spoofing 1'
+          unzip -p "$FLASH_ZIP" anykernel.sh | grep -F 'hide_sus_mnts_for_all_or_non_su_procs 0'
+          unzip -p "$FLASH_ZIP" KMI-RUNTIME-COMPAT.txt | grep -F 'unapproved differences fail the build'
+          unzip -p "$FLASH_ZIP" KMI-RUNTIME-COMPAT.txt | grep -F '795 known Samsung/GKI CRC differences'
+          unzip -p "$FLASH_ZIP" KMI-RUNTIME-COMPAT.txt | grep -F 'runtime-default OFF'
+          unzip -p "$FLASH_ZIP" KMI-RUNTIME-COMPAT.txt | grep -F 'log_buf_len=4M'
+
+          if unzip -p "$FLASH_ZIP" anykernel.sh | grep -F 'performance'; then
+            echo "::error::Flash ZIP contains a forced performance policy"
+            exit 1
+          fi
+          if unzip -p "$FLASH_ZIP" anykernel.sh | grep -F 'patch_cmdline "log_buf_len=" "log_buf_len=256K"'; then
+            echo "::error::Flash ZIP still contains log_buf_len=256K"
+            exit 1
+          fi
+
+          sha256sum "$FLASH_ZIP" | tee "$SHA_FILE"
+          OUTPUT_SHA256=$(awk '{print $1}' "$SHA_FILE")
+          {
+            echo "OUTPUT_ZIP=$FLASH_ZIP"
+            echo "OUTPUT_SHA_FILE=$SHA_FILE"
+            echo "OUTPUT_SHA256=$OUTPUT_SHA256"
+          } >> "$GITHUB_ENV"
+
+      - name: Upload KMI-compatible ZIP and checksum
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.OUTPUT_BASENAME }}
+          path: |
+            ${{ env.OUTPUT_ZIP }}
+            ${{ env.OUTPUT_SHA_FILE }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Packaging summary
+        shell: bash
+        run: |
+          {
+            echo "## S928B KMI runtime compatibility Log4M package"
+            echo
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| ReSukiSU | v4.1.0-35056 pinned at ca62a37fc328e6cb836ea6d77b7eab0c073104a6 |"
+            echo "| Samsung DLKM CRC gate | 2476 live device/build CRC pairs pinned; missing or unexpected values fail |"
+            echo "| Known Samsung/GKI differences | 795 accepted only with audited \`bad_version: return 1\` fallback |"
+            echo "| Module blacklist errno | Genuine blacklist matches return \`-EPERM\` |"
+            echo "| Patch rejects before build | Build fails if any \`.rej\` exists |"
+            echo "| KASAN | Disabled; compatibility stub retained where required |"
+            echo "| SUSFS logging | Compiled in, runtime default OFF |"
+            echo "| Kernel log buffer | AnyKernel forces \`log_buf_len=4M\` |"
+            echo "| KPM | Disabled for this build |"
+            echo "| Flash ZIP | \`${OUTPUT_BASENAME}.zip\` |"
+            echo "| SHA-256 | \`${OUTPUT_SHA256}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

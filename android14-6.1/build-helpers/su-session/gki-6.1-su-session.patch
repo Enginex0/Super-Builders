@@ -1,0 +1,57 @@
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -1905,12 +1905,9 @@
+ 
+ #ifdef CONFIG_KSU_SUSFS
+ extern struct static_key_true ksu_su_compat_enabled;
+-extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;
+-extern bool __ksu_is_allow_uid_for_current(uid_t uid);
+-extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
+-			void *envp, int *flags);
+-extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv,
+-				void *envp, int *flags);
++extern bool ksu_handle_execveat_su_session(int *fd, struct filename **filename_ptr,
++				void *argv, void *envp, int *flags);
++extern int ksu_install_su_fd(void);
+ #endif
+ 
+ static int do_execveat_common(int fd, struct filename *filename,
+@@ -1920,6 +1917,9 @@
+ {
+ 	struct linux_binprm *bprm;
+ 	int retval;
++#ifdef CONFIG_KSU_SUSFS
++	bool is_su_session = false;
++#endif
+ 
+ 	if (IS_ERR(filename))
+ 		return PTR_ERR(filename);
+@@ -1929,10 +1929,8 @@
+ 		goto orig_flow;
+ 
+ 	if (static_branch_likely(&ksu_su_compat_enabled)) {
+-		if (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted))
+-			ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+-		else
+-			ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
++		is_su_session = ksu_handle_execveat_su_session(&fd, &filename, &argv,
++							     &envp, &flags);
+ 	}
+ 
+ orig_flow:
+@@ -2004,6 +2002,15 @@
+ 	}
+ 
+ 	retval = bprm_execve(bprm, fd, filename, flags);
++#ifdef CONFIG_KSU_SUSFS
++	/* Install only after the successful exec closed the previous CLOEXEC FDs. */
++	if (unlikely(is_su_session && retval >= 0)) {
++		int su_fd = ksu_install_su_fd();
++
++		if (su_fd < 0)
++			pr_warn("ReSukiSU: su-session FD installation failed: %d\n", su_fd);
++	}
++#endif
+ out_free:
+ 	free_bprm(bprm);
+ 

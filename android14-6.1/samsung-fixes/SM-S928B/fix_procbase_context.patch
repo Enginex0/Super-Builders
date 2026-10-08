@@ -1,9 +1,9 @@
 --- a/fs/proc/base.c
 +++ b/fs/proc/base.c
-@@ -100,6 +100,7 @@
+@@ -101,6 +101,7 @@
  #include <linux/cn_proc.h>
  #include <linux/cpufreq_times.h>
-+#include <linux/dma-buf.h>
  #include <linux/task_integrity.h>
++#include <linux/dma-buf.h>
  #include <linux/proca.h>
  #include <trace/events/oom.h>

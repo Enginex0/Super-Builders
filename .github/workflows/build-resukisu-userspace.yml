@@ -1,0 +1,243 @@
+name: Build pinned BakaSU userspace
+
+on:
+  workflow_call:
+    inputs:
+      resukisu_commit:
+        type: string
+        required: true
+      resukisu_version_code:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: BakaSU ${{ inputs.resukisu_version_code }} ksud + ksuinit / ARM64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: nightly
+      LIBCLANG_PATH: /usr/lib/llvm-18/lib
+      CLANG_PATH: /usr/bin/clang-18
+      CARGO_TERM_COLOR: always
+      EXPECTED_PIN: ${{ inputs.resukisu_commit }}
+      EXPECTED_VERSION: ${{ inputs.resukisu_version_code }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: builder
+
+      - name: Checkout exact BakaSU source with version history
+        uses: actions/checkout@v6
+        with:
+          repository: Baka-SU/BakaSU
+          ref: ${{ inputs.resukisu_commit }}
+          fetch-depth: 0
+          path: resukisu
+
+      - name: Setup upstream Nightly toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly
+          targets: aarch64-linux-android
+          components: rust-src
+
+      - name: Install host Clang and Libclang for bindgen
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libclang-18-dev llvm-18
+          /usr/bin/clang-18 --version
+
+      - name: Setup Android NDK r29
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r29
+
+      - name: Repair the pinned 35189 ksuinit libc lock record
+        if: inputs.resukisu_commit == '83850e8e93c5f7cfaec69cf03707f13e799df36a'
+        run: |
+          set -euo pipefail
+          python3 builder/android14-6.1/build-helpers/test-resukisu-35189-lock.py resukisu
+          python3 builder/android14-6.1/build-helpers/resukisu_35189_lock.py resukisu
+
+      - name: Repair the pinned 35193 ksuinit libc lock record
+        if: inputs.resukisu_commit == '72fe0d0c9d2738f175eb296167ee061fcd3e0dbf'
+        run: |
+          set -euo pipefail
+          python3 builder/android14-6.1/build-helpers/test-resukisu-35193-lock.py resukisu
+          python3 builder/android14-6.1/build-helpers/resukisu_35193_lock.py resukisu
+
+      - name: Repair the pinned 35201 ksuinit libc lock record
+        if: inputs.resukisu_commit == '75de877b5d920609a7d920a92380779d9d0c01a8'
+        run: |
+          set -euo pipefail
+          python3 builder/android14-6.1/build-helpers/test-resukisu-35201-lock.py resukisu
+          python3 builder/android14-6.1/build-helpers/resukisu_35201_lock.py resukisu
+
+      - name: Repair the pinned 35202 ksuinit libc lock record
+        if: inputs.resukisu_commit == '4c5c8cedaf3cecf297f9b529362e529f506e6891'
+        run: |
+          set -euo pipefail
+          python3 builder/android14-6.1/build-helpers/test-resukisu-35202-lock.py resukisu
+          python3 builder/android14-6.1/build-helpers/resukisu_35202_lock.py resukisu
+
+      - name: Repair the pinned 35203 ksuinit libc lock record
+        if: inputs.resukisu_commit == '8770c7e324a22895703c4916b8a16520e0b81c79'
+        run: |
+          set -euo pipefail
+          python3 builder/android14-6.1/build-helpers/test-resukisu-35203-lock.py resukisu
+          python3 builder/android14-6.1/build-helpers/resukisu_35203_lock.py resukisu
+
+      - name: Repair the pinned 35204 ksuinit libc lock record
+        if: inputs.resukisu_commit == '97c102ba05ee2915390cacae6d11e1727d6ca350'
+        run: |
+          set -euo pipefail
+          python3 builder/android14-6.1/build-helpers/test-resukisu-35204-lock.py resukisu
+          python3 builder/android14-6.1/build-helpers/resukisu_35204_lock.py resukisu
+
+      - name: Repair the pinned 35205 ksuinit libc lock record
+        if: inputs.resukisu_commit == '9dbce02e511ea6b6305a238b84e456f6a92e1d0b'
+        run: |
+          set -euo pipefail
+          python3 builder/android14-6.1/build-helpers/test-resukisu-35205-lock.py resukisu
+          python3 builder/android14-6.1/build-helpers/resukisu_35205_lock.py resukisu
+
+      - name: Repair the pinned 35212 ksuinit libc lock record
+        if: inputs.resukisu_commit == 'e5423590bec3e24daffa4e9555c9592071319c68'
+        run: |
+          set -euo pipefail
+          python3 builder/android14-6.1/build-helpers/test-bakasu-35212-lock.py resukisu
+          python3 builder/android14-6.1/build-helpers/bakasu_35212_lock.py resukisu
+
+      - name: Repair the pinned 35215 ksuinit libc lock record
+        if: inputs.resukisu_commit == '1bfed00f597e65700d70fee0feb1d424fc21a2e5'
+        run: |
+          set -euo pipefail
+          python3 builder/android14-6.1/build-helpers/test-bakasu-35215-lock.py resukisu
+          python3 builder/android14-6.1/build-helpers/bakasu_35215_lock.py resukisu
+
+      - name: Repair the pinned 35220 ksuinit libc lock record
+        if: inputs.resukisu_commit == '8450dd287ef6ee25ca2b6b858b43c9354c73060c'
+        run: |
+          set -euo pipefail
+          python3 builder/android14-6.1/build-helpers/test-bakasu-35220-lock.py resukisu
+          python3 builder/android14-6.1/build-helpers/bakasu_35220_lock.py resukisu
+
+      - name: Require fresh UAPI headers and Rust build outputs
+        run: |
+          set -euo pipefail
+          test -z "${CARGO_TARGET_DIR:-}"
+          test ! -e resukisu/userspace/ksud/target
+          test ! -e resukisu/userspace/ksuinit/target
+          if [[ "$EXPECTED_PIN" == '8770c7e324a22895703c4916b8a16520e0b81c79' ]]; then
+            python3 builder/android14-6.1/build-helpers/resukisu_35203_uapi.py resukisu
+          elif [[ "$EXPECTED_PIN" == '97c102ba05ee2915390cacae6d11e1727d6ca350' ]]; then
+            python3 builder/android14-6.1/build-helpers/resukisu_35204_uapi.py resukisu
+          elif [[ "$EXPECTED_PIN" == '9dbce02e511ea6b6305a238b84e456f6a92e1d0b' ]]; then
+            python3 builder/android14-6.1/build-helpers/resukisu_35205_uapi.py resukisu
+          elif [[ "$EXPECTED_PIN" == 'e5423590bec3e24daffa4e9555c9592071319c68' ]]; then
+            python3 builder/android14-6.1/build-helpers/bakasu_35212_uapi.py resukisu
+          elif [[ "$EXPECTED_PIN" == '1bfed00f597e65700d70fee0feb1d424fc21a2e5' ]]; then
+            python3 builder/android14-6.1/build-helpers/bakasu_35215_uapi.py resukisu
+          elif [[ "$EXPECTED_PIN" == '8450dd287ef6ee25ca2b6b858b43c9354c73060c' ]]; then
+            python3 builder/android14-6.1/build-helpers/bakasu_35220_uapi.py resukisu
+          fi
+
+      - name: Verify source, toolchain, locked dependencies and Libclang
+        run: |
+          set -euo pipefail
+          mkdir -p userspace-artifacts
+          python3 builder/android14-6.1/build-helpers/verify-resukisu-userspace.py \
+            resukisu --commit "$EXPECTED_PIN" --version "$EXPECTED_VERSION" \
+            --receipt userspace-artifacts/BUILD-IDENTITY.json
+
+      - name: Validate both Android dependency graphs without changing locks
+        working-directory: resukisu
+        run: |
+          set -euo pipefail
+          cargo +nightly metadata --locked --format-version 1 --filter-platform aarch64-linux-android \
+            --manifest-path userspace/ksuinit/Cargo.toml > ../userspace-artifacts/ksuinit-metadata.json
+          cargo +nightly metadata --locked --format-version 1 --filter-platform aarch64-linux-android \
+            --manifest-path userspace/ksud/Cargo.toml > ../userspace-artifacts/ksud-metadata.json
+
+      - name: Install pinned cargo-ndk with its lockfile
+        run: cargo +nightly install cargo-ndk --version 4.1.2 --locked
+
+      - name: Smoke-test raw Cargo capture through installed cargo-ndk
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          export RESUKISU_TEST_CARGO_NDK="$(command -v cargo-ndk)"
+          export RESUKISU_TEST_REAL_CARGO="$(rustup which --toolchain nightly cargo)"
+          python3 builder/android14-6.1/build-helpers/test-bakasu-35220-bindings.py \
+            CaptureTests.test_pinned_cargo_ndk_exposes_internal_build_messages
+
+      - name: Build ksuinit with the audited lockfile and --locked
+        working-directory: resukisu
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          source .github/scripts/setup-rust-build.sh aarch64-linux-android 26
+          "$CLANG_PATH" --version
+          BUILTINS="$($CLANG_PATH --print-resource-dir)/lib/linux/libclang_rt.builtins-aarch64-android.a"
+          test -s "$BUILTINS"
+          export RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wno-unused-command-line-argument -C link-arg=$BUILTINS"
+          cd userspace/ksuinit
+          cargo +nightly build --locked --package ksuinit --target aarch64-linux-android --release
+
+      - name: Build ksud with bindgen 0.73.2 and its checked-in lockfile
+        working-directory: resukisu
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          cp userspace/ksuinit/target/aarch64-linux-android/release/ksuinit userspace/ksud/bin/aarch64/
+          /usr/bin/clang-18 --target=aarch64-linux-gnu -c -nostdlib \
+            -o userspace/ksud/.lkm_image_bootstrap.o userspace/ksud/src/lkm_image_bootstrap.S
+          cd userspace/ksud
+          export RESUKISU_REAL_CARGO="$(rustup which --toolchain nightly cargo)"
+          export RESUKISU_CARGO_MESSAGES="$GITHUB_WORKSPACE/userspace-artifacts/ksud-build-messages.jsonl"
+          export CARGO="$GITHUB_WORKSPACE/builder/android14-6.1/build-helpers/capture-resukisu-cargo.py"
+          chmod +x "$CARGO"
+          # The Cargo launcher overwrites CARGO; call the installed NDK wrapper
+          # by absolute path: cargo-ndk 4.1.2 canonicalizes argv[0] for its linker.
+          RESUKISU_CARGO_NDK_BIN="$(command -v cargo-ndk)"
+          test -x "$RESUKISU_CARGO_NDK_BIN"
+          "$RESUKISU_CARGO_NDK_BIN" ndk -P 26 -t arm64-v8a build --locked --release \
+            -Z build-std-features=optimize_for_size -Z trim-paths
+
+      - name: Verify unchanged lockfiles and ARM64 release artifacts
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          python3 builder/android14-6.1/build-helpers/verify-resukisu-userspace.py \
+            resukisu --commit "$EXPECTED_PIN" --version "$EXPECTED_VERSION" \
+            --receipt userspace-artifacts/BUILD-IDENTITY.json --verify-build \
+            --build-messages userspace-artifacts/ksud-build-messages.jsonl
+          cp resukisu/userspace/ksud/target/aarch64-linux-android/release/ksud userspace-artifacts/
+          cp resukisu/userspace/ksuinit/target/aarch64-linux-android/release/ksuinit userspace-artifacts/
+          cp resukisu/userspace/ksud/Cargo.lock userspace-artifacts/ksud-Cargo.lock
+          cp resukisu/userspace/ksuinit/Cargo.lock userspace-artifacts/ksuinit-Cargo.lock
+          git -C resukisu show "$EXPECTED_PIN:userspace/ksuinit/Cargo.lock" \
+            > userspace-artifacts/ksuinit-Cargo.upstream.lock
+          cd userspace-artifacts
+          sha256sum ksud ksuinit *.lock *-metadata.json ksud-build-messages.jsonl BUILD-IDENTITY.json > SHA256SUMS
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: BakaSU-${{ inputs.resukisu_version_code }}-ARM64-ksud-ksuinit
+          path: userspace-artifacts/
+          if-no-files-found: error
+          retention-days: 30

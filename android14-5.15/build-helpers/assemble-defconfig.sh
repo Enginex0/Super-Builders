@@ -10,6 +10,8 @@ ADD_SUSFS=false
 ADD_OVERLAYFS=false
 ADD_ZRAM=false
 ADD_KPM=false
+ADD_ZEROMOUNT=false
+ADD_DROIDSPACES=false
 USE_KLEAF=false
 
 for arg in "$@"; do
@@ -18,6 +20,8 @@ for arg in "$@"; do
     --overlayfs) ADD_OVERLAYFS=true ;;
     --zram) ADD_ZRAM=true ;;
     --kpm) ADD_KPM=true ;;
+    --zeromount) ADD_ZEROMOUNT=true ;;
+    --droidspaces) ADD_DROIDSPACES=true ;;
     --kleaf) USE_KLEAF=true ;;
   esac
 done
@@ -31,6 +35,8 @@ $ADD_SUSFS && extract_section "susfs" >> "$FRAGMENT_DST"
 $ADD_OVERLAYFS && extract_section "overlayfs" >> "$FRAGMENT_DST"
 $ADD_ZRAM && extract_section "zram" >> "$FRAGMENT_DST"
 $ADD_KPM && extract_section "kpm" >> "$FRAGMENT_DST"
+$ADD_ZEROMOUNT && extract_section "zeromount" >> "$FRAGMENT_DST"
+$ADD_DROIDSPACES && extract_section "droidspaces" >> "$FRAGMENT_DST"
 
 # dedup fragment: last-wins per CONFIG_ key
 tac "$FRAGMENT_DST" | awk -F= '/^CONFIG_/{if(seen[$1]++)next} {print}' | tac > "${FRAGMENT_DST}.tmp"

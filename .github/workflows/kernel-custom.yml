@@ -156,6 +156,10 @@ on:
         description: "Add ZeroMount"
         type: boolean
         default: true
+      add_droidspaces:
+        description: "Add Droidspaces 6_7_8 kABI patches"
+        type: boolean
+        default: true
       add_zram:
         description: "Add ZRAM with LZ4K"
         type: boolean
@@ -172,8 +176,28 @@ on:
         description: "Add KPM (SukiSU/ReSukiSU)"
         type: boolean
         default: false
+      susfs_open_redirect:
+        description: "Enable experimental SUSFS Open Redirect (SukiSU/ReSukiSU test builds)"
+        type: boolean
+        default: false
       sukisu_commit:
         description: "KSU commit override (empty = latest)"
+        type: string
+        default: ""
+      resukisu_source_branch:
+        description: "ReSukiSU source branch containing the pinned commit"
+        type: string
+        default: "dev"
+      resukisu_version_code:
+        description: "ReSukiSU version code override"
+        type: string
+        default: "35056"
+      resukisu_expected_size:
+        description: "Optional paired manager certificate size"
+        type: string
+        default: ""
+      resukisu_expected_hash:
+        description: "Optional paired manager certificate SHA-256"
         type: string
         default: ""
   workflow_call:
@@ -193,6 +217,9 @@ on:
       add_zeromount:
         type: boolean
         default: true
+      add_droidspaces:
+        type: boolean
+        default: true
       add_zram:
         type: boolean
         default: true
@@ -205,7 +232,22 @@ on:
       add_kpm:
         type: boolean
         default: false
+      susfs_open_redirect:
+        type: boolean
+        default: false
       sukisu_commit:
+        type: string
+        default: ""
+      resukisu_source_branch:
+        type: string
+        default: "dev"
+      resukisu_version_code:
+        type: string
+        default: "35056"
+      resukisu_expected_size:
+        type: string
+        default: ""
+      resukisu_expected_hash:
         type: string
         default: ""
 
@@ -442,10 +484,12 @@ jobs:
       os_patch_level: ${{ needs.resolve.outputs.os_patch_level }}
       add_susfs: ${{ inputs.add_susfs }}
       add_zeromount: ${{ inputs.add_zeromount }}
+      add_droidspaces: ${{ inputs.add_droidspaces }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
       add_kpm: ${{ inputs.add_kpm }}
+      susfs_open_redirect: ${{ inputs.susfs_open_redirect }}
       sukisu_commit: ${{ inputs.sukisu_commit }}
       device_codename: ${{ needs.resolve.outputs.device_codename }}
 
@@ -460,6 +504,7 @@ jobs:
       os_patch_level: ${{ needs.resolve.outputs.os_patch_level }}
       add_susfs: ${{ inputs.add_susfs }}
       add_zeromount: ${{ inputs.add_zeromount }}
+      add_droidspaces: ${{ inputs.add_droidspaces }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
@@ -478,11 +523,17 @@ jobs:
       os_patch_level: ${{ needs.resolve.outputs.os_patch_level }}
       add_susfs: ${{ inputs.add_susfs }}
       add_zeromount: ${{ inputs.add_zeromount }}
+      add_droidspaces: ${{ inputs.add_droidspaces }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
       add_kpm: ${{ inputs.add_kpm }}
+      susfs_open_redirect: ${{ inputs.susfs_open_redirect }}
       sukisu_commit: ${{ inputs.sukisu_commit }}
+      resukisu_source_branch: ${{ inputs.resukisu_source_branch }}
+      resukisu_version_code: ${{ inputs.resukisu_version_code }}
+      resukisu_expected_size: ${{ inputs.resukisu_expected_size }}
+      resukisu_expected_hash: ${{ inputs.resukisu_expected_hash }}
       device_codename: ${{ needs.resolve.outputs.device_codename }}
 
   build-wksu:
@@ -496,6 +547,7 @@ jobs:
       os_patch_level: ${{ needs.resolve.outputs.os_patch_level }}
       add_susfs: ${{ inputs.add_susfs }}
       add_zeromount: ${{ inputs.add_zeromount }}
+      add_droidspaces: ${{ inputs.add_droidspaces }}
       add_zram: ${{ inputs.add_zram }}
       add_bbg: ${{ inputs.add_bbg }}
       add_overlayfs_support: ${{ inputs.add_overlayfs_support }}

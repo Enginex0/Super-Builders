@@ -98,7 +98,7 @@ jobs:
   build:
     needs: [download-dependencies]
     name: "Samsung SukiSU — ${{ inputs.device }}"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
     env:
       KSU_VARIANT: SukiSU
@@ -340,7 +340,17 @@ jobs:
       if: inputs.add_zeromount && inputs.add_susfs
       working-directory: ${{ env.KERNEL_COMMON }}
       run: |
-        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${GKI_TAG}.patch"
+        PATCH="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${GKI_TAG}.patch"
+        FILTERED_PATCH="$RUNNER_TEMP/zeromount-${GKI_TAG}-without-task-mmu.patch"
+        # SUSFS v2.2 already modifies show_map_vma().  The legacy ZeroMount
+        # metadata hook overlaps that code and caused an Oops while apexd read
+        # /proc/*/maps on SM-S928B.  Keep the remaining ZeroMount facilities.
+        awk '
+          /^--- a\/fs\/proc\/task_mmu\.c/ { skip = 1; next }
+          skip && /^--- a\// { skip = 0 }
+          !skip { print }
+        ' "$PATCH" > "$FILTERED_PATCH"
+        patch -p1 -F3 --no-backup-if-mismatch < "$FILTERED_PATCH"
 
     - name: Fix SUSFS Compatibility
       if: inputs.add_susfs
@@ -439,6 +449,59 @@ jobs:
         BUILD_RC=0
         TC="$GITHUB_WORKSPACE/toolchain"
 
+        echo "[+] Preparing stable Samsung/Bazel environment"
+
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq openjdk-11-jdk-headless || sudo apt-get install -y -qq openjdk-17-jdk-headless
+
+        if [ -d "/usr/lib/jvm/java-11-openjdk-amd64" ]; then
+          export JAVA_HOME="/usr/lib/jvm/java-11-openjdk-amd64"
+        else
+          export JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64"
+        fi
+
+        export PATH="$JAVA_HOME/bin:$PATH"
+
+        java -version
+        javac -version
+
+        echo "[+] Patching Kleaf Bazel to use JAVA_HOME instead of embedded JDK"
+
+        export KLEAF_BAZEL_PY="$SYNC_DIR/kernel_platform/build/kernel/kleaf/bazel.py"
+
+        if [ ! -f "$KLEAF_BAZEL_PY" ]; then
+          echo "FATAL: Kleaf bazel.py not found at $KLEAF_BAZEL_PY"
+          exit 1
+        fi
+
+        python3 - <<'PY'
+        import os
+        from pathlib import Path
+
+        p = Path(os.environ["KLEAF_BAZEL_PY"])
+        s = p.read_text()
+
+        old = '        bazel_jdk_path = f"{self.root_dir}/{_BAZEL_JDK_REL_PATH}"'
+        new = '        bazel_jdk_path = os.environ.get("JAVA_HOME") or f"{self.root_dir}/{_BAZEL_JDK_REL_PATH}"'
+
+        if new in s:
+            print("[+] bazel.py already patched")
+        elif old in s:
+            s = s.replace(old, new)
+            p.write_text(s)
+            print("[+] bazel.py patched successfully")
+        else:
+            raise SystemExit("FATAL: expected bazel_jdk_path line not found")
+        PY
+
+        grep -n "bazel_jdk_path" "$KLEAF_BAZEL_PY" | head -5
+        
+        echo "[+] Creating missing Samsung output directories"
+        mkdir -p "$SYNC_DIR/out/target/product/e3q"
+        mkdir -p "$SYNC_DIR/kernel_platform/out"
+        mkdir -p "$SYNC_DIR/kernel_platform/gki/dist"
+        mkdir -p "$SYNC_DIR/kernel_platform/sec/dist"
+
         CLANG_DIR=$(find . -path '*/prebuilts/clang/host/linux-x86/clang-*' -maxdepth 6 -type d 2>/dev/null | sort -V | tail -1)
         if [ -x "$TC/clang-r450784d/bin/clang" ]; then
           export PATH="$TC/clang-r450784d/bin:$TC/kernel-build-tools/linux-x86/bin:$PATH"
@@ -459,20 +522,131 @@ jobs:
           export PATH="/tmp/clang-wrap:$PATH"
         fi
 
+        echo "[+] Forcing ZRAM and ZSMALLOC as modules"
+
+        for CFG in \
+          "$SYNC_DIR/kernel_platform/common/arch/arm64/configs/gki_defconfig" \
+          "$SYNC_DIR/kernel_platform/msm-kernel/arch/arm64/configs/gki_defconfig" \
+          "$SYNC_DIR/kernel_platform/msm-kernel/arch/arm64/configs/vendor/pineapple_GKI.config" \
+          "$SYNC_DIR/kernel_platform/msm-kernel/arch/arm64/configs/oem/pineapple_sec_defconfig" \
+          "$SYNC_DIR/kernel_platform/msm-kernel/arch/arm64/configs/lego.config"
+        do
+          if [ -f "$CFG" ]; then
+            echo "[+] Patching $CFG"
+
+            sed -i \
+              -e 's/^CONFIG_ZRAM=y/CONFIG_ZRAM=m/' \
+              -e 's/^# CONFIG_ZRAM is not set/CONFIG_ZRAM=m/' \
+              -e 's/^CONFIG_ZSMALLOC=y/CONFIG_ZSMALLOC=m/' \
+              -e 's/^# CONFIG_ZSMALLOC is not set/CONFIG_ZSMALLOC=m/' \
+              "$CFG"
+
+            grep -q '^CONFIG_ZRAM=' "$CFG" || echo 'CONFIG_ZRAM=m' >> "$CFG"
+            grep -q '^CONFIG_ZSMALLOC=' "$CFG" || echo 'CONFIG_ZSMALLOC=m' >> "$CFG"
+          fi
+        done
+
+        echo "[+] Enabling ZRAM compression helpers"
+
+        for CFG in \
+          "$SYNC_DIR/kernel_platform/common/arch/arm64/configs/gki_defconfig" \
+          "$SYNC_DIR/kernel_platform/msm-kernel/arch/arm64/configs/gki_defconfig" \
+          "$SYNC_DIR/kernel_platform/msm-kernel/arch/arm64/configs/vendor/pineapple_GKI.config"
+        do
+          if [ -f "$CFG" ]; then
+            grep -q '^CONFIG_CRYPTO_LZO=' "$CFG" || echo 'CONFIG_CRYPTO_LZO=y' >> "$CFG"
+            grep -q '^CONFIG_CRYPTO_LZ4=' "$CFG" || echo 'CONFIG_CRYPTO_LZ4=y' >> "$CFG"
+            grep -q '^CONFIG_CRYPTO_ZSTD=' "$CFG" || echo 'CONFIG_CRYPTO_ZSTD=y' >> "$CFG"
+            grep -q '^CONFIG_ZRAM_WRITEBACK=' "$CFG" || echo 'CONFIG_ZRAM_WRITEBACK=y' >> "$CFG"
+          fi
+        done
+        
         if [ "$LTO_MODE" != "thin" ]; then
           export LTO="$LTO_MODE"
         elif [ "$LTO_DEFAULT" = "thin" ]; then
           export LTO="thin"
         fi
+        echo "[+] Fixing missing Android 14 clang-r487747c"
 
+        cd "$SYNC_DIR/kernel_platform"
+
+        CLANG_BASE="prebuilts/clang/host/linux-x86"
+        CLANG_VER="clang-r487747c"
+        CLANG_DIR="$CLANG_BASE/$CLANG_VER"
+
+        if [ ! -x "$CLANG_DIR/bin/clang.real" ]; then
+          echo "[!] Missing $CLANG_DIR/bin/clang.real"
+          echo "[+] Downloading official Android 14 clang prebuilt"
+
+          rm -rf /tmp/aosp-clang "$CLANG_DIR"
+          mkdir -p "$CLANG_BASE"
+
+        git clone \
+          --depth=1 \
+          --filter=blob:none \
+          --sparse \
+          -b android14-release \
+          https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 \
+          /tmp/aosp-clang
+
+        git -C /tmp/aosp-clang sparse-checkout set "$CLANG_VER"
+
+        cp -a "/tmp/aosp-clang/$CLANG_VER" "$CLANG_BASE/"
+
+        chmod -R u+rx "$CLANG_DIR/bin"
+        fi
+
+        echo "[+] Verifying clang-r487747c"
+        ls -l "$CLANG_DIR/bin/clang" "$CLANG_DIR/bin/clang.real"
+        "$CLANG_DIR/bin/clang" --version
+
+        cd "$SYNC_DIR"
+        
         eval "$BUILD_COMMAND" || BUILD_RC=$?
 
-        if [ "$BUILD_RC" -ne 0 ]; then
-          if find . -name "Image" -type f 2>/dev/null | grep -q .; then
-            echo "::warning::Build exited $BUILD_RC but Image exists (likely depmod failure)"
-          else
-            exit "$BUILD_RC"
+        echo "[+] Searching and exporting kernel Image"
+
+        mkdir -p "$SYNC_DIR/kernel_platform/sec/dist"
+        mkdir -p "$SYNC_DIR/kernel_platform/gki/dist"
+        mkdir -p "$SYNC_DIR/device/qcom/gki-kernel"
+
+        FOUND_IMAGE=""
+
+        for p in \
+          "$SYNC_DIR/kernel_platform/sec/dist/Image" \
+          "$SYNC_DIR/kernel_platform/gki/dist/Image" \
+          "$SYNC_DIR/kernel_platform/out/bazel/output_user_root"/*/execroot/__main__/bazel-out/k8-fastbuild/bin/common/kernel_aarch64/Image \
+          "$SYNC_DIR/kernel_platform/out/bazel/output_user_root"/*/execroot/__main__/bazel-out/k8-fastbuild/bin/msm-kernel/pineapple_gki/Image \
+          "$SYNC_DIR/kernel_platform/bazel-out/k8-fastbuild/bin/common/kernel_aarch64/Image"
+        do
+          if [ -f "$p" ]; then
+            FOUND_IMAGE="$p"
+            break
           fi
+        done
+
+        if [ -z "$FOUND_IMAGE" ]; then
+            FOUND_IMAGE=$(find "$SYNC_DIR" -type f -name Image 2>/dev/null | head -n 1 || true)
+        fi
+
+        if [ -n "$FOUND_IMAGE" ] && [ -f "$FOUND_IMAGE" ]; then
+          echo "[+] Found kernel Image:"
+          echo "$FOUND_IMAGE"
+
+          cp -f "$FOUND_IMAGE" "$SYNC_DIR/kernel_platform/sec/dist/Image"
+          cp -f "$FOUND_IMAGE" "$SYNC_DIR/kernel_platform/gki/dist/Image"
+          cp -f "$FOUND_IMAGE" "$SYNC_DIR/device/qcom/gki-kernel/Image" || true
+
+          echo "[+] Exported Image successfully"
+          ls -lh "$SYNC_DIR/kernel_platform/sec/dist/Image"
+        else
+          echo "FATAL: Kernel Image not found"
+        exit "${BUILD_RC:-1}"
+        fi
+
+        if [ "$BUILD_RC" -ne 0 ]; then
+          echo "::warning::Build exited with code $BUILD_RC, but Image exists."
+          echo "::warning::Continuing with Image-only package. Missing zram.ko/zsmalloc.ko ignored."
         fi
 
     - name: Dump Build Errors

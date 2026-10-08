@@ -1,0 +1,315 @@
+name: S928B Strict KMI Symtypes Investigation
+run-name: "S928BXXS6DZG1 EUX — Samsung DLKM CRC attribution to ReSukiSU 35056"
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_strict_gate:
+        description: "Run and package the exact full-strict build after reviewing the diagnostics"
+        type: boolean
+        default: false
+      run_attribution_matrix:
+        description: "Re-run all GKI and feature attribution profiles before the strict gate"
+        type: boolean
+        default: true
+  push:
+    branches:
+      - agent/kmi-strict-symtypes
+    paths:
+      - '.github/workflows/run-kmi-strict-symtypes.yml'
+      - '.github/workflows/build-resukisu.yml'
+      - '.github/workflows/cache-dependencies.yml'
+      - 'android14-6.1/build-helpers/clean-build-flags.sh'
+      - 'android14-6.1/build-helpers/apply-s928b-dzg1-xhci-hooks.sh'
+      - 'android14-6.1/build-helpers/verify-zeromount-susfs-source.sh'
+      - 'android14-6.1/build-helpers/audit-s928b-anykernel-cmdline.py'
+      - 'android14-6.1/build-helpers/apply-e3q-cmdline-governor-compat.sh'
+      - 'android14-6.1/build-helpers/enforce-s928b-daily-config.sh'
+      - 'android14-6.1/build-helpers/verify-samsung-dlkm-crcs.sh'
+      - 'android14-6.1/build-helpers/collect-kmi-symtypes.sh'
+      - 'android14-6.1/build-helpers/compare-kmi-variants.sh'
+      - 'android14-6.1/samsung-e3q-dlkm-crc-baseline.tsv'
+      - 'android14-6.1/samsung-s928bxxs6dzg1-source.env'
+      - 'android14-6.1/resukisu-pin.txt'
+      - 'android14-6.1/defconfig.fragment'
+      - 'device-profiles.json'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: s928b-kmi-strict-symtypes
+  cancel-in-progress: true
+
+jobs:
+  dependencies:
+    uses: ./.github/workflows/cache-dependencies.yml
+
+  gki-control:
+    name: Unmodified GKI control with symtypes
+    if: github.event_name == 'push' || inputs.run_attribution_matrix
+    needs: dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      KERNEL_ROOT: ${{ github.workspace }}/android14-6.1.145-gki-control
+      VERSION_DIR: android14-6.1
+      KMI_PROFILE: gki-control
+      KMI_MODE: symtypes
+    steps:
+      - name: Checkout diagnostics
+        uses: actions/checkout@v6
+
+      - name: Free disk space
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+          remove_packages_one_command: true
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+          rm_cmd: rmz
+          rmz_version: 3.1.1
+          testing: false
+
+      - name: Install host linker
+        run: sudo apt-get install -y -qq lld binutils
+
+      - name: Download repo tool
+        uses: actions/download-artifact@v8
+        with:
+          name: git-repo-tool
+          path: git-repo
+
+      - name: Sync unmodified Android GKI source
+        run: |
+          set -euo pipefail
+          SOURCE_PROFILE="$GITHUB_WORKSPACE/android14-6.1/samsung-s928bxxs6dzg1-source.env"
+          # shellcheck disable=SC1090
+          source "$SOURCE_PROFILE"
+          mkdir -p "$KERNEL_ROOT"
+          chmod +x "$GITHUB_WORKSPACE/git-repo/repo"
+          echo "$GITHUB_WORKSPACE/git-repo" >> "$GITHUB_PATH"
+          cd "$KERNEL_ROOT"
+          "$GITHUB_WORKSPACE/git-repo/repo" init \
+            -u https://android.googlesource.com/kernel/manifest \
+            -b "$AOSP_MANIFEST_COMMIT" \
+            --manifest-upstream-branch "$AOSP_MANIFEST_BRANCH" --depth=1
+          "$GITHUB_WORKSPACE/git-repo/repo" --trace sync -c -j"$(nproc --all)" \
+            --fail-fast --no-tags --force-sync --no-clone-bundle
+          test "$(git -C .repo/manifests rev-parse HEAD)" = "$AOSP_MANIFEST_COMMIT"
+          test "$(git -C common rev-parse HEAD)" = "$AOSP_COMMON_COMMIT"
+
+      - name: Build unmodified GKI with KBUILD_SYMTYPES
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          set -euo pipefail
+          if [ -f common/tools/bpf/resolve_btfids/Makefile ]; then
+            echo 'override KBUILD_HOSTLDFLAGS += --sysroot=/' >> common/tools/bpf/resolve_btfids/Makefile
+            echo 'override LDFLAGS += --sysroot=/' >> common/tools/bpf/resolve_btfids/Makefile
+          fi
+          tools/bazel build --config=fast --lto=thin --kbuild_symtypes \
+            //common:kernel_aarch64_dist
+
+      - name: Audit GKI CRCs and collect symtypes
+        run: |
+          set -euo pipefail
+          REPORT_DIR="$GITHUB_WORKSPACE/samsung-dlkm-crc-audit"
+          BASELINE="$GITHUB_WORKSPACE/$VERSION_DIR/samsung-e3q-dlkm-crc-baseline.tsv"
+          AUDITOR="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/verify-samsung-dlkm-crcs.sh"
+          COLLECTOR="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/collect-kmi-symtypes.sh"
+          chmod +x "$AUDITOR" "$COLLECTOR"
+          "$AUDITOR" "$KERNEL_ROOT" "$BASELINE" "$REPORT_DIR" "$KMI_MODE" "$KMI_PROFILE"
+          "$COLLECTOR" "$KERNEL_ROOT" "$REPORT_DIR" "$KMI_PROFILE" "$KMI_MODE"
+
+      - name: Upload unmodified GKI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gki-control-Samsung-DLKM-CRC-Audit
+          path: samsung-dlkm-crc-audit/
+          if-no-files-found: warn
+          compression-level: 9
+          retention-days: 7
+
+  feature-matrix:
+    name: "${{ matrix.profile }} symtypes"
+    if: github.event_name == 'push' || inputs.run_attribution_matrix
+    needs: dependencies
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: resukisu-minimal
+            minimal: true
+            susfs: false
+            zeromount: false
+            droidspaces: false
+            zram: false
+            bbg: false
+            overlayfs: false
+            ptrace: false
+            perf: false
+          - profile: resukisu-base
+            minimal: false
+            susfs: false
+            zeromount: false
+            droidspaces: false
+            zram: false
+            bbg: false
+            overlayfs: false
+            ptrace: false
+            perf: false
+          - profile: resukisu-susfs
+            minimal: false
+            susfs: true
+            zeromount: false
+            droidspaces: false
+            zram: false
+            bbg: false
+            overlayfs: false
+            ptrace: false
+            perf: false
+          - profile: resukisu-zeromount
+            minimal: false
+            susfs: true
+            zeromount: true
+            droidspaces: false
+            zram: false
+            bbg: false
+            overlayfs: false
+            ptrace: false
+            perf: false
+          - profile: resukisu-zeromount-droidspaces
+            minimal: false
+            susfs: true
+            zeromount: true
+            droidspaces: true
+            zram: false
+            bbg: false
+            overlayfs: false
+            ptrace: false
+            perf: false
+          - profile: resukisu-platform-features
+            minimal: false
+            susfs: true
+            zeromount: true
+            droidspaces: true
+            zram: true
+            bbg: true
+            overlayfs: true
+            ptrace: false
+            perf: false
+          - profile: full
+            minimal: false
+            susfs: true
+            zeromount: true
+            droidspaces: true
+            zram: true
+            bbg: true
+            overlayfs: true
+            ptrace: true
+            perf: true
+    uses: ./.github/workflows/build-resukisu.yml
+    permissions:
+      contents: write
+      actions: write
+    with:
+      android_version: android14
+      kernel_version: "6.1"
+      sub_level: "145"
+      os_patch_level: "2025-09"
+      add_susfs: ${{ matrix.susfs }}
+      add_zeromount: ${{ matrix.zeromount }}
+      add_droidspaces: ${{ matrix.droidspaces }}
+      add_zram: ${{ matrix.zram }}
+      add_bbg: ${{ matrix.bbg }}
+      add_overlayfs_support: ${{ matrix.overlayfs }}
+      add_kpm: false
+      susfs_open_redirect: false
+      add_ptrace_fix: ${{ matrix.ptrace }}
+      add_perf_patches: ${{ matrix.perf }}
+      sukisu_commit: ca62a37fc328e6cb836ea6d77b7eab0c073104a6
+      resukisu_source_branch: main
+      resukisu_version_code: "35056"
+      device_codename: e3q
+      kmi_mode: symtypes
+      kmi_profile: ${{ matrix.profile }}
+      kmi_minimal_config: ${{ matrix.minimal }}
+
+  compare:
+    name: Compare all CRC and symtypes variants
+    if: always() && (github.event_name == 'push' || inputs.run_attribution_matrix)
+    needs: [gki-control, feature-matrix]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout comparison helper
+        uses: actions/checkout@v6
+
+      - name: Download all diagnostic artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: '*-Samsung-DLKM-CRC-Audit'
+          path: diagnostics
+          merge-multiple: false
+
+      - name: Compare variant CRCs
+        run: |
+          set -euo pipefail
+          HELPER="$GITHUB_WORKSPACE/android14-6.1/build-helpers/compare-kmi-variants.sh"
+          chmod +x "$HELPER"
+          "$HELPER" \
+            "$GITHUB_WORKSPACE/android14-6.1/samsung-e3q-dlkm-crc-baseline.tsv" \
+            "$GITHUB_WORKSPACE/diagnostics" \
+            "$GITHUB_WORKSPACE/kmi-variant-comparison"
+          cat "$GITHUB_WORKSPACE/kmi-variant-comparison/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload aggregate KMI comparison
+        uses: actions/upload-artifact@v7
+        with:
+          name: S928B-KMI-Variant-Comparison
+          path: kmi-variant-comparison/
+          if-no-files-found: error
+          compression-level: 9
+          retention-days: 14
+
+  strict-gate:
+    name: Full strict KMI gate
+    if: >-
+      always() &&
+      inputs.run_strict_gate &&
+      needs.dependencies.result == 'success' &&
+      (needs.feature-matrix.result == 'success' || needs.feature-matrix.result == 'skipped')
+    needs: [dependencies, feature-matrix]
+    uses: ./.github/workflows/build-resukisu.yml
+    permissions:
+      contents: write
+      actions: write
+    with:
+      android_version: android14
+      kernel_version: "6.1"
+      sub_level: "145"
+      os_patch_level: "2025-09"
+      add_susfs: true
+      add_zeromount: true
+      add_droidspaces: true
+      add_zram: true
+      add_bbg: true
+      add_overlayfs_support: true
+      add_kpm: false
+      susfs_open_redirect: false
+      add_ptrace_fix: true
+      add_perf_patches: true
+      sukisu_commit: ca62a37fc328e6cb836ea6d77b7eab0c073104a6
+      resukisu_source_branch: main
+      resukisu_version_code: "35056"
+      device_codename: e3q
+      kmi_mode: strict
+      kmi_profile: full-strict
+      kmi_minimal_config: false
+      package_strict_anykernel: true

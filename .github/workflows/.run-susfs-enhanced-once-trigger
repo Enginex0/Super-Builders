@@ -1,0 +1,6 @@
+triggered_at=2026-08-01T19:23:00+02:00
+kernel=6.1.145-android14-11-33419968-abS928BXXS6DZG1
+susfs_enable_log=y
+susfs_log_default=off
+kfence=off
+cgroup_pids=y

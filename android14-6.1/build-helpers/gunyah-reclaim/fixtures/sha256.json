@@ -1,0 +1,8 @@
+{
+  "gunyah_platform_hooks.c": "d39da670884024efef016189bb3718dce1e7405e988e21f31ee9c86fe4083280",
+  "gunyah_qcom.c": "3a5e11fa7446a43b4f7f3aef3b65d016d74a4ebe771dbda82eadfe3fc3e8fb2c",
+  "rsc_mgr_rpc.c": "e711a5a5df75874d60f07b5988a741a8d8c552240739633cec67e544ba007d14",
+  "vm_mgr.c": "d89da4ff81893dd82300533e9fcbee2ca195fea8909d016a70e74c829d40f221",
+  "vm_mgr.h": "041b16fd2e8cc7134d4cf82b841c29a54f13eb5c53ad23544f4d6403936e882c",
+  "vm_mgr_mm.c": "7114f6d146168a1a1303b930d9b62ba7a6e215738dbf1c1d17c229c5f03b1cac"
+}

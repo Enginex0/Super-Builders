@@ -1,0 +1,158 @@
+diff --git a/userspace/ksud/src/android/ksucalls.rs b/userspace/ksud/src/android/ksucalls.rs
+index 8cf217fd..50b50a3d 100644
+--- a/userspace/ksud/src/android/ksucalls.rs
++++ b/userspace/ksud/src/android/ksucalls.rs
+@@ -1,7 +1,7 @@
+ #![allow(clippy::unreadable_literal)]
+ use anyhow::bail;
+ 
+-use std::{fs, os::fd::RawFd, sync::OnceLock};
++use std::{fs, io, os::fd::RawFd, sync::OnceLock};
+ 
+ use crate::{android::uapi, defs::MountInfo};
+ 
+@@ -9,27 +9,43 @@ use crate::{android::uapi, defs::MountInfo};
+ static DRIVER_FD: OnceLock<RawFd> = OnceLock::new();
+ static INFO_CACHE: OnceLock<uapi::ksu_get_info_cmd> = OnceLock::new();
+ 
+-fn scan_driver_fd() -> Option<RawFd> {
+-    let fd_dir = fs::read_dir("/proc/self/fd").ok()?;
++const DRIVER_FD_NAME: &str = "anon_inode:[ksu_driver]";
++const SU_DRIVER_FD_NAME: &str = "anon_inode:[ksu_driver_su]";
++
++fn scan_driver_fd() -> io::Result<Option<RawFd>> {
++    let fd_dir = fs::read_dir("/proc/self/fd")?;
++    let mut driver_fd = None;
+ 
+     for entry in fd_dir.flatten() {
+         if let Ok(fd_num) = entry.file_name().to_string_lossy().parse::<i32>() {
+             let link_path = format!("/proc/self/fd/{fd_num}");
+             if let Ok(target) = fs::read_link(&link_path) {
+                 let target_str = target.to_string_lossy();
+-                if target_str.contains("[ksu_driver]") {
+-                    return Some(fd_num);
++                if target_str == SU_DRIVER_FD_NAME {
++                    return Ok(Some(fd_num));
++                }
++                if target_str == DRIVER_FD_NAME {
++                    driver_fd = Some(fd_num);
+                 }
+             }
+         }
+     }
+ 
+-    None
++    Ok(driver_fd)
++}
++
++pub fn claim_inherited_driver_fd() -> io::Result<()> {
++    if DRIVER_FD.get().is_none() {
++        if let Some(fd) = scan_driver_fd()? {
++            let _ = DRIVER_FD.set(fd);
++        }
++    }
++    Ok(())
+ }
+ 
+ // Get cached driver fd
+ fn init_driver_fd() -> Option<RawFd> {
+-    let fd = scan_driver_fd();
++    let fd = scan_driver_fd().ok().flatten();
+     if fd.is_none() {
+         let mut fd = -1;
+         unsafe {
+diff --git a/userspace/ksud/src/android/su.rs b/userspace/ksud/src/android/su.rs
+index f21d0c52..af46565d 100644
+--- a/userspace/ksud/src/android/su.rs
++++ b/userspace/ksud/src/android/su.rs
+@@ -3,6 +3,7 @@ use std::os::unix::process::CommandExt;
+ use std::{
+     cmp::Ordering,
+     env,
++    io,
+     ffi::{CStr, CString},
+     path::PathBuf,
+     process::Command,
+@@ -19,7 +20,7 @@ use rustix::{
+ 
+ use crate::{
+     android::{
+-        ksucalls::{get_wrapped_fd, set_ksu_no_new_privs},
++        ksucalls::{claim_inherited_driver_fd, get_wrapped_fd, set_ksu_no_new_privs},
+         utils::{self, umask},
+     },
+     defs,
+@@ -82,16 +83,24 @@ fn set_selinux_context(context: &str) -> Result<()> {
+ 
+ fn wrap_tty(fd: c_int) {
+     let inner_fn = move || -> Result<()> {
+-        if unsafe { libc::isatty(fd) != 1 } {
++        if unsafe { libc::isatty(fd) != 1 }
++            && io::Error::last_os_error().raw_os_error() != Some(libc::EACCES)
++        {
+             return Ok(());
+         }
++        // A restricted root-profile domain may deny the original tty query.
++        // Validate the authorized wrapper before replacing stdin/out/err.
+         let new_fd = get_wrapped_fd(fd).context("get_wrapped_fd")?;
+-        if unsafe { libc::dup2(new_fd, fd) } == -1 {
+-            bail!("dup {new_fd} -> {fd} errno: {}", unsafe {
+-                *libc::__errno()
+-            });
++        if unsafe { libc::isatty(new_fd) != 1 } {
++            unsafe { libc::close(new_fd) };
++            return Ok(());
+         }
++        let dup_result = unsafe { libc::dup2(new_fd, fd) };
++        let dup_errno = unsafe { *libc::__errno() };
+         unsafe { libc::close(new_fd) };
++        if dup_result == -1 {
++            bail!("dup {new_fd} -> {fd} errno: {dup_errno}");
++        }
+         Ok(())
+     };
+ 
+@@ -102,7 +111,9 @@ fn wrap_tty(fd: c_int) {
+ 
+ #[allow(clippy::similar_names)]
+ pub fn root_shell() -> Result<()> {
+-    // we are root now, this was set in kernel!
++    // The selected root profile is active. Claim the inherited driver before
++    // argument handling changes identity; the native kernel port sets CLOEXEC.
++    claim_inherited_driver_fd().context("claim inherited KernelSU driver fd")?;
+ 
+     use anyhow::anyhow;
+     let env_args: Vec<String> = env::args().collect();
+diff --git a/userspace/ksud/src/android/unload.rs b/userspace/ksud/src/android/unload.rs
+index a4bff512..15eb5bd7 100644
+--- a/userspace/ksud/src/android/unload.rs
++++ b/userspace/ksud/src/android/unload.rs
+@@ -36,6 +36,10 @@ fn find_su_domain_pids() -> Vec<i32> {
+     pids
+ }
+ 
++fn is_ksu_fd_name(name: &str) -> bool {
++    matches!(name, "anon_inode:[ksu_driver]" | "anon_inode:[ksu_driver_su]" | "anon_inode:[ksu_fdwrapper]")
++}
++
+ /// Find PIDs of processes holding ksu_driver or ksu_fdwrapper file descriptors.
+ /// Returns a list of PIDs excluding our own.
+ fn find_ksu_fd_holders() -> Vec<i32> {
+@@ -64,7 +68,7 @@ fn find_ksu_fd_holders() -> Vec<i32> {
+             let link_path = fd_entry.path();
+             if let Ok(target) = fs::read_link(&link_path) {
+                 let target_str = target.to_string_lossy();
+-                if target_str.contains("[ksu_driver]") || target_str.contains("[ksu_fdwrapper]") {
++                if is_ksu_fd_name(&target_str) {
+                     pids.push(pid);
+                     break;
+                 }
+@@ -95,7 +99,7 @@ fn close_ksu_fds() {
+         };
+         if let Ok(target) = fs::read_link(entry.path()) {
+             let target_str = target.to_string_lossy();
+-            if target_str.contains("[ksu_driver]") || target_str.contains("[ksu_fdwrapper]") {
++            if is_ksu_fd_name(&target_str) {
+                 info!("unload: closing fd {fd} -> {target_str}");
+                 unsafe {
+                     libc::close(fd);

@@ -1,5 +1,69 @@
 {
   "devices": {
+    "e3q": {
+      "name": "Samsung Galaxy S24 Ultra",
+      "codename": "e3q",
+      "android_version": "android14",
+      "kernel_version": "6.1",
+      "sub_level": "162",
+      "os_patch_level": "2026-03",
+      "firmware": "S928BXXU6ZZI4",
+      "firmware_package": "AP_S928BXXU6ZZI4_S928BXXU6ZZI4_MQB114374451_REV00_user_low_ship_MULTI_CERT_meta_OS17.tar.md5",
+      "firmware_build_datetime": "20260903234809",
+      "ap": "S928BXXU6ZZI4",
+      "csc_build": "S928BOXM6ZZI4",
+      "cp": "S928BXXU6EZI4",
+      "csc": "EUX",
+      "firmware_archives": {
+        "ap": {
+          "tar_md5": "not-supplied-component-images-verified",
+          "sha256": "not-supplied-component-images-verified",
+          "verification": "component-images-only-full-ap-archive-not-supplied"
+        },
+        "cp": {
+          "name": "CP_S928BXXU6EZI4_CP36200554_MQB114374451_REV00_user_low_ship_MULTI_CERT.tar.md5",
+          "tar_md5": "ce09f6271f54f8aa1c2920d76cbb4974",
+          "sha256": "aeb17904cc7b8d037d2ae2b840853fb6b583f8e7537cf32ce3b0b9405fc642cd"
+        },
+        "csc": {
+          "name": "CSC_OXM_S928BOXM6ZZI4_MQB114374451_REV00_user_low_ship_MULTI_CERT.tar.md5",
+          "tar_md5": "ba072dccbeb55149608aca301289907a",
+          "sha256": "262e30760c3f62015b8c725393385bbe2a71f96cc62feca55144fa48f6c4a8fe"
+        },
+        "home_csc": {
+          "name": "HOME_CSC_OXM_S928BOXM6ZZI4_MQB114374451_REV00_user_low_ship_MULTI_CERT.tar.md5",
+          "tar_md5": "8a03458bfb4bff67c853b8e79d9c1239",
+          "sha256": "a5a94a327350095816e3b890d9c4171adcffcd4672bedbf8af5d1a5b25f22f94"
+        },
+        "keep_oem_unlock_bl": {
+          "name": "BL_S928BXXU6ZZI4_KEEP_OEM_UNLOCK.tar.md5",
+          "tar_md5": "1ae4d250893d70be14b70a5045121b2d",
+          "sha256": "186b3572fef908255bde2404b0e01b000fe15496c4c1ae5015ea5663d85afab9",
+          "vbmeta_img_sha256": "67b8d114c5c1af81c473fb649f5b47cca340a5744baed548db9660e5907a4535",
+          "vbmeta_flags": 3,
+          "compatibility": "avb-flags-3-intentional-keep-oem-unlock"
+        }
+      },
+      "stock_images": {
+        "boot_img_sha256": "abc5a0297fd47e9cdfb4d0b84ecb907e1de0dc45303ab8d5c28107b0f6bd5cd5",
+        "init_boot_img_sha256": "f61c74bab1781862e48f8abc4a8b7865f0ba661658a3807431395edc1ce069c8",
+        "vendor_boot_img_sha256": "be1a7fbb823c1b259a7cdb1f9a85ee93e459b2ad5bf7a83193ffabf61a2e1257",
+        "vendor_dlkm_img_sha256": "be9def7fde78c0a97db01af9ecd13480e0d21ae8099a375a8096dc23fd83d582",
+        "system_dlkm_img_sha256": "4bbb76c7ac047596254e4c6a8503276464573a93d7e3a7bafa0411b887bc1462",
+        "dtbo_img_sha256": "65b35a505cb4ba6cb6965a261053a43ea6f4807abeebb81468374e6b44db7f82",
+        "vbmeta_img_sha256": "not-supplied-keep-oem-unlock-vbmeta-only",
+        "apnhlos_bin_sha256": "6d69aa52669f28178e86fa15dacf77b279d9e5762ca7c2eefd640aa8702184ce",
+        "modem_bin_sha256": "c063c91f7314d9db4c855945454904506dae1efb2ee8cf0a579420e2d40efd28"
+      },
+      "stock_kernel": {
+        "release": "-android14-11-34343818-abS928BXXU6ZZI4",
+        "version_string": "#1 SMP PREEMPT Thu Sep 3 23:48:09 UTC 2026",
+        "build_timestamp": "Thu Sep 3 23:48:09 UTC 2026",
+        "build_user": "build-user",
+        "build_host": "build-host",
+        "compiler_info": "Android (10087095, +pgo, +bolt, +lto, -mlgo, based on r487747c) clang version 17.0.2"
+      }
+    },
     "lake": {
       "name": "Xiaomi Redmi 14C",
       "codename": "lake",
@@ -10,6 +74,7 @@
       "stock_kernel": {
         "release": "-android12-9-00016-g7c6bbcca33e1-ab12029497",
         "version_string": "#1 SMP PREEMPT Fri Jun 28 13:58:53 UTC 2024",
+        "build_timestamp": "Fri Jun 28 13:58:53 UTC 2024",
         "build_user": "build-user",
         "build_host": "build-host",
         "compiler_info": "Android (7284624, based on r416183b) clang version 12.0.5"
@@ -25,6 +90,7 @@
       "stock_kernel": {
         "release": "-android15-8-g97728a143642-ab13468307-4k",
         "version_string": "#1 SMP PREEMPT Thu May  8 20:23:55 UTC 2025",
+        "build_timestamp": "Thu May  8 20:23:55 UTC 2025",
         "build_user": "kleaf",
         "build_host": "build-host",
         "compiler_info": "Android (11368308, +pgo, +bolt, +lto, +mlgo, based on r510928) clang version 18.0.0"
@@ -38,9 +104,12 @@
     "kernel_version": "6.6",
     "sub_level": "30",
     "os_patch_level": "2025-01",
+    "firmware": "DEVICE_FIRMWARE_BUILD",
+    "csc": "DEVICE_CSC",
     "stock_kernel": {
       "release": "-android15-6-xxxxx-gabcdef123456-ab12345678",
       "version_string": "#1 SMP PREEMPT Mon Jan 1 12:00:00 UTC 2025",
+      "build_timestamp": "Mon Jan 1 12:00:00 UTC 2025",
       "build_user": "build-user",
       "build_host": "build-host",
       "compiler_info": "Android clang version X.X.X"

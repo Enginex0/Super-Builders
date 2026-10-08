@@ -1,0 +1,48 @@
+name: Apply ZeroMount with SUSFS v2.2.0
+description: Apply the ZeroMount kernel patch without its obsolete SUSFS v2.0 defconfig hunk.
+
+inputs:
+  android_version:
+    description: Android generation, for example android14
+    required: true
+  kernel_version:
+    description: Kernel version, for example 6.1
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Apply ZeroMount
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        TARGET="${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+        KERNEL_COMMON="${KERNEL_ROOT:?KERNEL_ROOT is not set}/common"
+        PATCH_FILE="$GITHUB_WORKSPACE/$TARGET/KernelSU-Next/patches/60_zeromount-$TARGET.patch"
+        FILTERED_PATCH="$(mktemp)"
+        trap 'rm -f "$FILTERED_PATCH"' EXIT
+
+        test -s "$PATCH_FILE"
+        # The old patch carries a v2.0-only defconfig hunk. The v2.2.0
+        # defconfig is assembled later from the dedicated feature fragment.
+        awk '
+          /^--- a\/arch\/arm64\/configs\/gki_defconfig/ { skip = 1; next }
+          skip && /^--- a\/fs\/Kconfig/ { skip = 0 }
+          !skip { print }
+        ' "$PATCH_FILE" > "$FILTERED_PATCH"
+
+        cd "$KERNEL_COMMON"
+        patch -p1 -F3 --no-backup-if-mismatch < "$FILTERED_PATCH"
+
+        # SUSFS v2.2.0 keeps the mmap inode inside the file branch, while
+        # ZeroMount's older 6.1 patch uses it after SUSFS's redirect label.
+        # Promote it to function scope; ZeroMount already handles a NULL inode.
+        if [ "$TARGET" = "android14-6.1" ]; then
+          perl -0pi -e '
+            my $old = "\tconst char *name = NULL;\n#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT\n\tchar *spoofed_redirected_name = NULL;\n#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT\n\n\tif (file) {\n\t\tstruct inode *inode = file_inode(vma->vm_file);";
+            my $new = "\tconst char *name = NULL;\n\tstruct inode *inode = NULL;\n#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT\n\tchar *spoofed_redirected_name = NULL;\n#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT\n\n\tif (file) {\n\t\tinode = file_inode(vma->vm_file);";
+            my $count = s/\Q$old\E/$new/;
+            die "expected SUSFS v2.2 ZeroMount context exactly once\n" unless $count == 1;
+          ' fs/proc/task_mmu.c
+        fi

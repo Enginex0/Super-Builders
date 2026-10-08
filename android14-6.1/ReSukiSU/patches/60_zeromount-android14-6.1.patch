@@ -472,7 +472,7 @@
  		return error;
 --- /dev/null	2026-03-01 02:52:35.802537893 +0100
 +++ b/fs/zeromount.c	2026-03-01 03:05:05.111203827 +0100
-@@ -0,0 +1,1526 @@
+@@ -0,0 +1,1547 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -1282,6 +1282,9 @@
 +{
 +	char *kpath;
 +	char *resolved;
++	const char *statfs_root = NULL;
++	struct path root_path;
++	struct kstatfs root_stats;
 +	int ret = 0;
 +
 +	if (zeromount_should_skip() ||
@@ -1302,12 +1305,30 @@
 +		return 0;
 +	}
 +
-+	if (strncmp(kpath, "/system", 7) == 0 ||
-+	    strncmp(kpath, "/vendor", 7) == 0 ||
-+	    strncmp(kpath, "/product", 8) == 0 ||
-+	    strncmp(kpath, "/odm", 4) == 0) {
-+		buf->f_type = EROFS_SUPER_MAGIC;
-+		ret = 1;
++	if (strncmp(kpath, "/system", 7) == 0 &&
++	    (kpath[7] == '\0' || kpath[7] == '/'))
++		statfs_root = "/system";
++	else if (strncmp(kpath, "/vendor", 7) == 0 &&
++		 (kpath[7] == '\0' || kpath[7] == '/'))
++		statfs_root = "/vendor";
++	else if (strncmp(kpath, "/product", 8) == 0 &&
++		 (kpath[8] == '\0' || kpath[8] == '/'))
++		statfs_root = "/product";
++	else if (strncmp(kpath, "/odm", 4) == 0 &&
++		 (kpath[4] == '\0' || kpath[4] == '/'))
++		statfs_root = "/odm";
++
++	/*
++	 * A redirected path is backed by /data, so changing only f_type still
++	 * leaks the backing filesystem through f_fsid, block counts and free
++	 * space.  Return the complete statfs record of the virtual partition.
++	 */
++	if (statfs_root && !kern_path(statfs_root, LOOKUP_FOLLOW, &root_path)) {
++		if (!vfs_statfs(&root_path, &root_stats)) {
++			*buf = root_stats;
++			ret = 1;
++		}
++		path_put(&root_path);
 +	}
 +
 +	kfree(kpath);

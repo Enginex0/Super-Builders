@@ -1,0 +1,77 @@
+name: Build BakaSU-compatible ZeroMount ARM64
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  module:
+    name: ZeroMount BakaSU / Enhanced SUSFS compatibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: builder
+      - name: Checkout immutable ZeroMount and Resetprop sources
+        uses: actions/checkout@v6
+        with:
+          repository: Enginex0/zeromount
+          ref: c3cb7ffdf749f2441928ec47798615a4c79fab65
+          submodules: recursive
+          path: zeromount
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - name: Apply bounded BakaSU flag compatibility patch
+        run: |
+          set -euo pipefail
+          mkdir -p module-artifacts
+          python3 builder/android14-6.1/build-helpers/zeromount-bakasu/apply.py zeromount \
+            --receipt module-artifacts/SOURCE-PATCH.json
+          git -C zeromount diff -- module/customize.sh src/detect/susfs.rs \
+            > module-artifacts/zeromount-bakasu.patch
+      - name: Test both manager flags and kernel-first SUSFS classification
+        run: |
+          set -euo pipefail
+          python3 builder/android14-6.1/build-helpers/zeromount-bakasu/test.py zeromount \
+            --work-dir "$RUNNER_TEMP/zeromount-detection"
+          cp "$RUNNER_TEMP/zeromount-detection/DETECTION-TESTS.json" module-artifacts/
+      - name: Setup upstream Android NDK r27c
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+      - name: Build patched Android ARM64 binary with locked dependencies
+        working-directory: zeromount
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export PATH="$NDK_BIN:$PATH"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android26-clang"
+          export CC_aarch64_linux_android="$CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER"
+          export AR_aarch64_linux_android="$NDK_BIN/llvm-ar"
+          test ! -e target
+          cargo build --release --locked --target aarch64-linux-android
+          test -s target/aarch64-linux-android/release/zeromount
+          file target/aarch64-linux-android/release/zeromount
+          readelf -h target/aarch64-linux-android/release/zeromount | grep -q AArch64
+          git diff --exit-code -- Cargo.toml Cargo.lock
+      - name: Package ARM64 module with official WebUI and auxiliary files
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            https://github.com/Enginex0/zeromount/releases/download/v2.0.216-dev/zeromount-v2.0.216-dev.zip \
+            --output "$RUNNER_TEMP/zeromount-official.zip"
+          python3 builder/android14-6.1/build-helpers/zeromount-bakasu/package.py zeromount \
+            --bakasu-version 35220 --bakasu-commit 8450dd287ef6ee25ca2b6b858b43c9354c73060c \
+            --base-zip "$RUNNER_TEMP/zeromount-official.zip" \
+            --binary zeromount/target/aarch64-linux-android/release/zeromount \
+            --tests module-artifacts/DETECTION-TESTS.json --output-dir module-artifacts
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ZeroMount-BakaSU-35220-compat-ARM64
+          path: module-artifacts/
+          if-no-files-found: error
+          retention-days: 30

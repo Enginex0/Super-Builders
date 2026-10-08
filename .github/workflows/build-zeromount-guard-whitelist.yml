@@ -1,0 +1,263 @@
+name: ZeroMount 2.0.216 Guard + BRENE 0.0.66 Port
+
+on:
+  push:
+    branches:
+      - agent/resukisu-35129-zeromount-guard-whitelist-v2
+    paths:
+      - '.github/workflows/build-zeromount-guard-whitelist.yml'
+      - 'android14-6.1/build-helpers/patch-zeromount-guard-whitelist.py'
+      - 'android14-6.1/build-helpers/fix-zeromount-guard-whitelist-compile.py'
+      - 'android14-6.1/build-helpers/patch-zeromount-brene66.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ZEROMOUNT_UPSTREAM_COMMIT: c3cb7ffdf749f2441928ec47798615a4c79fab65
+  ZEROMOUNT_VERSION: v2.0.216-dev.guard2.brene66
+  NDK_VERSION: r27c
+  NDK_HOME: /opt/ndk
+
+jobs:
+  build:
+    name: Build patched ZeroMount module
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout Super-Builders Run 143 base branch
+        uses: actions/checkout@v4
+        with:
+          path: builder
+          fetch-depth: 0
+
+      - name: Checkout pinned ZeroMount upstream
+        uses: actions/checkout@v4
+        with:
+          repository: Enginex0/zeromount
+          ref: ${{ env.ZEROMOUNT_UPSTREAM_COMMIT }}
+          submodules: recursive
+          path: zeromount-src
+
+      - name: Verify Run 143 ancestry
+        working-directory: builder
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor 206b5240d0047a4a4f866ac6fcf022c55c678365 HEAD
+          echo "Run 143 base commit is an ancestor of this build branch."
+
+      - name: Apply Guard + BRENE ports
+        run: |
+          set -euo pipefail
+          python3 builder/android14-6.1/build-helpers/patch-zeromount-guard-whitelist.py zeromount-src
+          python3 builder/android14-6.1/build-helpers/fix-zeromount-guard-whitelist-compile.py zeromount-src
+          python3 builder/android14-6.1/build-helpers/patch-zeromount-brene66.py zeromount-src
+
+      - name: Verify patch semantics
+        working-directory: zeromount-src
+        run: |
+          set -euo pipefail
+          grep -q 'version = "2.0.216-dev.guard2.brene66"' Cargo.toml
+
+          # Guard end-to-end fix
+          grep -q 'Allow { name: String }' src/cli/mod.rs
+          grep -q 'Disallow { name: String }' src/cli/mod.rs
+          grep -q 'pub allowed_modules: Vec<String>' src/core/config.rs
+          grep -q 'allowed_modules: config.guard.allowed_modules.clone()' src/cli/webui_init.rs
+          grep -q 'has_explicit_whitelist' src/guard/recovery.rs
+          grep -q 'scan_modules' src/guard/recovery.rs
+          grep -q 'guard allow failed' webui/src/lib/store.ts
+          grep -q 'guard disallow failed' webui/src/lib/store.ts
+          grep -q 'monitors::wait_boot_completed(&config)?;' src/guard/mod.rs
+          grep -q 'monitors::watch_systemui(&config)?;' src/guard/mod.rs
+
+          # BRENE v0.0.66 safe port
+          grep -q 'pub cleanup_sus_marker: bool' src/core/config.rs
+          grep -q 'pub hide_nonstandard_android: bool' src/core/config.rs
+          grep -q 'pub sync_su_compat: bool' src/core/config.rs
+          grep -q 'pub sync_selinux_hide: bool' src/core/config.rs
+          grep -q 'pub custom_kernel_umounts: Vec<String>' src/core/config.rs
+          grep -q 'RECOVERY_LOOP_PATHS' src/susfs/brene.rs
+          grep -q 'cleanup_sus_markers' src/susfs/brene.rs
+          grep -q 'hide_nonstandard_android_children' src/susfs/brene.rs
+          grep -q 'sync_ksu_features' src/susfs/brene.rs
+          grep -q 'apply_custom_kernel_umounts' src/susfs/brene.rs
+          grep -q 'Path::new("/data/adb/ksud")' src/susfs/brene.rs
+          grep -q 'custom_kernel_umount.txt' src/bridge/brene.rs
+          grep -q 'paths_hiding__non_standard_sdcard_android' src/bridge/brene.rs
+          grep -q 'never discard settings' src/bridge/brene.rs
+
+          ! grep -q 'ro.vendor.boot.warranty_bit=0' module/prop_table.sh
+          ! grep -q 'ro.vendor.warranty_bit=0' module/prop_table.sh
+          ! grep -q 'ro.boot.warranty_bit=0' module/prop_table.sh
+          ! grep -q '^ro.warranty_bit=0' module/prop_table.sh
+
+          echo 'Guard + BRENE v0.0.66 source verification: PASS'
+
+      - name: Install Android NDK
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip" -o /tmp/ndk.zip
+          sudo unzip -q /tmp/ndk.zip -d /opt
+          sudo mv "/opt/android-ndk-${NDK_VERSION}" "${NDK_HOME}"
+          echo "${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Install Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+          components: rustfmt
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Normalize and verify Rust formatting
+        working-directory: zeromount-src
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo fmt --all -- --check
+
+      - name: Build WebUI
+        working-directory: zeromount-src/webui
+        run: |
+          set -euo pipefail
+          pnpm install --no-frozen-lockfile
+          pnpm run build
+          test -s ../module/webroot/index.html
+
+      - name: Build release binaries
+        working-directory: zeromount-src
+        env:
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: /opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang
+          CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER: /opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi26-clang
+          CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER: /opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android26-clang
+          CARGO_TARGET_I686_LINUX_ANDROID_LINKER: /opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android26-clang
+        run: |
+          set -euo pipefail
+          export PATH="${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          for target in aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android; do
+            echo "=== cargo build --release --target $target ==="
+            cargo build --release --target "$target"
+          done
+
+      - name: Build Axon payloads
+        working-directory: zeromount-src
+        run: |
+          set -euo pipefail
+          export PATH="${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          AXON=external/axon
+          for pair in "arm64-v8a:aarch64-linux-android" "x86_64:x86_64-linux-android"; do
+            abi="${pair%%:*}"
+            prefix="${pair##*:}"
+            cc="${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/${prefix}23-clang"
+            ar="${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+            out="target/axon/$abi"
+            mkdir -p "$out" "module/bin/$abi" "module/lib/$abi"
+            CFLAGS="-fvisibility=hidden -Os -DANDROID"
+            "$cc" $CFLAGS -c "$AXON/external/plthook/plthook_elf.c" -I"$AXON/external/plthook" -o "$out/plthook_elf.o"
+            "$ar" rcs "$out/libplthook.a" "$out/plthook_elf.o"
+            "$cc" $CFLAGS -s "$AXON/inject.c" "$AXON/ptrace.c" "$AXON/utils.c" -o "$out/axon_inject"
+            "$cc" $CFLAGS -shared -s "$AXON/axon_init.c" "$AXON/utils.c" -I"$AXON/external/plthook" -L"$out" -lplthook -o "$out/libaxon_init.so"
+            "$cc" $CFLAGS -shared -s "$AXON/axon_adbd.c" "$AXON/utils.c" -ldl -o "$out/libaxon_adbd.so"
+            cp "$out/axon_inject" "module/bin/$abi/"
+            cp "$out/libaxon_init.so" "module/lib/$abi/"
+            cp "$out/libaxon_adbd.so" "module/lib/$abi/"
+          done
+
+      - name: Package flashable module
+        working-directory: zeromount-src
+        run: |
+          set -euo pipefail
+          for pair in \
+            "arm64-v8a:aarch64-linux-android" \
+            "armeabi-v7a:armv7-linux-androideabi" \
+            "x86_64:x86_64-linux-android" \
+            "x86:i686-linux-android"
+          do
+            abi="${pair%%:*}"
+            target="${pair##*:}"
+            src="target/${target}/release/zeromount"
+            test -x "$src"
+            mkdir -p "module/bin/$abi"
+            cp "$src" "module/bin/$abi/zeromount"
+          done
+
+          chmod +x scripts/package.sh
+          ./scripts/package.sh --version "$ZEROMOUNT_VERSION"
+          test -s "release/release/zeromount-${ZEROMOUNT_VERSION}.zip"
+
+      - name: Verify packaged Guard + BRENE port
+        working-directory: zeromount-src
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/zm-verify
+          mkdir -p /tmp/zm-verify
+          unzip -q "release/release/zeromount-${ZEROMOUNT_VERSION}.zip" -d /tmp/zm-verify
+          test -x /tmp/zm-verify/bin/arm64-v8a/zeromount
+
+          strings /tmp/zm-verify/bin/arm64-v8a/zeromount | grep -q 'allowed_modules'
+          strings /tmp/zm-verify/bin/arm64-v8a/zeromount | grep -q 'scoped_disabled'
+          strings /tmp/zm-verify/bin/arm64-v8a/zeromount | grep -q 'custom_kernel_umounts'
+          strings /tmp/zm-verify/bin/arm64-v8a/zeromount | grep -q 'SUS marker cleanup'
+          strings /tmp/zm-verify/bin/arm64-v8a/zeromount | grep -q '/data/adb/ksud'
+
+          grep -Rqs 'guard allow failed' /tmp/zm-verify/webroot
+          grep -Rqs 'guard disallow failed' /tmp/zm-verify/webroot
+          grep -Rqs 'cleanup_sus_marker' /tmp/zm-verify/webroot
+          grep -Rqs 'sync_selinux_hide' /tmp/zm-verify/webroot
+
+          ! grep -q 'ro.boot.warranty_bit=0' /tmp/zm-verify/prop_table.sh
+          echo 'Packaged Guard + BRENE v0.0.66 verification: PASS'
+
+      - name: Build manifest
+        working-directory: zeromount-src
+        run: |
+          set -euo pipefail
+          mkdir -p release/manifest
+          {
+            echo "base_run=34501538739"
+            echo "base_super_builders_commit=206b5240d0047a4a4f866ac6fcf022c55c678365"
+            echo "zeromount_upstream_commit=${ZEROMOUNT_UPSTREAM_COMMIT}"
+            echo "brene_reference=rrr333nnn333/BRENE-v0.0.66"
+            echo "version=${ZEROMOUNT_VERSION}"
+            echo "guard_model=self-disable-plus-explicit-whitelist-scoped-isolation"
+            echo "brene_port=safe-selective-v0.0.66"
+            sha256sum "release/release/zeromount-${ZEROMOUNT_VERSION}.zip"
+          } | tee release/manifest/guard-brene66-build.txt
+
+      - name: Upload patched ZeroMount module
+        uses: actions/upload-artifact@v4
+        with:
+          name: zeromount-v2.0.216-dev.guard2.brene66
+          path: |
+            zeromount-src/release/release/zeromount-v2.0.216-dev.guard2.brene66.zip
+            zeromount-src/release/manifest/guard-brene66-build.txt
+          retention-days: 30
+
+      - name: Summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## ZeroMount v2.0.216-dev.guard2.brene66
+          - Base kernel build: Run 34501538739 / commit 206b5240d0047a4a4f866ac6fcf022c55c678365
+          - Upstream ZeroMount: c3cb7ffdf749f2441928ec47798615a4c79fab65
+          - Guard whitelist fix retained and verified
+          - BRENE v0.0.66 bridge schema updated without dropping unknown config keys
+          - Extended custom-recovery path hiding
+          - One-shot `..5.u.S` cleanup (no persistent inotify daemon)
+          - Optional non-standard Android storage hiding
+          - Optional ReSukiSU `su_compat` / `selinux_hide` persistent feature sync
+          - Explicit `custom_kernel_umounts` support
+          - Standalone `/data/adb/ksud` supported
+          - Samsung warranty-bit property contradiction removed
+          - Aggressive PTY/custom-ROM/broad mount-unmount logic intentionally not ported
+          EOF

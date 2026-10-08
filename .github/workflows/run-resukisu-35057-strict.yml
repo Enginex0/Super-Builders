@@ -1,0 +1,188 @@
+name: S928B ZZI4 BakaSU 35220 SUSFS v2.3.0 UIDGate v1 BootconfigStaticKey v1
+run-name: "S928BXXU6ZZI4 EUX — BakaSU 35220 + SUSFS v2.3.0 @ 24743360 / OPEN_REDIRECT / UID-gated hiding v1 / Gunyah Reclaim v1 / BootconfigStaticKey-v1"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/resukisu-35115-eux-zzhl
+      - agent/resukisu-35119-susfs-su-session-port
+      - agent/resukisu-35119-susfs-native-v2
+      - agent/resukisu-35127-susfs-native-v2
+      - agent/resukisu-35127-postexec-success-gate
+      - agent/resukisu-35129-susfs-230
+      - agent/resukisu-35133-susfs-230
+      - agent/resukisu-35136-susfs-230
+      - agent/resukisu-35139-susfs-230
+      - agent/resukisu-35140-susfs-230
+      - agent/resukisu-35146-susfs-230
+      - agent/resukisu-35153-susfs-230
+      - agent/resukisu-35153-zzi4-susfs-230
+      - agent/resukisu-35153-zzi4-dynamic-manager-getfix
+      - agent/resukisu-35157-zzi4-exact-artifact
+      - agent/resukisu-35158-zzi4-exact-artifact
+      - agent/resukisu-35184-susfs-latest-zzi4
+      - agent/susfs-uid-gated-35184-zzi4
+      - agent/resukisu-35189-zzi4
+      - agent/resukisu-35193-zzi4
+      - agent/resukisu-35202-zzi4
+      - codex/resukisu-35203-zzi4
+      - codex/resukisu-35205-zzi4
+      - codex/bakasu-35215-zzi4
+      - codex/bakasu-35220-zzi4
+    paths:
+      - '.github/workflows/run-resukisu-35057-strict.yml'
+      - '.github/workflows/build-resukisu.yml'
+      - '.github/workflows/build-resukisu-userspace.yml'
+      - '.github/workflows/build-zeromount-bakasu.yml'
+      - 'android14-6.1/build-helpers/zeromount-bakasu/**'
+      - 'android14-6.1/build-helpers/verify-resukisu-userspace.py'
+      - 'android14-6.1/build-helpers/resukisu_35193_lock.py'
+      - 'android14-6.1/build-helpers/test-resukisu-35193-lock.py'
+      - 'android14-6.1/build-helpers/resukisu_35201_lock.py'
+      - 'android14-6.1/build-helpers/test-resukisu-35201-lock.py'
+      - 'android14-6.1/build-helpers/bakasu_35220_lock.py'
+      - 'android14-6.1/build-helpers/test-bakasu-35220-lock.py'
+      - '.github/workflows/cache-dependencies.yml'
+      - '.github/actions/susfs-v2.2/**'
+      - 'android14-6.1/defconfig.fragment'
+      - 'android14-6.1/build-helpers/clean-build-flags.sh'
+      - 'android14-6.1/build-helpers/apply-e3q-cgroup-pids-compat.sh'
+      - 'android14-6.1/build-helpers/apply-e3q-cmdline-governor-compat.sh'
+      - 'android14-6.1/build-helpers/apply-e3q-gunyah-vm-metadata-allocation.sh'
+      - 'android14-6.1/build-helpers/apply-e3q-gunyah-cma-compat.sh'
+      - 'android14-6.1/build-helpers/patch-e3q-gunyah-adaptive-backing.py'
+      - 'android14-6.1/build-helpers/test-e3q-gunyah-adaptive-backing.py'
+      - 'android14-6.1/build-helpers/patch-e3q-gunyah-reclaim.py'
+      - 'android14-6.1/build-helpers/test-e3q-gunyah-reclaim.py'
+      - 'android14-6.1/build-helpers/gunyah-reclaim/**'
+      - 'android14-6.1/build-helpers/su-session/**'
+      - 'android14-6.1/build-helpers/su-session-35193/**'
+      - 'android14-6.1/build-helpers/su-session-35220/**'
+      - 'android14-6.1/build-helpers/bakasu_35220_uapi.py'
+      - 'android14-6.1/build-helpers/test-bakasu-35220-bindings.py'
+      - 'android14-6.1/build-helpers/fixtures/resukisu-35203-bindgen-0.73.2.rs'
+      - 'android14-6.1/build-helpers/capture-resukisu-cargo.py'
+      - 'android14-6.1/build-helpers/susfs-uid-gated/**'
+      - 'android14-6.1/build-helpers/apply-resukisu-35127-susfs-postexec.sh'
+      - 'android14-6.1/build-helpers/apply-e3q-gunyah-qcom-vmid-compat.sh'
+      - 'android14-6.1/build-helpers/allow-e3q-gunyah-rm-vmid-kmi.sh'
+      - 'android14-6.1/build-helpers/audit-e3q-gunyah-qcom-module.sh'
+      - 'android14-6.1/build-helpers/apply-s928b-zzhl-source-port.sh'
+      - 'android14-6.1/build-helpers/verify-samsung-dlkm-crcs.sh'
+      - 'android14-6.1/e3q-zzi4-gunyah-qcom-stock-modversions.tsv'
+      - 'android14-6.1/samsung-e3q-zzi4-dlkm-crc-baseline.tsv'
+      - 'android14-6.1/samsung-s928bxxu6zzhl-source.env'
+      - 'android14-6.1/samsung-s928bxxu6zzi4-target.env'
+      - 'android14-6.1/samsung-sm-s928b-17-zzhl-common-port.tar.xz'
+      - 'device-profiles.json'
+      - 'android14-6.1/build-helpers/configure-resukisu-release.sh'
+      - 'android14-6.1/build-helpers/apply-resukisu-dynamic-manager-get-permission.py'
+      - 'android14-6.1/build-helpers/configure-susfs-log-default.sh'
+      - 'android14-6.1/build-helpers/apply-susfs-bootconfig-static-key-fix.sh'
+      - 'android14-6.1/build-helpers/apply-enhanced-susfs-v2.2.sh'
+      - 'android14-6.1/build-helpers/susfs-kstat-redirect-v2.c'
+      - 'android14-6.1/build-helpers/apply-enhanced-susfs-header.py'
+      - 'android14-6.1/build-helpers/apply-enhanced-susfs-vfs.py'
+      - 'android14-6.1/build-helpers/repair-s928b-dzg1-susfs-namespace.sh'
+      - 'android14-6.1/build-helpers/assemble-defconfig.sh'
+      - 'android14-6.1/build-helpers/harden-resukisu-zeromount-kallsyms.sh'
+      - 'android14-6.1/build-helpers/make-resukisu-umount-add-idempotent.sh'
+      - 'android14-6.1/build-helpers/setup-bbg.sh'
+      - 'android14-6.1/build-helpers/verify-susfs-v2.2-procfs.sh'
+      - 'android14-6.1/build-helpers/verify-zeromount-susfs-source.sh'
+      - 'android14-6.1/SukiSU-Ultra/patches/51_enhanced_susfs-android14-6.1.patch'
+      - 'android14-6.1/SukiSU-Ultra/patches/60_zeromount-android14-6.1.patch'
+      - 'android14-6.1/resukisu-pin.txt'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: s928b-resukisu-35220-zzi4-uidgate-v1-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  gunyah-preflight:
+    name: UID gate and Gunyah exact-C preflight tests
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate transformation, budget bounds and exact C function
+        run: |
+          set -euo pipefail
+          python3 android14-6.1/build-helpers/test-bakasu-35220-bindings.py
+          python3 android14-6.1/build-helpers/test-e3q-gunyah-adaptive-backing.py
+          python3 android14-6.1/build-helpers/test-e3q-gunyah-reclaim.py
+          python3 android14-6.1/build-helpers/susfs-uid-gated/test.py --cc gcc --work-dir "$RUNNER_TEMP/uid-gate-tests"
+
+  userspace:
+    needs: gunyah-preflight
+    uses: ./.github/workflows/build-resukisu-userspace.yml
+    with:
+      resukisu_commit: 8450dd287ef6ee25ca2b6b858b43c9354c73060c
+      resukisu_version_code: "35220"
+
+  dependencies:
+    needs: gunyah-preflight
+    uses: ./.github/workflows/cache-dependencies.yml
+
+  zeromount-compat:
+    needs: gunyah-preflight
+    uses: ./.github/workflows/build-zeromount-bakasu.yml
+
+  strict-gate:
+    name: Full strict KMI gate / BakaSU 35220 UAPI5 / OPEN_REDIRECT / UID-gated hiding v1 / Gunyah
+    needs: [dependencies, userspace, zeromount-compat]
+    uses: ./.github/workflows/build-resukisu.yml
+    permissions:
+      contents: write
+      actions: write
+    with:
+      android_version: android14
+      kernel_version: "6.1"
+      sub_level: "162"
+      os_patch_level: "2026-03"
+      add_susfs: true
+      susfs_uid_gated_hiding: true
+      add_zeromount: true
+      add_droidspaces: true
+      add_zram: true
+      add_bbg: true
+      add_overlayfs_support: true
+      add_kpm: false
+      susfs_open_redirect: true
+      # Adapt the SUSFS 24743360 callback to native UAPI5, retaining the explicit
+      # session decision and success guard from reference run 34262304602.
+      # The legacy 35119/UAPI2 backport is not applicable to native UAPI5.
+      susfs_su_session: false
+      add_ptrace_fix: true
+      add_perf_patches: true
+      sukisu_commit: 8450dd287ef6ee25ca2b6b858b43c9354c73060c
+      resukisu_source_branch: main
+      resukisu_version_code: "35220"
+      device_codename: e3q
+      kmi_mode: strict
+      kmi_profile: full-strict
+      kmi_minimal_config: false
+      package_strict_anykernel: true
+
+# Update baseline: successful run 35443096947 @ 4bad7d66a2e43c6ffbcd5046ce209207ec8a590d.
+# UIDGate-v1 baseline: successful run 36463712058 @ 8c379ba853e084a42d70633e1a9b29b00793bd7e.
+# ZZI4 migration baseline: agent/resukisu-35153-zzi4-susfs-230 @ 7605e96c.
+# BakaSU 35220 is pinned to 8450dd287ef6ee25ca2b6b858b43c9354c73060c.
+# Latest compatible SUSFS 2.3.0 (checked 2026-10-06) is pinned to 24743360ea08d98f6ad72b856851abed8de5854f.
+# DynamicManager GET fix: manager may query state; SET/SET_SYNCHRONOUS/WIPE remain uid 0 only.
+
+# Prior 35187 migration baseline: successful run 36514881342 @ 4d93c4e71993de95309f3975f0ea97da1750422e.
+
+# BootconfigStaticKey-v1: runtime diagnosis on run 36606929441 showed static_key_count=1 while boot_config_proc_show skipped susfs_spoof_cmdline_or_bootconfig; use static_key_enabled() and fail CI if the legacy jump-label gate returns.
+
+# Historical update source: successful run 36634254677 @ e3a3da909a8bba40637b9ae31639a5fbb15b76ab.
+# 35220 migration baseline: successful BakaSU 35215 run 37459010103 @ e9f456d2e87b69d244311b7330c4ac3a4826f952.
+# 35220: 30700 + 4520 at 8450dd28; UAPI5 EVENT_SERVICES starts service scripts once.
+# Kernel and ARM64 ksud/ksuinit use the same immutable source commit and fresh bindings.
+# Upstream 35220 is BakaSU; use its matching Manager (org.bakasu.bakasu).

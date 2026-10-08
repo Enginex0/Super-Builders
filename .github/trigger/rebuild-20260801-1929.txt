@@ -1,0 +1,4 @@
+Rebuild requested 2026-08-01 19:29 Europe/Berlin
+Target: android14-6.1.145 (2025-09)
+Device: SM-S928B / e3q
+Reason: previous finalized build failed

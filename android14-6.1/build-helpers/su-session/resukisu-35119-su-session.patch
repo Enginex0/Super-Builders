@@ -1,0 +1,546 @@
+diff --git a/kernel/Kconfig b/kernel/Kconfig
+index 0174d2de..fab6855c 100644
+--- a/kernel/Kconfig
++++ b/kernel/Kconfig
+@@ -175,7 +175,7 @@ config KSU_SUSFS_SUS_PATH
+         - Use "add_sus_path_loop" instead of "add_sus_path" if the user-defined path is frequently modified.
+         - Use with caution, as it may cause performance loss and be vulnerable to side-channel attacks.
+           just disable this feature if it doesn't work for you or you don't need it at all.
+-        - Effective only on zygote spawned user app process with uid >= 10000.
++        - Effective on zygote/zygote_next processes marked with TIF_PROC_UMOUNTED.
+ 
+ config KSU_SUSFS_SUS_MOUNT
+     bool "Enable to hide suspicious mounts"
+@@ -184,6 +184,7 @@ config KSU_SUSFS_SUS_MOUNT
+     help
+         - Automatically assign fake mnt_id and fake mnt_group_id for mounts mounted by ksu process until /sdcard is decrypted, this is to evade from mnt_id/mnt_group_id gap detections.
+         - Allow hiding all sus mounts from /proc/self/[mounts|mountinfo|mountstat] for non-su processes.
++        - Effective on zygote/zygote_next processes marked with TIF_PROC_UMOUNTED.
+ 
+ config KSU_SUSFS_SUS_KSTAT
+     bool "Enable to spoof suspicious kstat"
+@@ -191,7 +192,7 @@ config KSU_SUSFS_SUS_KSTAT
+     default y
+     help
+         - Allow spoofing the kstat of user-defined file/directory.
+-        - Effective only on zygote spawned user app process with uid >= 10000.
++        - Effective on all processes with (uid % 100000) >= 10000.
+ 
+ config KSU_SUSFS_SPOOF_UNAME
+     bool "Enable to spoof uname"
+@@ -230,7 +231,8 @@ config KSU_SUSFS_OPEN_REDIRECT
+     default y
+     help
+         - Allow redirecting a target path to be opened with another user-defined path.
+-        - Please be reminded that process with open access to the target and redirected path can be detected.
++        - Both the target and redirect paths must exist; their SELinux permissions remain the caller's responsibility.
++        - Open redirect alone does not conceal every observable difference; KSTAT may cover some of them.
+         - Effective only on processes with uid < 2000.
+ 
+ config KSU_SUSFS_SUS_MAP
+@@ -242,7 +244,8 @@ config KSU_SUSFS_SUS_MAP
+         - It does NOT support hiding anon memory.
+         - It does NOT hide any inline hooks or PLT hooks caused by the injected library itself.
+         - It may not be able to evade detections by apps that implement a good injection detection.
+-        - Effective only on zygote spawned umounted user app process >= 10000.
++        - Effective on zygote/zygote_next processes marked with TIF_PROC_UMOUNTED
++          and with (uid % 100000) >= 10000.
+ 
+ endmenu
+ 
+diff --git a/kernel/feature/kernel_umount.c b/kernel/feature/kernel_umount.c
+index c7bcfd76..a7e98ac5 100644
+--- a/kernel/feature/kernel_umount.c
++++ b/kernel/feature/kernel_umount.c
+@@ -56,16 +56,17 @@ static const struct ksu_feature_handler kernel_umount_handler = {
+ 
+ static int webview_zygote_umount_feature_get(u64 *value)
+ {
+-    *value = ksu_webview_zygote_umount_enabled ? 1 : 0;
++    *value = ksu_uid_should_umount(WEBVIEW_ZYGOTE_UID) ? 1 : 0;
+     return 0;
+ }
+ 
+ static int webview_zygote_umount_feature_set(u64 value)
+ {
+     bool enable = value != 0;
+-    ksu_webview_zygote_umount_enabled = enable;
+-    pr_info("webview_zygote_umount: set to %d\n", enable);
+-    return 0;
++    int ret = ksu_set_webview_zygote_umount(enable);
++    if (!ret)
++        pr_info("webview_zygote_umount: UAPI2 profile updated to %d\n", enable);
++    return ret;
+ }
+ 
+ static const struct ksu_feature_handler webview_zygote_umount_handler = {
+@@ -152,7 +153,7 @@ int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
+     // 1. Normal app: zygote -> appuid
+     // 2. Isolated process forked from zygote: zygote -> isolated_process
+     // 3. App zygote forked from zygote: zygote -> appuid
+-    // 4. Webview zygote forked from zygote: zygote -> webview_zygote (controlled by feature policy)
++    // 4. Webview zygote forked from zygote: zygote -> webview_zygote (app profile, legacy fallback)
+     // 5. Isolated process forked from app zygote: appuid -> isolated_process (already handled by 3)
+     // 6. Isolated process forked from webview zygote (already handled by 4)
+     if (!is_appuid(new_uid) && new_uid != WEBVIEW_ZYGOTE_UID && !is_isolated_process(new_uid)) {
+diff --git a/kernel/feature/sucompat.c b/kernel/feature/sucompat.c
+index 4fd64343..62c59b99 100644
+--- a/kernel/feature/sucompat.c
++++ b/kernel/feature/sucompat.c
+@@ -12,6 +12,7 @@
+ #include <linux/fs.h>
+ #include <linux/types.h>
+ #include <linux/ptrace.h>
++#include <linux/thread_info.h>
+ #include <linux/namei.h>
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+ #include <linux/sched/task_stack.h>
+@@ -333,10 +334,12 @@ long ksu_handle_execveat_sucompat_internal(const char __user **filename_user, in
+ 
+ #if defined(CONFIG_KSU_SUSFS) || defined(CONFIG_KSU_MANUAL_HOOK)
+ 
+-static inline int do_ksu_handle_execveat_sucompat(int *fd, const char *filename, struct user_arg_ptr *argv)
++static inline int do_ksu_handle_execveat_sucompat(int *fd, const char *filename, struct user_arg_ptr *argv,
++                                               bool *is_su_session)
+ {
+     struct ksu_sulog_pending_event *pending_sucompat = NULL;
+     struct path kpath;
++    int ret;
+     bool is_allowed = ksu_is_allow_uid_for_current(ksu_get_uid_t(current_uid()));
+ 
+ #ifdef KSU_COMPAT_USE_STATIC_KEY
+@@ -359,10 +362,17 @@ static inline int do_ksu_handle_execveat_sucompat(int *fd, const char *filename,
+ 
+     pr_info("do_execveat_common su found\n");
+ 
+-    escape_with_root_profile();
+-
+     pending_sucompat = ksu_sulog_capture_sucompat_manual(filename, *argv, GFP_KERNEL);
+ 
++    /* A rejected/failed profile must never grant a scoped driver capability. */
++    if (test_thread_flag(TIF_KSU_DISABLE_ESCAPE_WITH_ROOT)) {
++        ret = -EPERM;
++        goto out_log;
++    }
++    ret = escape_with_root_profile();
++    if (ret)
++        goto out_log;
++
+     // We are only check ksud exists
+     // In manual hook, we can't try exec ksud, and detect exec success or not
+     if (kern_path(KSUD_PATH, LOOKUP_FOLLOW, &kpath)) {
+@@ -373,9 +383,13 @@ static inline int do_ksu_handle_execveat_sucompat(int *fd, const char *filename,
+ 
+     path_put(&kpath);
+     memcpy((void *)filename, ksud_path, sizeof(ksud_path));
++    if (is_su_session)
++        *is_su_session = true;
+ out:
+-    ksu_sulog_emit_pending(pending_sucompat, 0, GFP_KERNEL);
+-    return 0;
++    ret = 0;
++out_log:
++    ksu_sulog_emit_pending(pending_sucompat, ret, GFP_KERNEL);
++    return ret;
+ }
+ 
+ #ifdef KSU_COMPAT_USE_STATIC_KEY
+@@ -406,10 +420,14 @@ static inline void ksu_handle_execveat_init(const char *filename, void *envp)
+     }
+ }
+ 
+-int ksu_handle_execve(int *fd, const char *filename, void *argv, void *envp, int *flags)
++static int ksu_handle_execve_common(int *fd, const char *filename, void *argv, void *envp, int *flags,
++                                  bool *is_su_session)
+ {
+     struct ksu_sulog_pending_event *pending_root_execve = NULL;
+ 
++    if (is_su_session)
++        *is_su_session = false;
++
+ #ifndef CONFIG_KSU_TRACEPOINT_HOOK
+     if (ksu_is_current_proc_unprivillege()) {
+         return 0;
+@@ -445,7 +463,7 @@ skip_check:
+             ksu_sulog_capture_root_execve_manual(filename, *((struct user_arg_ptr *)argv), GFP_KERNEL);
+     }
+ 
+-    int ret = do_ksu_handle_execveat_sucompat(fd, filename, argv);
++    int ret = do_ksu_handle_execveat_sucompat(fd, filename, argv, is_su_session);
+ 
+     // record sulog!
+     ksu_sulog_emit_pending(pending_root_execve, ret, GFP_KERNEL);
+@@ -453,6 +471,11 @@ skip_check:
+     return ret;
+ }
+ 
++int ksu_handle_execve(int *fd, const char *filename, void *argv, void *envp, int *flags)
++{
++    return ksu_handle_execve_common(fd, filename, argv, envp, flags, NULL);
++}
++
+ // old hook, link to ksu_handle_execve
+ int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags)
+ {
+@@ -469,6 +492,18 @@ int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, voi
+ // and call ksu_handle_execveat_sucompat
+ // we need unpack filename* in here, and pass it to ksu_handle_execveat
+ #ifdef CONFIG_KSU_SUSFS
++/* Explicit success flag; the legacy hooks also return zero for ordinary exec. */
++bool ksu_handle_execveat_su_session(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags)
++{
++    bool is_su_session = false;
++
++    if (!filename_ptr || IS_ERR_OR_NULL(*filename_ptr))
++        return false;
++    if (ksu_handle_execve_common(fd, (*filename_ptr)->name, argv, envp, flags, &is_su_session))
++        return false;
++    return is_su_session;
++}
++
+ int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags)
+ {
+     // workaround susfs codes as below
+diff --git a/kernel/feature/sucompat.h b/kernel/feature/sucompat.h
+index 0c6365c0..cbd65780 100644
+--- a/kernel/feature/sucompat.h
++++ b/kernel/feature/sucompat.h
+@@ -15,6 +15,7 @@ void ksu_sucompat_exit(void);
+ 
+ // Handler functions exported for hook_manager
+ #ifdef CONFIG_KSU_SUSFS
++bool ksu_handle_execveat_su_session(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags);
+ int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *__unused_flags);
+ int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);
+ #else
+diff --git a/kernel/hook/setuid_hook.c b/kernel/hook/setuid_hook.c
+index 070b2fbc..a4af4b54 100644
+--- a/kernel/hook/setuid_hook.c
++++ b/kernel/hook/setuid_hook.c
+@@ -95,9 +95,9 @@ static int handle_zygote_next_setresuid(uid_t new_uid)
+ 
+     // manager NEVER use zygote next!
+ 
+-    // we should not umount for webview zygote
++    // UID 1053 is outside is_appuid(); consult the same profile as normal zygote.
+     if (unlikely(new_uid == WEBVIEW_ZYGOTE_UID)) {
+-        if (ksu_webview_zygote_umount_enabled) {
++        if (ksu_uid_should_umount(new_uid)) {
+             susfs_set_current_proc_no_su();
+             susfs_set_current_proc_umounted();
+             susfs_set_current_proc_umounted_for_zygote_next();
+diff --git a/kernel/infra/file_wrapper.c b/kernel/infra/file_wrapper.c
+index 8fa9ee48..27c93a1b 100644
+--- a/kernel/infra/file_wrapper.c
++++ b/kernel/infra/file_wrapper.c
+@@ -17,6 +17,7 @@
+ 
+ #include "objsec.h"
+ 
++#include "ksu.h"
+ #include "klog.h" // IWYU pragma: keep
+ #include "selinux/selinux.h"
+ #include "runtime/ksud_boot.h"
+@@ -584,6 +585,7 @@ struct file *ksu_anon_inode_create_getfile_compat(const char *name, const struct
+ int ksu_install_file_wrapper(int fd)
+ {
+     int out_fd, ret;
++    const struct cred *old_cred;
+     struct file *orig_file = fget(fd);
+     if (!orig_file) {
+         return -EBADF;
+@@ -601,8 +603,13 @@ int ksu_install_file_wrapper(int fd)
+         goto out_put_fd;
+     }
+ 
++    /* The selected root profile may use a restricted SELinux domain. Only
++     * inode creation uses KSU credentials; restore them before publication.
++     */
++    old_cred = override_creds(ksu_cred);
+     struct file *wrapper_file = ksu_anon_inode_create_getfile_compat("[ksu_fdwrapper]", &file_wrapper_data->ops,
+                                                                      file_wrapper_data, orig_file->f_flags, NULL);
++    revert_creds(old_cred);
+     if (IS_ERR(wrapper_file)) {
+         pr_err("ksu_fdwrapper: getfile failed: %ld\n", PTR_ERR(wrapper_file));
+         ret = PTR_ERR(wrapper_file);
+diff --git a/kernel/policy/allowlist.c b/kernel/policy/allowlist.c
+index c3284d8a..8018f157 100644
+--- a/kernel/policy/allowlist.c
++++ b/kernel/policy/allowlist.c
+@@ -149,6 +149,12 @@ static bool profile_valid(struct app_profile *profile)
+         return false;
+     }
+ 
++    /* WebView is a system service, never a root-granting app profile. */
++    if (profile->curr_uid == WEBVIEW_ZYGOTE_UID &&
++        (profile->allow_su || strcmp(profile->key, "webview_zygote") != 0)) {
++        return false;
++    }
++
+     if (profile->allow_su) {
+ #ifndef CONFIG_KSU_DISABLE_POLICY
+         if (profile->rp_config.profile.groups_count > KSU_MAX_GROUPS) {
+@@ -316,17 +322,17 @@ bool ksu_uid_should_umount(uid_t uid)
+         // we should not umount on manager!
+         return false;
+     }
+-    if (unlikely(uid == WEBVIEW_ZYGOTE_UID)) {
+-        return ksu_webview_zygote_umount_enabled;
+-    }
+ #ifdef CONFIG_KSU_DISABLE_POLICY
++    if (uid == WEBVIEW_ZYGOTE_UID)
++        return READ_ONCE(ksu_webview_zygote_umount_enabled);
+     return !__ksu_is_allow_uid(uid);
+ #else
+     rcu_read_lock();
+     profile = ksu_get_app_profile(uid);
+     if (!profile) {
+         // no app profile found, it must be non root app
+-        res = default_non_root_profile.umount_modules;
++        res = uid == WEBVIEW_ZYGOTE_UID ? READ_ONCE(ksu_webview_zygote_umount_enabled)
++                                       : default_non_root_profile.umount_modules;
+     } else if (profile->allow_su) {
+         // if found and it is granted to su, we shouldn't umount for it
+         res = false;
+@@ -352,6 +358,39 @@ void ksu_put_app_profile(struct app_profile *profile)
+     put_perm_data(p);
+ }
+ 
++/* Keep feature ID 5 usable by the stock 35119 manager while storing its
++ * WebView policy in the existing UAPI-2 allowlist format. */
++int ksu_set_webview_zygote_umount(bool enabled)
++{
++    /* Allowlist loading runs asynchronously in init. Boot-time replay must
++     * never save a partial list or overwrite a profile that is still loading.
++     * Keep only the legacy fallback until boot is complete. */
++    if (!READ_ONCE(ksu_boot_completed)) {
++        WRITE_ONCE(ksu_webview_zygote_umount_enabled, enabled);
++        return 0;
++    }
++#ifndef CONFIG_KSU_DISABLE_POLICY
++    struct app_profile *profile;
++    int ret;
++
++    profile = kzalloc(sizeof(*profile), GFP_KERNEL);
++    if (!profile)
++        return -ENOMEM;
++    profile->version = KSU_APP_PROFILE_VER;
++    profile->curr_uid = WEBVIEW_ZYGOTE_UID;
++    memcpy(profile->key, "webview_zygote", sizeof("webview_zygote"));
++    profile->nrp_config.use_default = false;
++    profile->nrp_config.profile.umount_modules = enabled;
++    ret = ksu_set_app_profile(profile);
++    kfree(profile);
++    if (ret)
++        return ret;
++    ksu_persistent_allow_list();
++#endif
++    WRITE_ONCE(ksu_webview_zygote_umount_enabled, enabled);
++    return 0;
++}
++
+ struct root_profile *ksu_get_root_profile(uid_t uid)
+ {
+ #ifdef CONFIG_KSU_DISABLE_POLICY
+@@ -593,7 +632,7 @@ void ksu_prune_allowlist(bool (*is_uid_valid)(uid_t, char *, void *), void *data
+         uid_t uid = np->profile.curr_uid;
+         char *package = np->profile.key;
+         // we use this uid for special cases, don't prune it!
+-        bool is_preserved_uid = uid == KSU_APP_PROFILE_PRESERVE_UID;
++        bool is_preserved_uid = uid == KSU_APP_PROFILE_PRESERVE_UID || uid == WEBVIEW_ZYGOTE_UID;
+         if (!is_preserved_uid && !is_uid_valid(uid, package, data)) {
+             modified = true;
+             pr_info("prune uid: %d, package: %s\n", uid, package);
+diff --git a/kernel/policy/allowlist.h b/kernel/policy/allowlist.h
+index 044e3954..22a9a639 100644
+--- a/kernel/policy/allowlist.h
++++ b/kernel/policy/allowlist.h
+@@ -40,6 +40,7 @@ void ksu_put_app_profile(struct app_profile *);
+ int ksu_set_app_profile(struct app_profile *);
+ 
+ bool ksu_uid_should_umount(uid_t uid);
++int ksu_set_webview_zygote_umount(bool enabled);
+ struct root_profile *ksu_get_root_profile(uid_t uid);
+ // only used to put the root_profile returned by ksu_get_root_profile
+ void ksu_put_root_profile(struct root_profile *);
+diff --git a/kernel/policy/app_profile.c b/kernel/policy/app_profile.c
+index d9acd8e2..f0ddeec7 100644
+--- a/kernel/policy/app_profile.c
++++ b/kernel/policy/app_profile.c
+@@ -224,7 +224,8 @@ int escape_with_root_profile(void)
+     // https://github.com/torvalds/linux/commit/905ae01c4ae2ae3df05bb141801b1db4b7d83c61#diff-ff6060da281bd9ef3f24e17b77a9b0b5b2ed2d7208bb69b29107bee69732bd31
+     // on older kernels, per-UID process accounting lives in user_struct.
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
+-    if (set_cred_ucounts(cred)) {
++    ret = set_cred_ucounts(cred);
++    if (ret) {
+         goto out_abort_creds;
+     }
+ #endif
+diff --git a/kernel/supercall/dispatch.c b/kernel/supercall/dispatch.c
+index 242b5711..5f997c28 100644
+--- a/kernel/supercall/dispatch.c
++++ b/kernel/supercall/dispatch.c
+@@ -1298,7 +1298,8 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
+         .cmd = KSU_IOCTL_GET_WRAPPER_FD,
+         .name = "GET_WRAPPER_FD",
+         .handler = do_get_wrapper_fd,
+-        .perm_check = manager_or_root 
++        .perm_check = manager_or_root,
++        .allow_su_session = true
+     },
+     { 
+         .cmd = KSU_IOCTL_MANAGE_MARK, 
+@@ -1334,7 +1335,8 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
+         .cmd = KSU_IOCTL_DISABLE_ESCAPE_TO_ROOT, 
+         .name = "DISABLE_ESCAPE_TO_ROOT", 
+         .handler = do_disable_escape_to_root, 
+-        .perm_check = only_root 
++        .perm_check = only_root,
++        .allow_su_session = true
+     },
+     // downstream begin
+     { 
+@@ -1376,7 +1378,7 @@ static const struct ksu_ioctl_cmd_map ksu_ioctl_handlers[] = {
+ };
+ // clang-format on
+ 
+-long ksu_supercall_handle_ioctl(unsigned int cmd, void __user *argp)
++long ksu_supercall_handle_ioctl(const struct file *filp, unsigned int cmd, void __user *argp)
+ {
+     int i;
+ 
+@@ -1387,7 +1389,8 @@ long ksu_supercall_handle_ioctl(unsigned int cmd, void __user *argp)
+     for (i = 0; ksu_ioctl_handlers[i].handler; i++) {
+         if (cmd == ksu_ioctl_handlers[i].cmd) {
+             // Check permission first
+-            if (ksu_ioctl_handlers[i].perm_check && !ksu_ioctl_handlers[i].perm_check()) {
++            if (ksu_ioctl_handlers[i].perm_check && !ksu_ioctl_handlers[i].perm_check() &&
++                !(ksu_ioctl_handlers[i].allow_su_session && ksu_is_su_session_fd(filp))) {
+                 pr_warn("ksu ioctl: permission denied for cmd=0x%x uid=%d\n", cmd, ksu_get_uid_t(current_uid()));
+                 return -EPERM;
+             }
+diff --git a/kernel/supercall/internal.h b/kernel/supercall/internal.h
+index 873c20e4..1da944b9 100644
+--- a/kernel/supercall/internal.h
++++ b/kernel/supercall/internal.h
+@@ -12,7 +12,7 @@ bool manager_or_root(void);
+ bool always_allow(void);
+ bool allowed_for_su(void);
+ 
+-long ksu_supercall_handle_ioctl(unsigned int cmd, void __user *argp);
++long ksu_supercall_handle_ioctl(const struct file *filp, unsigned int cmd, void __user *argp);
+ void ksu_supercall_dump_commands(void);
+ void ksu_supercall_cleanup_state(void);
+ 
+diff --git a/kernel/supercall/supercall.c b/kernel/supercall/supercall.c
+index d01b8811..51688326 100644
+--- a/kernel/supercall/supercall.c
++++ b/kernel/supercall/supercall.c
+@@ -21,6 +21,9 @@
+ #include "arch.h"
+ #include "klog.h" // IWYU pragma: keep
+ 
++/* Private file identity, never a userspace-supplied authorization flag. */
++static const char ksu_su_session_cookie;
++
+ static int anon_ksu_release(struct inode *inode, struct file *filp)
+ {
+     pr_info("ksu fd released\n");
+@@ -29,7 +32,7 @@ static int anon_ksu_release(struct inode *inode, struct file *filp)
+ 
+ static long anon_ksu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+ {
+-    return ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
++    return ksu_supercall_handle_ioctl(filp, cmd, (void __user *)arg);
+ }
+ 
+ static const struct file_operations anon_ksu_fops = {
+@@ -50,23 +53,26 @@ static void ksu_install_fd_to_user(int __user *outp)
+     }
+ }
+ 
+-// Install KSU fd to current process
+-int ksu_install_fd(void)
++static int ksu_install_fd_with_context(bool su_session)
+ {
+     struct file *filp;
++    const char *role = su_session ? "su-session" : "control";
+     int fd;
+ 
+     // Get unused fd
+     fd = get_unused_fd_flags(O_CLOEXEC);
+     if (fd < 0) {
+-        pr_err("ksu_install_fd: failed to get unused fd\n");
++        pr_err("ksu_install_fd (%s): failed to get unused fd\n", role);
+         return fd;
+     }
+ 
+-    // Create anonymous inode file
+-    filp = anon_inode_getfile("[ksu_driver]", &anon_ksu_fops, NULL, O_RDWR | O_CLOEXEC);
++    /* Keep the UAPI-2 name recognized by the unmodified 35119 ksud/manager.
++     * Install after exec into ksud; CLOEXEC closes this FD on the next exec.
++     */
++    filp = anon_inode_getfile("[ksu_driver]", &anon_ksu_fops,
++                             su_session ? (void *)&ksu_su_session_cookie : NULL, O_RDWR | O_CLOEXEC);
+     if (IS_ERR(filp)) {
+-        pr_err("ksu_install_fd: failed to create anon inode file\n");
++        pr_err("ksu_install_fd (%s): failed to create anon inode file\n", role);
+         put_unused_fd(fd);
+         return PTR_ERR(filp);
+     }
+@@ -74,11 +80,26 @@ int ksu_install_fd(void)
+     // Install fd
+     fd_install(fd, filp);
+ 
+-    pr_info("ksu fd installed: %d for pid %d\n", fd, current->pid);
++    pr_info("ksu %s fd installed: %d for pid %d\n", role, fd, current->pid);
+ 
+     return fd;
+ }
+ 
++int ksu_install_fd(void)
++{
++    return ksu_install_fd_with_context(false);
++}
++
++int ksu_install_su_fd(void)
++{
++    return ksu_install_fd_with_context(true);
++}
++
++bool ksu_is_su_session_fd(const struct file *filp)
++{
++    return filp && filp->f_op == &anon_ksu_fops && filp->private_data == &ksu_su_session_cookie;
++}
++
+ #ifdef CONFIG_KSU_TOOLKIT_SUPPORT
+ extern int ksu_try_handle_toolkit_cmd(int magic2, unsigned int cmd, void __user **arg);
+ #endif
+diff --git a/kernel/supercall/supercall.h b/kernel/supercall/supercall.h
+index fbedd11f..049c2147 100644
+--- a/kernel/supercall/supercall.h
++++ b/kernel/supercall/supercall.h
+@@ -4,6 +4,8 @@
+ #include <linux/types.h>
+ #include <linux/uaccess.h>
+ 
++struct file;
++
+ // IOCTL handler types
+ typedef int (*ksu_ioctl_handler_t)(void __user *arg);
+ typedef bool (*ksu_perm_check_t)(void);
+@@ -14,10 +16,13 @@ struct ksu_ioctl_cmd_map {
+     const char *name;
+     ksu_ioctl_handler_t handler;
+     ksu_perm_check_t perm_check; // Permission check function
++    bool allow_su_session; // Narrow exception for the capability installed after su exec
+ };
+ 
+ // Install KSU fd to current process
+ int ksu_install_fd(void);
++int ksu_install_su_fd(void);
++bool ksu_is_su_session_fd(const struct file *filp);
+ 
+ void ksu_supercalls_init(void);
+ void ksu_supercalls_exit(void);

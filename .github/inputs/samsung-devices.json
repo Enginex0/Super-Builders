@@ -45,7 +45,7 @@
     "android_version": "android14",
     "kernel_version": "6.1",
     "source_repo": "WildKernels/Samsung_Kernels",
-    "source_branch": "SM-S928B-Oneui8",
+    "source_branch": "SM-S928B-Oneui8.5",
     "common_path": "kernel_platform/common",
     "build_command": "./build_kernel_GKI.sh",
     "lto_default": "default",

@@ -1,0 +1,83 @@
+name: Enhanced ReSukiSU v4.1.0-35056
+run-name: "Enhanced ReSukiSU v4.1.0-35056 + Official Spoofed Manager support — 6.1.145-android14-11-33419968-abS928BXXS6DZG1"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/kmi-runtime-compat
+    paths:
+      - '.github/workflows/run-enhanced-resukisu-35056.yml'
+      - '.github/workflows/kernel-custom.yml'
+      - '.github/workflows/build-resukisu.yml'
+      - '.github/workflows/cache-dependencies.yml'
+      - '.github/actions/susfs-v2.2/**'
+      - '.github/actions/zeromount-v2.2/**'
+      - '.github/actions/droidspaces-678/**'
+      - 'android14-6.1/defconfig.fragment'
+      - 'android14-6.1/build-helpers/**'
+      - 'android14-6.1/samsung-e3q-dlkm-crc-baseline.tsv'
+      - 'android14-6.1/SukiSU-Ultra/patches/**'
+      - 'android14-6.1/resukisu-pin.txt'
+      - 'device-profiles.json'
+      - 'zram/**'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: enhanced-resukisu-35056-e3q
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/kernel-custom.yml
+    permissions:
+      contents: write
+      actions: write
+    with:
+      kernel_target: "android14-6.1.145 (2025-09)"
+      quick_target: ""
+      ksu_variant: "ReSukiSU"
+      add_susfs: true
+      add_zeromount: true
+      add_droidspaces: true
+      add_zram: true
+      add_bbg: true
+      add_overlayfs_support: true
+      # ReSukiSU removed KPM upstream in faac3098; current main cannot provide it.
+      add_kpm: false
+      susfs_open_redirect: true
+      sukisu_commit: "ca62a37fc328e6cb836ea6d77b7eab0c073104a6"
+      resukisu_source_branch: "main"
+      resukisu_version_code: "35056"
+
+  official-manager:
+    name: Official ReSukiSU Manager reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Publish original signed Manager artifacts
+        env:
+          OFFICIAL_CERT_SHA256: d3469712b6214462764a1d8d3e5cbe1d6819a0b629791b9f4101867821f1df64
+          UPSTREAM_RUN: https://github.com/ReSukiSU/ReSukiSU/actions/runs/30697918622
+          NORMAL_MANAGER: https://github.com/ReSukiSU/ReSukiSU/actions/runs/30697918622/artifacts/8817912733
+          SPOOFED_MANAGER: https://github.com/ReSukiSU/ReSukiSU/actions/runs/30697918622/artifacts/8817911066
+        run: |
+          set -euo pipefail
+          {
+            echo "## Official ReSukiSU Manager"
+            echo ""
+            echo "This workflow intentionally does not create or re-sign a Manager APK."
+            echo "Only ReSukiSU upstream possesses the original signing key."
+            echo ""
+            echo "- Original certificate SHA-256: \`${OFFICIAL_CERT_SHA256}\`"
+            echo "- [Official upstream Manager build](${UPSTREAM_RUN})"
+            echo "- [Normal Manager-release artifact](${NORMAL_MANAGER})"
+            echo "- [Spoofed-Manager-release artifact (recommended for hiding)](${SPOOFED_MANAGER})"
+            echo ""
+            echo "The kernel audit requires the official certificate hash and multi-manager support."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+# Manual build trigger: 2026-08-07T22:17+02:00 — CONFIG_LOG_BUF_SHIFT=22

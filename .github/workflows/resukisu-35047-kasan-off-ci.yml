@@ -1,0 +1,41 @@
+name: Verify ReSukiSU 35047 KASAN-off KMI stub
+
+on:
+  push:
+    branches:
+      - agent/resukisu-35047-oneui85
+    paths:
+      - .github/workflows/resukisu-35047-kasan-off-ci.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  dependencies:
+    uses: ./.github/workflows/cache-dependencies.yml
+
+  build:
+    needs: dependencies
+    uses: ./.github/workflows/build-resukisu.yml
+    with:
+      android_version: android14
+      kernel_version: "6.1"
+      sub_level: "145"
+      os_patch_level: 2025-09
+      add_susfs: true
+      add_zeromount: true
+      add_droidspaces: true
+      add_zram: true
+      add_bbg: true
+      add_overlayfs_support: true
+      add_kpm: false
+      susfs_open_redirect: true
+      add_ptrace_fix: true
+      add_perf_patches: true
+      sukisu_commit: ""
+      resukisu_source_branch: dev
+      resukisu_version_code: "35047"
+      resukisu_expected_size: ""
+      resukisu_expected_hash: ""
+      device_codename: e3q

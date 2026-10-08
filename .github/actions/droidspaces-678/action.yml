@@ -1,0 +1,36 @@
+name: Apply Droidspaces 6_7_8 kABI patches
+description: Enable the official Droidspaces kABI-safe GKI patch set, including slot 6_7_8 below kernel 6.12.
+
+inputs:
+  android_version:
+    description: Android generation, for example android14
+    required: true
+  kernel_version:
+    description: Kernel version, for example 6.1
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Apply Droidspaces kABI patches
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        TARGET="${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+        KERNEL_COMMON="${KERNEL_ROOT:?KERNEL_ROOT is not set}/common"
+        DROIDSPACES_DIR="$RUNNER_TEMP/droidspaces-oss"
+        trap 'rm -rf "$DROIDSPACES_DIR"' EXIT
+
+        git clone https://github.com/ravindu644/Droidspaces-OSS.git "$DROIDSPACES_DIR"
+        git -C "$DROIDSPACES_DIR" checkout --detach 1890424779e46c1f3ced182191af28eea7be8c46
+        cd "$KERNEL_COMMON"
+
+        if [ "$TARGET" = "android16-6.12" ]; then
+          patch -p1 --no-backup-if-mismatch < "$DROIDSPACES_DIR/Documentation/resources/kernel-patches/GKI/kernel-6.12/001.GKI-6.12-or-above-fix_sysvipc_kabi.patch"
+        else
+          patch -p1 --no-backup-if-mismatch < "$DROIDSPACES_DIR/Documentation/resources/kernel-patches/GKI/below-kernel-6.12/001.GKI-below-6.12-fix_sysvipc_kabi_6_7_8.patch"
+          if [ "${{ inputs.kernel_version }}" = "5.10" ]; then
+            patch -p1 --no-backup-if-mismatch < "$DROIDSPACES_DIR/Documentation/resources/kernel-patches/GKI/below-kernel-6.12/002.5.10_or_lower_use_android_abi_padding_for_posix_mqueue.patch"
+          fi
+        fi

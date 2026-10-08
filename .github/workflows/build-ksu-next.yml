@@ -25,6 +25,9 @@ on:
       add_zeromount:
         type: boolean
         default: true
+      add_droidspaces:
+        type: boolean
+        default: true
       add_zram:
         type: boolean
         default: true
@@ -175,7 +178,7 @@ jobs:
       env:
         SUKISU_COMMIT: ${{ inputs.sukisu_commit }}
       run: |
-        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/stable/kernel/setup.sh" | bash -s stable
+        curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
         [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
 
         PIN="${SUKISU_COMMIT:-$(cat "$GITHUB_WORKSPACE/$VERSION_DIR/kernelsu-next-pin.txt" 2>/dev/null || true)}"
@@ -201,41 +204,38 @@ jobs:
         FIX_SCRIPT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-old-kernel-compat.sh"
         [ -f "$FIX_SCRIPT" ] && bash "$FIX_SCRIPT" "$KERNEL_ROOT/common" "$SUBLEVEL" || true
 
-    - name: Apply Upstream SUSFS Patch
+    - name: Apply SUSFS v2.2.0
       if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
+      uses: ./.github/actions/susfs-v2.2
+      with:
+        android_version: ${{ inputs.android_version }}
+        kernel_version: ${{ inputs.kernel_version }}
+        sub_level: ${{ env.SUBLEVEL }}
+        os_patch_level: ${{ inputs.os_patch_level }}
 
-    - name: Apply Enhanced SUSFS Patch
-      if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches/51_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
+    - name: Apply ZeroMount
+      if: inputs.add_susfs && inputs.add_zeromount
+      uses: ./.github/actions/zeromount-v2.2
+      with:
+        android_version: ${{ inputs.android_version }}
+        kernel_version: ${{ inputs.kernel_version }}
 
-    - name: Apply KSU Safety Patch
+    - name: Apply Droidspaces 6_7_8 patches
+      if: inputs.add_droidspaces
+      uses: ./.github/actions/droidspaces-678
+      with:
+        android_version: ${{ inputs.android_version }}
+        kernel_version: ${{ inputs.kernel_version }}
+
+    - name: Warn about SUSFS mount hiding
+      if: inputs.add_susfs && inputs.add_droidspaces
+      run: echo "::warning::Droidspaces requires SUSFS Hide SUS Mounts for All Processes to remain disabled at runtime."
+
+    - name: Apply KernelSU-Next SUSFS v2.2.0 compatibility
       if: inputs.add_susfs
       working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}
       run: |
-        PATCH="$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches/70_ksu_safety-kernelsu-next-${KERNEL_VER}.patch"
-        if [ -s "$PATCH" ]; then
-          patch -p1 --no-backup-if-mismatch < "$PATCH"
-        else
-          echo "No 70_ patch needed"
-        fi
-
-    - name: Apply ZeroMount Patch
-      if: inputs.add_zeromount && inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
-
-    - name: Fix SUSFS Compatibility
-      if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        FIX="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-susfs-compat.sh"
-        [ -f "$FIX" ] && bash "$FIX" . "$SUBLEVEL" "$ANDROID_VER" "$KERNEL_VER" "$KERNEL_PATCHES" || true
+        patch -p1 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/.github/patches/kernelsu-next-dev-susfs-v2.2.0.patch"
 
     - name: Apply Kernel Patches
       if: inputs.add_ptrace_fix || inputs.add_perf_patches
@@ -283,6 +283,8 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       env:
         ADD_SUSFS: ${{ inputs.add_susfs }}
+        ADD_ZEROMOUNT: ${{ inputs.add_zeromount }}
+        ADD_DROIDSPACES: ${{ inputs.add_droidspaces }}
         ADD_OVERLAYFS: ${{ inputs.add_overlayfs_support }}
         ADD_ZRAM: ${{ inputs.add_zram }}
         ADD_KPM: ${{ inputs.add_kpm }}
@@ -292,6 +294,8 @@ jobs:
 
         ASSEMBLE_FLAGS=""
         [[ "$ADD_SUSFS" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --susfs"
+        [[ "$ADD_ZEROMOUNT" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --zeromount"
+        [[ "$ADD_DROIDSPACES" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --droidspaces"
         [[ "$ADD_OVERLAYFS" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --overlayfs"
         [[ "$ADD_ZRAM" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --zram"
         [[ "$ADD_KPM" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --kpm"
@@ -493,6 +497,7 @@ jobs:
       env:
         ADD_SUSFS: ${{ inputs.add_susfs }}
         ADD_ZEROMOUNT: ${{ inputs.add_zeromount }}
+        ADD_DROIDSPACES: ${{ inputs.add_droidspaces }}
         ADD_ZRAM: ${{ inputs.add_zram }}
         ADD_BBG: ${{ inputs.add_bbg }}
         ADD_OVERLAYFS: ${{ inputs.add_overlayfs_support }}
@@ -509,6 +514,7 @@ jobs:
           echo "| **OS Patch Level** | ${OS_PATCH} |"
           echo "| **Enhanced SUSFS** | $(S "$ADD_SUSFS") |"
           echo "| **ZeroMount** | $(S "$ADD_ZEROMOUNT") |"
+          echo "| **Droidspaces 6_7_8** | $(S "$ADD_DROIDSPACES") |"
           echo "| **ZRAM (LZ4K/LZ4KD)** | $(S "$ADD_ZRAM") |"
           echo "| **LZ4 v1.10.0** | $(S "$ADD_ZRAM") |"
           echo "| **Overlayfs Support** | $(S "$ADD_OVERLAYFS") |"

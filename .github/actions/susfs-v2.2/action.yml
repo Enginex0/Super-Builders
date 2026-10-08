@@ -1,0 +1,281 @@
+name: Apply pinned SUSFS
+description: Apply the pinned upstream SUSFS patch stack for a supported GKI target.
+
+inputs:
+  android_version:
+    description: Android generation, for example android14
+    required: true
+  kernel_version:
+    description: Kernel version, for example 6.1
+    required: true
+  sub_level:
+    description: GKI sublevel
+    required: true
+  os_patch_level:
+    description: Android security patch level (YYYY-MM)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Apply pinned SUSFS
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        TARGET="${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+        SUBLEVEL="${{ inputs.sub_level }}"
+        OS_PATCH_LEVEL="${{ inputs.os_patch_level }}"
+        case "$TARGET" in
+          android12-5.10) SUSFS_COMMIT="8c6faae6881c2eb8174842b9b00a9e85b9cfa47f"; EXPECTED_SUSFS_VERSION="v2.2.0" ;;
+          android13-5.10) SUSFS_COMMIT="8de71447d9d53fdb317d890181f13d35ef738a49"; EXPECTED_SUSFS_VERSION="v2.2.0" ;;
+          android13-5.15) SUSFS_COMMIT="9f0415bb2c8fc581e93d384e09aba088bd36733a"; EXPECTED_SUSFS_VERSION="v2.2.0" ;;
+          android14-5.15) SUSFS_COMMIT="841412d1f3eae63605979099714e6cf3866457de"; EXPECTED_SUSFS_VERSION="v2.2.0" ;;
+          android14-6.1)  SUSFS_COMMIT="24743360ea08d98f6ad72b856851abed8de5854f"; EXPECTED_SUSFS_VERSION="v2.3.0" ;;
+          android15-6.6)  SUSFS_COMMIT="a652208b593826f39534d6a881818a7ae0c4dc5d"; EXPECTED_SUSFS_VERSION="v2.2.0" ;;
+          android16-6.12) SUSFS_COMMIT="5857c396b50da6b70a4e04b2994012ab961457a2"; EXPECTED_SUSFS_VERSION="v2.2.0" ;;
+          *)
+            echo "::error::Pinned SUSFS stack does not support $TARGET"
+            exit 1
+            ;;
+        esac
+
+        KERNEL_COMMON="${KERNEL_ROOT:?KERNEL_ROOT is not set}/common"
+        SUSFS_DIR="$RUNNER_TEMP/susfs4ksu-$TARGET"
+        rm -rf "$SUSFS_DIR"
+
+        git init --quiet "$SUSFS_DIR"
+        git -C "$SUSFS_DIR" remote add origin https://gitlab.com/simonpunk/susfs4ksu.git
+        git -C "$SUSFS_DIR" fetch --depth=1 --no-tags origin "$SUSFS_COMMIT"
+        git -C "$SUSFS_DIR" checkout --detach FETCH_HEAD
+        git -C "$SUSFS_DIR" config user.name "github-actions[bot]"
+        git -C "$SUSFS_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        ACTUAL_SUSFS_COMMIT=$(git -C "$SUSFS_DIR" rev-parse HEAD)
+        [[ "$ACTUAL_SUSFS_COMMIT" == "$SUSFS_COMMIT" ]] || {
+          echo "::error::SUSFS pin mismatch: expected $SUSFS_COMMIT, got $ACTUAL_SUSFS_COMMIT"
+          exit 1
+        }
+        SUSFS_HEADER="$SUSFS_DIR/kernel_patches/include/linux/susfs.h"
+        test -s "$SUSFS_HEADER"
+        ACTUAL_SUSFS_VERSION=$(sed -n 's/^#define SUSFS_VERSION[[:space:]]*"\([^"]*\)".*/\1/p' "$SUSFS_HEADER" | head -1)
+        [[ "$ACTUAL_SUSFS_VERSION" == "$EXPECTED_SUSFS_VERSION" ]] || {
+          echo "::error::SUSFS version mismatch: expected $EXPECTED_SUSFS_VERSION, got ${ACTUAL_SUSFS_VERSION:-<empty>} at $ACTUAL_SUSFS_COMMIT"
+          exit 1
+        }
+        echo "::notice::Pinned SUSFS $ACTUAL_SUSFS_VERSION at $ACTUAL_SUSFS_COMMIT for $TARGET"
+
+        # Android 14 / 6.1 uses the upstream 2026-09-12 SUSFS v2.3.0 head.
+        # Its post-exec callback requires the separately verified ReSukiSU
+        # UAPI4 adapter with an explicit session decision and success guard.
+
+        # Later defconfig reconciliation needs the exact pinned patch tree.
+        # Keep it until the ephemeral runner is torn down and publish its path
+        # for subsequent workflow steps instead of guessing a temp directory.
+        echo "SUSFS_FOLDER=$SUSFS_DIR" >> "$GITHUB_ENV"
+        echo "SUSFS_EXPECTED_VERSION=$EXPECTED_SUSFS_VERSION" >> "$GITHUB_ENV"
+        echo "SUSFS_PINNED_COMMIT=$SUSFS_COMMIT" >> "$GITHUB_ENV"
+
+        cd "$KERNEL_COMMON"
+        cp "$SUSFS_DIR/kernel_patches/fs/"* fs/
+        cp "$SUSFS_DIR/kernel_patches/include/linux/"* include/linux/
+        PATCH_FILE="$SUSFS_DIR/kernel_patches/50_add_susfs_in_gki-$TARGET.patch"
+        test -s "$PATCH_FILE"
+
+        prepare_fdinfo() {
+          sed -i '/^[[:space:]]*\/\*$/,/^[[:space:]]*u32 mask = mark->mask & IN_ALL_EVENTS;$/d' fs/notify/fdinfo.c
+          perl -i -pe 's/\bmask,\s*mark->ignored_mask/inotify_mark_user_mask(mark)/g' fs/notify/fdinfo.c
+          perl -i -pe 's/ignored_mask:%x/ignored_mask:0/g' fs/notify/fdinfo.c
+        }
+
+        restore_fdinfo() {
+          perl -i -pe 's/^(\s+if \(inode\) \{)/$1\n\t\t\/\*\n\t\t * IN_ALL_EVENTS represents all of the mask bits\n\t\t * that we expose to userspace.  There is at\n\t\t * least one bit (FS_EVENT_ON_CHILD) which is\n\t\t * used only internally to the kernel.\n\t\t *\/\n\t\tu32 mask = mark->mask \& IN_ALL_EVENTS;/m' fs/notify/fdinfo.c
+          perl -i -pe 's/\binotify_mark_user_mask\(mark\)/mask, mark->ignored_mask/g' fs/notify/fdinfo.c
+          perl -i -pe 's/ignored_mask:0/ignored_mask:%x/g' fs/notify/fdinfo.c
+        }
+
+        case "$TARGET" in
+          android12-5.10)
+            if [ "$SUBLEVEL" -le 43 ]; then
+              perl -i -pe 's/(int|size_t)\s+this_len\s*=\s*min_t\s*\(\s*\1\s*,/size_t this_len = min_t(size_t,/' fs/proc/base.c
+            fi
+            if [ "$SUBLEVEL" -le 117 ]; then
+              prepare_fdinfo
+            fi
+            ;;
+          android13-5.10)
+            if [ "$SUBLEVEL" -le 107 ]; then
+              prepare_fdinfo
+            fi
+            ;;
+          android13-5.15)
+            if [ "$SUBLEVEL" -le 41 ]; then
+              sed -i '/^#include <linux\/shmem_fs.h>$/a #include <linux/mnt_idmapping.h>' fs/namespace.c
+              sed -i '/^#include <linux\/compat.h>$/a #include <linux/mnt_idmapping.h>' fs/open.c
+              prepare_fdinfo
+            fi
+            if [ "$SUBLEVEL" -ge 197 ]; then
+              sed -i '/^#include <trace\/hooks\/blk.h>$/d' fs/namespace.c
+              sed -i '/^#include <trace\/hooks\/mm.h>$/d' fs/proc/task_mmu.c
+            fi
+            ;;
+          android14-6.1)
+            if [ "$SUBLEVEL" -le 25 ]; then
+              sed -i '/^#include <trace\/events\/oom.h>$/a #include <trace/hooks/sched.h>' fs/proc/base.c
+            fi
+            if [ "$SUBLEVEL" -le 141 ]; then
+              sed -i '/^#include <linux\/cpufreq_times.h>$/a #include <linux/dma-buf.h>' fs/proc/base.c
+            fi
+            if [ "$SUBLEVEL" -ge 157 ]; then
+              sed -i '/^#include <trace\/hooks\/blk.h>$/d' fs/namespace.c
+            fi
+            ;;
+          android15-6.6)
+            if [ "$SUBLEVEL" -le 30 ]; then
+              sed -i '/smap_gather_stats(vma, &mss, last_vma_end);/a\last_vma_end = vma->vm_end;' fs/proc/task_mmu.c
+              perl -0777 -i -pe '
+                @l = split /\n/;
+                for ($i = $#l; $i >= 0; $i--) {
+                    if ($l[$i] =~ /last_vma_end = vma->vm_end;/) {
+                        $l[$i] = "\t\t\t\t" . $l[$i];
+                        splice(@l, $i + 1, 0, "\t\t\t\t}");
+                        for ($j = $i; $j >= 0; $j--) {
+                            if ($l[$j] =~ /if\s*\(vma->vm_end > last_vma_end\)/) {
+                                $l[$j] =~ s/\)\s*$/) {/;
+                                last;
+                            }
+                        }
+                        last;
+                    }
+                }
+                $_ = join "\n", @l
+              ' fs/proc/task_mmu.c
+            fi
+            if [ "$SUBLEVEL" -le 92 ]; then
+              sed -i '/^#include <linux\/cpufreq_times.h>$/a #include <linux/dma-buf.h>' fs/proc/base.c
+            fi
+            if [ "$SUBLEVEL" -le 57 ]; then
+              sed -i '/^#include <linux\/sched\/sysctl.h>$/a #include <linux/zswap.h>' mm/memory.c
+            fi
+            ;;
+          android16-6.12)
+            if [ "$SUBLEVEL" -ge 58 ]; then
+              sed -i '/^#include <linux\/dma-buf.h>$/d' fs/exec.c
+            fi
+            if [ "$SUBLEVEL" -ge 69 ]; then
+              sed -i 's/vma_data_pages/vma_pages/g' fs/proc/task_mmu.c
+            fi
+            ;;
+        esac
+
+        PATCH_FUZZ=2
+        if [[ "$TARGET" = "android14-6.1" && "${SAMSUNG_SOURCE_BASE_APPLIED:-false}" = "true" ]]; then
+          # The audited Samsung source port carries adjacent VFS/proc changes
+          # in namespace.c, open.c and proc/base.c. Its archive hash binds the
+          # LF-normalized sources, while the structural verifier below rejects
+          # any fuzz-relocated namespace block.
+          PATCH_FUZZ=3
+        fi
+        patch -p1 -F"$PATCH_FUZZ" --forward --batch --dry-run < "$PATCH_FILE"
+        patch -p1 -F"$PATCH_FUZZ" --forward --batch --no-backup-if-mismatch < "$PATCH_FILE"
+
+        if [[ "$TARGET" = "android14-6.1" && "${SAMSUNG_SOURCE_BASE_APPLIED:-false}" = "true" ]]; then
+          NAMESPACE_REPAIR="$GITHUB_WORKSPACE/android14-6.1/build-helpers/repair-s928b-dzg1-susfs-namespace.sh"
+          chmod +x "$NAMESPACE_REPAIR"
+          "$NAMESPACE_REPAIR" "$KERNEL_COMMON" "$SUSFS_COMMIT"
+
+          require_exact_susfs_marker() {
+            local file="$1"
+            local marker="$2"
+            local count
+            count=$(grep -cF "$marker" "$file" || true)
+            if [[ "$count" -ne 1 ]]; then
+              echo "::error::Expected one Samsung SUSFS marker in $file, found $count: $marker"
+              exit 1
+            fi
+          }
+          require_exact_susfs_marker fs/namespace.c '#define CL_COPY_MNT_NS BIT(25)'
+          require_exact_susfs_marker fs/namespace.c 'copy_flags |= CL_COPY_MNT_NS;'
+          require_exact_susfs_marker fs/namei.c 'extern struct filename *susfs_open_redirect_spoof_do_sys_openat(struct inode *inode);'
+          require_exact_susfs_marker fs/proc/base.c '#include <linux/susfs_def.h>'
+          if find fs -type f -name '*.rej' -print -quit | grep -q .; then
+            echo "::error::Samsung SUSFS integration left patch rejects"
+            find fs -type f -name '*.rej' -print
+            exit 1
+          fi
+          echo "Verified Samsung ZZHL SUSFS VFS/proc compatibility hunks"
+        fi
+
+        case "$TARGET" in
+          android12-5.10)
+            if [ "$SUBLEVEL" -le 43 ]; then
+              sed -i 's/^size_t this_len = min_t(size_t, count, PAGE_SIZE);$/int this_len = min_t(int, count, PAGE_SIZE);/' fs/proc/base.c
+            fi
+            if [ "$SUBLEVEL" -le 117 ]; then
+              restore_fdinfo
+            fi
+            ;;
+          android13-5.10)
+            if [ "$SUBLEVEL" -le 107 ]; then
+              restore_fdinfo
+            fi
+            ;;
+          android13-5.15)
+            if [ "$SUBLEVEL" -le 41 ]; then
+              sed -i '/#include <linux\/mnt_idmapping.h>$/d' fs/namespace.c
+              sed -i '/#include <linux\/mnt_idmapping.h>$/d' fs/open.c
+              restore_fdinfo
+              sed -i 's|i_uid_into_mnt(i_user_ns(&fi->inode), &fi->inode).val|i_uid_into_mnt(\&init_user_ns, \&fi->inode).val|g' fs/susfs.c
+              sed -i 's|i_uid_into_mnt(i_user_ns(inode), inode).val|i_uid_into_mnt(\&init_user_ns, inode).val|g' fs/susfs.c
+            fi
+            if [ "$SUBLEVEL" -ge 197 ]; then
+              sed -i '/^#include "internal.h"$/a #include <trace/hooks/blk.h>' fs/namespace.c
+            fi
+            if [ "$SUBLEVEL" -ge 206 ]; then
+              sed -i '/^#include <linux\/pkeys.h>$/a #include <trace/hooks/mm.h>' fs/proc/task_mmu.c
+            fi
+            ;;
+          android14-6.1)
+            if [ "$SUBLEVEL" -le 25 ]; then
+              sed -i '/^#include <trace\/hooks\/sched.h>$/d' fs/proc/base.c
+            fi
+            if [ "$SUBLEVEL" -le 141 ]; then
+              sed -i '/^#include <linux\/dma-buf.h>$/d' fs/proc/base.c
+            fi
+            if [ "$SUBLEVEL" -ge 157 ]; then
+              sed -i '/^#include "internal.h"$/a #include <trace/hooks/blk.h>' fs/namespace.c
+            fi
+            ;;
+          android15-6.6)
+            if [ "$SUBLEVEL" -le 92 ]; then
+              sed -i '/^#include <linux\/dma-buf.h>$/d' fs/proc/base.c
+            fi
+            if [ "$SUBLEVEL" -le 57 ]; then
+              sed -i '/^#include <linux\/zswap.h>$/d' mm/memory.c
+            fi
+            ;;
+          android16-6.12)
+            if [ "$SUBLEVEL" -ge 58 ]; then
+              sed -i '/^#include /a #include <linux/dma-buf.h>' fs/exec.c
+            fi
+            if [ "$SUBLEVEL" -ge 69 ]; then
+              sed -i 's/vma_pages/vma_data_pages/g' fs/proc/task_mmu.c
+            fi
+            ;;
+        esac
+
+        SHOW_PAD_FIX=0
+        if [[ "$TARGET" = "android12-5.10" && "$SUBLEVEL" -le 209 ]]; then
+          SHOW_PAD_FIX=1
+        elif [[ "$TARGET" = "android13-5.10" && "$SUBLEVEL" -le 209 && "$OS_PATCH_LEVEL" != "2024-05" ]]; then
+          SHOW_PAD_FIX=1
+        elif [[ "$TARGET" = "android13-5.15" && "$SUBLEVEL" -le 148 && "$OS_PATCH_LEVEL" != "2024-05" ]]; then
+          SHOW_PAD_FIX=1
+        elif [[ "$TARGET" = "android14-5.15" && "$SUBLEVEL" -le 148 && "$OS_PATCH_LEVEL" != "2024-05" ]]; then
+          SHOW_PAD_FIX=1
+        elif [[ "$TARGET" = "android14-6.1" && "$SUBLEVEL" -le 75 && "$OS_PATCH_LEVEL" != "2024-05" ]]; then
+          SHOW_PAD_FIX=1
+        fi
+        if [ "$SHOW_PAD_FIX" = "1" ]; then
+          sed -i 's/goto show_pad;/return 0;/' fs/proc/task_mmu.c
+        fi

@@ -1,0 +1,76 @@
+name: Prepare ReSukiSU 35146 Exact-C harness fix
+
+on:
+  push:
+    branches:
+      - agent/resukisu-35146-susfs-230
+    paths:
+      - '.github/workflows/fix-resukisu-35146-harness.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/resukisu-35146-susfs-230
+          fetch-depth: 0
+      - name: Validate and create fixed harness blob
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          FILE=android14-6.1/build-helpers/su-session-35137/harness.c.in
+          PAYLOAD="$RUNNER_TEMP/resukisu-35146-harness-blob.json"
+          python3 - "$FILE" "$PAYLOAD" <<'PY'
+          from pathlib import Path
+          import json
+          import sys
+
+          path = Path(sys.argv[1])
+          payload = Path(sys.argv[2])
+          text = path.read_text(encoding="utf-8")
+
+          old_struct = "struct cred { int uid,suid,euid,fsuid,gid,sgid,egid,fsgid,securebits; struct user_struct *user; kernel_cap_t cap_effective,cap_permitted,cap_bset; } live_cred, pending_cred, root_cred;"
+          new_struct = "struct cred { int uid,suid,euid,fsuid,gid,sgid,egid,fsgid,securebits; struct user_struct *user; kernel_cap_t cap_effective,cap_permitted,cap_bset,cap_inheritable,cap_ambient; } live_cred, pending_cred, root_cred;"
+          old_setup = "reset(); root_profile.uid=2000; root_profile.flags=FLAG_KSU_NO_NEW_PRIVS;"
+          new_setup = "reset(); root_profile.uid=2000; root_profile.flags=FLAG_KSU_NO_NEW_PRIVS; root_profile.capabilities.effective=0x5a;"
+          old_check = "CHECK(run_exec(su_path,AT_FDCWD,0,1)==0); CHECK(live_cred.uid==2000 && installs==1 && escape_disabled);"
+          new_check = old_check + " CHECK(live_cred.cap_inheritable==0x5a && live_cred.cap_ambient==0x5a);"
+
+          for marker in (old_struct, old_setup, old_check):
+              if text.count(marker) != 1:
+                  raise SystemExit(f"expected exactly one old harness marker, found {text.count(marker)}: {marker}")
+
+          updated = text.replace(old_struct, new_struct, 1)
+          updated = updated.replace(old_setup, new_setup, 1)
+          updated = updated.replace(old_check, new_check, 1)
+
+          for marker in (new_struct, new_setup, new_check):
+              if updated.count(marker) != 1:
+                  raise SystemExit(f"missing unique 35146 harness marker: {marker}")
+
+          path.write_text(updated, encoding="utf-8", newline="\n")
+          payload.write_text(json.dumps({"content": updated, "encoding": "utf-8"}), encoding="utf-8")
+          PY
+
+          git diff --check -- "$FILE"
+          git diff -- "$FILE"
+
+          RESPONSE=$(curl --silent --show-error --fail-with-body \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/blobs" \
+            --data-binary "@$PAYLOAD")
+          BLOB_SHA=$(jq -r '.sha // empty' <<<"$RESPONSE")
+          [[ "$BLOB_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::GitHub did not return a valid harness blob SHA"
+            echo "$RESPONSE"
+            exit 1
+          }
+          echo "HARNESS_BLOB_SHA=$BLOB_SHA"

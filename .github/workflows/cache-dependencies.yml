@@ -9,17 +9,319 @@ on:
 jobs:
   download-dependencies:
     name: Cache Dependencies
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
     - name: Clone AnyKernel3
       run: |
-        git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth=1
+        set -euo pipefail
+        ANYKERNEL3_PIN=e1e9dce98430c5c6f231f7094a8c7f4ecaf50948
+        git init AnyKernel3
+        git -C AnyKernel3 remote add origin https://github.com/WildKernels/AnyKernel3.git
+        git -C AnyKernel3 fetch --depth=1 origin "$ANYKERNEL3_PIN"
+        git -C AnyKernel3 checkout --detach FETCH_HEAD
+        test "$(git -C AnyKernel3 rev-parse HEAD)" = "$ANYKERNEL3_PIN"
+        echo "Pinned WildKernels/AnyKernel3 to $ANYKERNEL3_PIN"
         rm -rf AnyKernel3/.git
 
-    - name: Clone Kernel Patches
-      run: git clone https://github.com/WildKernels/kernel_patches.git --depth=1
+    - name: Harden S928B kernel command line
+      run: |
+        AK3="AnyKernel3/anykernel.sh"
+        [ -f "$AK3" ] || { echo "::error::AnyKernel3 anykernel.sh not found"; exit 1; }
+
+        python3 - "$AK3" <<'PY'
+        from pathlib import Path
+        import sys
+
+        path = Path(sys.argv[1])
+        text = path.read_text()
+        marker = '# S928B daily: remove forced CPUFreq governor policy'
+
+        properties = {
+            'do.devicecheck=0\n': 'do.devicecheck=1\n',
+            'device.name1=\n': 'device.name1=e3q\n',
+            'device.name2=\n': 'device.name2=e3qxeea\n',
+        }
+        for original, replacement in properties.items():
+            if original not in text and replacement not in text:
+                raise SystemExit(f'AnyKernel property not found: {original}')
+            text = text.replace(original, replacement, 1)
+
+        if marker not in text:
+            needle = 'split_boot\n'
+            if needle not in text:
+                raise SystemExit('split_boot call not found in anykernel.sh')
+
+            patch = '''split_boot
+
+        # Remove invalid standalone values left by older S928B AnyKernel ZIPs.
+        # Android GKI bootconfig lives in vendor_boot and is deliberately not
+        # modified here; this helper only edits the boot image kernel cmdline.
+        s928b_pda=$(getprop ro.build.PDA 2>/dev/null || true)
+        s928b_csc=$(getprop ro.csc.sales_code 2>/dev/null || true)
+        [ -z "$s928b_pda" ] || [ "$s928b_pda" = "S928BXXU6ZZI4" ] || \
+            abort "  -> Requires firmware S928BXXU6ZZI4; found $s928b_pda"
+        [ -z "$s928b_csc" ] || [ "$s928b_csc" = "EUX" ] || \
+            abort "  -> Requires EUX CSC; found $s928b_csc"
+        ui_print "  -> Firmware target S928BXXU6ZZI4 (EUX)"
+
+        sanitize_s928b_cmdline() {
+            local cmdfile header_mode=0
+            if [ -f "$SPLITIMG/cmdline.txt" ]; then
+                cmdfile="$SPLITIMG/cmdline.txt"
+            else
+                cmdfile="$AKHOME/cmdtmp"
+                header_mode=1
+                grep "^cmdline=" "$SPLITIMG/header" | cut -d= -f2- > "$cmdfile"
+            fi
+            awk '{
+                output = ""
+                for (i = 1; i <= NF; i++) {
+                    if ($i != "off" && $i != "4M")
+                        output = output (output ? " " : "") $i
+                }
+                print output
+            }' "$cmdfile" > "$cmdfile.clean"
+            mv -f "$cmdfile.clean" "$cmdfile"
+            if [ "$header_mode" = 1 ]; then
+                sed -i "s|^cmdline=.*|cmdline=$(cat "$cmdfile")|" "$SPLITIMG/header"
+                rm -f "$cmdfile"
+            fi
+        }
+        sanitize_s928b_cmdline
+        ui_print "  -> Removed invalid standalone off/4M cmdline tokens"
+
+        # S928B daily: remove forced CPUFreq governor policy.
+        # This artifact is e3q-specific; do not rely on recovery properties.
+        # Samsung PowerHAL/WALT selects the runtime governor after boot.
+        patch_cmdline "cpufreq.default_governor=" ""
+        ui_print "  -> Removed forced CPUFreq default governor"
+
+        # Do not preserve Samsung's explicit KPTI disable. With
+        # CONFIG_UNMAP_KERNEL_AT_EL0=y the kernel selects its safe default.
+        patch_cmdline "kpti=" ""
+        ui_print "  -> Removed explicit kpti=0 override"
+
+        # KASAN is compiled out; retain cmdline cleanup for older boot images.
+        # kasan_flag_enabled is supplied by an inactive ABI-compatible stub.
+        patch_cmdline "kasan=" "kasan=off"
+        ui_print "  -> KASAN compiled out; inactive GKI KMI stub retained"
+        '''
+            text = text.replace(needle, patch, 1)
+            path.write_text(text)
+
+        kasan_cmdline = 'patch_cmdline "kasan=" "kasan=off"'
+        if kasan_cmdline not in text:
+            needle = '''ui_print "  -> Removed forced CPUFreq default governor"
+        '''
+            if needle not in text:
+                raise SystemExit('S928B governor block not found while adding KASAN cmdline cleanup')
+            replacement = '''ui_print "  -> Removed forced CPUFreq default governor"
+
+        # KASAN is compiled out; retain cmdline cleanup for older boot images.
+        # kasan_flag_enabled is supplied by an inactive ABI-compatible stub.
+        patch_cmdline "kasan=" "kasan=off"
+        ui_print "  -> KASAN compiled out; inactive GKI KMI stub retained"
+        '''
+            text = text.replace(needle, replacement, 1)
+            path.write_text(text)
+
+        kpti_cmdline = 'patch_cmdline "kpti=" ""'
+        if kpti_cmdline not in text:
+            needle = '''ui_print "  -> Removed forced CPUFreq default governor"
+        '''
+            if needle not in text:
+                raise SystemExit('S928B governor block not found while adding KPTI hardening')
+            replacement = '''ui_print "  -> Removed forced CPUFreq default governor"
+
+        # Do not preserve Samsung's explicit KPTI disable. With
+        # CONFIG_UNMAP_KERNEL_AT_EL0=y the kernel selects its safe default.
+        patch_cmdline "kpti=" ""
+        ui_print "  -> Removed explicit kpti=0 override"
+        '''
+            text = text.replace(needle, replacement, 1)
+            path.write_text(text)
+
+        required = [
+            marker,
+            'do.devicecheck=1',
+            'device.name1=e3q',
+            'device.name2=e3qxeea',
+            'Requires firmware S928BXXU6ZZI4',
+            'Requires EUX CSC',
+            'sanitize_s928b_cmdline',
+            'patch_cmdline "cpufreq.default_governor=" ""',
+            'patch_cmdline "kpti=" ""',
+            'patch_cmdline "kasan=" "kasan=off"',
+            'Samsung PowerHAL/WALT selects the runtime governor',
+        ]
+        missing = [item for item in required if item not in path.read_text()]
+        if missing:
+            raise SystemExit(f'AnyKernel governor patch verification failed: {missing}')
+        PY
+
+        grep -n -A7 -B2 'S928B daily' "$AK3"
+
+    - name: Keep SUSFS logging switchable but default off
+      run: |
+        AK3="AnyKernel3/anykernel.sh"
+        [ -f "$AK3" ] || { echo "::error::AnyKernel3 anykernel.sh not found"; exit 1; }
+
+        python3 - "$AK3" <<'PY'
+        from pathlib import Path
+        import sys
+
+        path = Path(sys.argv[1])
+        text = path.read_text()
+        marker = '# S928B daily: keep SUSFS logging runtime-switchable'
+
+        if marker not in text:
+            needle = '''ui_print "  -> Removed forced CPUFreq default governor"
+        '''
+            if needle not in text:
+                raise SystemExit('S928B governor block not found in anykernel.sh')
+
+            replacement = '''ui_print "  -> Removed forced CPUFreq default governor"
+
+        # S928B daily: keep SUSFS logging runtime-switchable and use exactly one
+        # persistent controller. If SUSFS4KSU is installed it owns runtime
+        # policy; ReSukiSU's native JSON stays disabled so it cannot overwrite
+        # the module later in boot. Mount hiding stays off for Droidspaces.
+        if [ -d /data/adb ]; then
+            SUSFS_CFG=/data/adb/susfs4ksu/config.sh
+            NATIVE_SUSFS_JSON=/data/adb/ksu/.susfs.json
+            ZEROMOUNT_CFG=/data/adb/zeromount/config.toml
+            EXTERNAL_SUSFS=0
+
+            set_shell_value() {
+                cfg_file="$1"
+                cfg_key="$2"
+                cfg_value="$3"
+                if grep -q "^${cfg_key}=" "$cfg_file"; then
+                    sed -i "s/^${cfg_key}=.*/${cfg_key}=${cfg_value}/" "$cfg_file"
+                else
+                    echo "${cfg_key}=${cfg_value}" >> "$cfg_file"
+                fi
+            }
+            set_json_bool() {
+                cfg_file="$1"
+                cfg_key="$2"
+                cfg_value="$3"
+                dq='"'
+                sed -i "s/${dq}${cfg_key}${dq}[[:space:]]*:[[:space:]]*[a-z]*/${dq}${cfg_key}${dq}: ${cfg_value}/" "$cfg_file"
+            }
+            set_toml_bool() {
+                cfg_file="$1"
+                cfg_key="$2"
+                cfg_value="$3"
+                if grep -q "^${cfg_key}[[:space:]]*=" "$cfg_file"; then
+                    sed -i "s/^${cfg_key}[[:space:]]*=.*/${cfg_key} = ${cfg_value}/" "$cfg_file"
+                fi
+            }
+
+            if [ -d /data/adb/modules/susfs4ksu ] || [ -f "$SUSFS_CFG" ]; then
+                EXTERNAL_SUSFS=1
+                mkdir -p /data/adb/susfs4ksu
+                touch "$SUSFS_CFG"
+                # Persistent module policy: susfs_log=0, avc_log_spoofing=1.
+                set_shell_value "$SUSFS_CFG" susfs_log 0
+                set_shell_value "$SUSFS_CFG" avc_log_spoofing 1
+                set_shell_value "$SUSFS_CFG" hide_sus_mnts_for_all_or_non_su_procs 0
+            fi
+
+            if [ -f "$NATIVE_SUSFS_JSON" ]; then
+                if [ "$EXTERNAL_SUSFS" = 1 ]; then
+                    set_json_bool "$NATIVE_SUSFS_JSON" enabled false
+                else
+                    set_json_bool "$NATIVE_SUSFS_JSON" enabled true
+                fi
+                set_json_bool "$NATIVE_SUSFS_JSON" logging false
+                set_json_bool "$NATIVE_SUSFS_JSON" avc_log_spoofing true
+                set_json_bool "$NATIVE_SUSFS_JSON" hide_sus_mnts_for_non_su_procs false
+            fi
+
+            if [ -f "$ZEROMOUNT_CFG" ]; then
+                set_toml_bool "$ZEROMOUNT_CFG" avc_log_spoofing true
+                set_toml_bool "$ZEROMOUNT_CFG" hide_sus_mounts false
+                set_toml_bool "$ZEROMOUNT_CFG" hide_sus_mounts_off_after_boot false
+            fi
+
+            if [ -x /data/adb/ksu/bin/ksu_susfs ]; then
+                /data/adb/ksu/bin/ksu_susfs enable_log 0 >/dev/null 2>&1 || true
+            fi
+            ui_print "  -> SUSFS logging off; AVC spoofing on; Droidspaces mount hiding off"
+        fi
+        '''
+            text = text.replace(needle, replacement, 1)
+            path.write_text(text)
+
+        required = [
+            marker,
+            'set_shell_value "$SUSFS_CFG" susfs_log 0',
+            'set_shell_value "$SUSFS_CFG" avc_log_spoofing 1',
+            'hide_sus_mnts_for_all_or_non_su_procs 0',
+            'set_json_bool "$NATIVE_SUSFS_JSON" enabled false',
+            'set_json_bool "$NATIVE_SUSFS_JSON" avc_log_spoofing true',
+            'set_toml_bool "$ZEROMOUNT_CFG" hide_sus_mounts false',
+            'ksu_susfs enable_log 0',
+            'AVC spoofing on; Droidspaces mount hiding off',
+        ]
+        missing = [item for item in required if item not in path.read_text()]
+        if missing:
+            raise SystemExit(f'SUSFS logging default-off patch verification failed: {missing}')
+        PY
+
+        grep -n -A24 -B3 'keep SUSFS logging runtime-switchable' "$AK3"
+
+    - name: Audit S928B AnyKernel policy
+      run: |
+        set -euo pipefail
+        if grep -R -n -I 'performance' AnyKernel3; then
+          echo "::error::AnyKernel3 still contains a forced performance policy"
+          exit 1
+        fi
+        if grep -R -n -I 'cpufreq.default_governor=performance' AnyKernel3; then
+          echo "::error::AnyKernel3 still contains the forbidden CPUFreq assignment"
+          exit 1
+        fi
+        if grep -R -n -I 'patch_cmdline "kpti=" "kpti=0"' AnyKernel3; then
+          echo "::error::AnyKernel3 still forces kpti=0"
+          exit 1
+        fi
+        if grep -R -n -I -E 'patch_cmdline "[^"]+" "(off|4M)"' AnyKernel3; then
+          echo "::error::AnyKernel3 contains a bare replacement value that corrupts cmdline"
+          exit 1
+        fi
+        grep -R -n -I 'patch_cmdline "cpufreq.default_governor=" ""' AnyKernel3
+        grep -R -n -I 'patch_cmdline "kpti=" ""' AnyKernel3
+        grep -R -n -I 'patch_cmdline "kasan=" "kasan=off"' AnyKernel3
+        grep -qxF 'do.devicecheck=1' AnyKernel3/anykernel.sh
+        grep -qxF 'device.name1=e3q' AnyKernel3/anykernel.sh
+        grep -qxF 'device.name2=e3qxeea' AnyKernel3/anykernel.sh
+        grep -qF 'Requires firmware S928BXXU6ZZI4' AnyKernel3/anykernel.sh
+        grep -qF 'Requires EUX CSC' AnyKernel3/anykernel.sh
+        python3 android14-6.1/build-helpers/audit-s928b-anykernel-cmdline.py AnyKernel3
+        grep -R -n -I 'susfs_log=0' AnyKernel3
+        grep -R -n -I 'avc_log_spoofing 1' AnyKernel3
+        grep -R -n -I 'hide_sus_mnts_for_all_or_non_su_procs 0' AnyKernel3
+        grep -R -n -I 'set_json_bool "$NATIVE_SUSFS_JSON" enabled false' AnyKernel3
+        grep -R -n -I 'set_toml_bool "$ZEROMOUNT_CFG" hide_sus_mounts false' AnyKernel3
+
+    - name: Clone pinned Kernel Patches
+      run: |
+        KERNEL_PATCHES_PIN=ef2fff764581f30d066ad77bf9a311cbbec82da9
+        git init kernel_patches
+        git -C kernel_patches remote add origin https://github.com/WildKernels/kernel_patches.git
+        git -C kernel_patches fetch --depth=1 origin "$KERNEL_PATCHES_PIN"
+        git -C kernel_patches checkout --detach FETCH_HEAD
+        test "$(git -C kernel_patches rev-parse HEAD)" = "$KERNEL_PATCHES_PIN"
+        echo "Pinned WildKernels/kernel_patches to $KERNEL_PATCHES_PIN"
 
     - name: Clone SukiSU Patch
       run: git clone https://github.com/ShirkNeko/SukiSU_patch.git --depth=1

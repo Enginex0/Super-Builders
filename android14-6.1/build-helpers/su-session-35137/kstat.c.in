@@ -1,0 +1,131 @@
+/* Actual redirect registration and upstream lookup functions; kernel APIs mocked. */
+typedef __SIZE_TYPE__ size_t;
+typedef _Bool bool;
+typedef unsigned int dev_t;
+#define true 1
+#define false 0
+#define NULL ((void *)0)
+#define __user
+#define CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT 1
+#define __ARCH_WANT_COMPAT_STAT64 1
+#define SUSFS_MAX_LEN_PATHNAME 256
+#define FUSE_SUPER_MAGIC 0x65735546
+#define AS_FLAGS_SUS_KSTAT 4
+#define GFP_KERNEL 0
+#define ENOENT 2
+#define EIO 5
+#define ENOMEM 12
+#define EFAULT 14
+#define EINVAL 22
+#define SUSFS_LOGI(...) ((void)0)
+struct hlist_node { int unused; };
+struct kstatfs { long f_type, f_bsize, f_blocks, f_bfree, f_frsize; };
+@@LAYOUT@@
+struct super_block { unsigned long s_magic; dev_t s_dev; };
+struct address_space { unsigned long flags; };
+struct inode { unsigned long i_ino; struct super_block *i_sb; struct address_space *i_mapping; };
+struct fuse_inode { struct inode inode; };
+struct dentry { struct inode *inode; int kind; };
+struct vfsmount { struct dentry *mnt_root; int kind; };
+struct path { struct dentry *dentry; struct vfsmount *mnt; };
+static struct super_block sb[2];
+static struct address_space mapping[2];
+static struct fuse_inode inodes[2];
+static struct dentry dentries[2];
+static struct vfsmount mounts[2];
+static struct st_susfs_sus_kstat_hlist allocations[4], *published[4];
+static int live[4], allocation_calls, fail_alloc, nr_published, lock_depth, order_bad;
+static int real_error, virtual_error, statfs_calls, fail_statfs, path_refs, mount_refs, dentry_refs, copy_fault;
+static int susfs_mutex_lock_sus_kstat, checks;
+static void *memcpy(void *dst, const void *src, size_t n) { char *d=dst; const char *s=src; while(n--) *d++=*s++; return dst; }
+static void *memset(void *dst, int c, size_t n) { char *d=dst; while(n--) *d++=c; return dst; }
+static void *memchr(const void *p,int c,size_t n) { const unsigned char *s=p; while(n--) {if(*s==(unsigned char)c)return (void *)s;s++;} return NULL; }
+static long strscpy(char *dst,const char *src,size_t n) { size_t i=0;for(;i+1<n && src[i];i++)dst[i]=src[i];dst[i]=0;return i; }
+static int copy_from_user(void *d,const void *s,size_t n) { if(copy_fault)return 1;memcpy(d,s,n);return 0; }
+static int copy_to_user(void *d,const void *s,size_t n) { memcpy(d,s,n);return 0; }
+static void *kzalloc(size_t n,int flags) { int i=allocation_calls++;if(allocation_calls==fail_alloc)return NULL;live[i]=1;memset(&allocations[i],0,n);return &allocations[i]; }
+static void kfree(void *p) { if(p) {int i=(struct st_susfs_sus_kstat_hlist *)p-allocations;if(!live[i])order_bad=1;live[i]=0;} }
+static int kern_path(const char *name,int flags,struct path *path) { int i=name[0]=='V';int err=i?virtual_error:real_error;if(err)return err;path->dentry=&dentries[i];path->mnt=&mounts[i];path_refs++;return 0; }
+static void path_put(struct path *p) { path_refs--; }
+static struct inode *d_backing_inode(struct dentry *d) { return d->inode; }
+static struct fuse_inode *get_fuse_inode(struct inode *i) { return (struct fuse_inode *)i; }
+static struct vfsmount *real_mount(struct vfsmount *m) { return m; }
+static int susfs_get_non_sus_mnt_id_from_mnt(struct vfsmount *m) { return 71+m->kind; }
+static struct vfsmount *susfs_get_non_sus_vfsmnt_from_vfsmnt(struct vfsmount *m) { mount_refs++;dentry_refs++;return m; }
+static int statfs_by_dentry(struct dentry *d,struct kstatfs *buf) { if(++statfs_calls==fail_statfs)return -EIO;*buf=(struct kstatfs){10+d->kind,4096,900+d->kind,300+d->kind,4096};return 0; }
+static void dput(struct dentry *d) { dentry_refs--; }
+static void mntput(struct vfsmount *m) { mount_refs--; }
+static unsigned long huge_decode_dev(unsigned long dev) { return dev+1000; }
+static void mutex_lock(int *m) { lock_depth++; }
+static void mutex_unlock(int *m) { lock_depth--; }
+static void set_bit(int bit,unsigned long *flags) { if(!lock_depth)order_bad=1;*flags|=1UL<<bit; }
+static void publish(struct hlist_node *node) { if(!lock_depth)order_bad=1;published[nr_published++]=(struct st_susfs_sus_kstat_hlist *)node; }
+#define hash_add_rcu(table,node,key) publish(node)
+#define hash_for_each_possible_rcu(table,entry,node,key) \
+ for(int loop=0;loop<nr_published;loop++) if((entry=published[loop])->target_ino==(key))
+static void rcu_read_lock(void) {}
+static void rcu_read_unlock(void) {}
+@@REGISTRATION@@
+@@LOOKUP@@
+static struct st_susfs_sus_kstat_redirect request;
+static void reset(void) {
+ memset(allocations,0,sizeof(allocations));memset(live,0,sizeof(live));memset(mapping,0,sizeof(mapping));
+ allocation_calls=fail_alloc=nr_published=lock_depth=order_bad=0;
+ real_error=virtual_error=statfs_calls=fail_statfs=path_refs=mount_refs=dentry_refs=copy_fault=0;
+ for(int i=0;i<2;i++){sb[i]=(struct super_block){1,40+i};inodes[i].inode=(struct inode){200+i,&sb[i],&mapping[i]};dentries[i]=(struct dentry){&inodes[i].inode,i};mounts[i]=(struct vfsmount){&dentries[i],i};}
+ memset(&request,0,sizeof(request));strscpy(request.real_pathname,"Real",sizeof(request.real_pathname));strscpy(request.virtual_pathname,"Virtual",sizeof(request.virtual_pathname));
+ request.spoofed_ino=501;request.spoofed_dev=55;request.spoofed_nlink=3;request.spoofed_size=12345;
+ request.spoofed_atime_tv_sec=11;request.spoofed_atime_tv_nsec=12;request.spoofed_mtime_tv_sec=13;request.spoofed_mtime_tv_nsec=14;
+ request.spoofed_ctime_tv_sec=15;request.spoofed_ctime_tv_nsec=16;request.spoofed_blocks=99;request.spoofed_blksize=4096;
+}
+static void invoke(void) { void *user=&request;susfs_add_sus_kstat_redirect(&user); }
+static int live_count(void) { return live[0]+live[1]+live[2]+live[3]; }
+static bool balanced(void) { return !path_refs && !mount_refs && !dentry_refs && !lock_depth && !order_bad; }
+#define CHECK(x) do { checks++;if(!(x))return __LINE__; } while(0)
+static int success(bool fuse,bool missing,bool same) {
+ reset();if(fuse)sb[0].s_magic=sb[1].s_magic=FUSE_SUPER_MAGIC;
+ if(missing)virtual_error=-ENOENT;
+ if(same){dentries[1].inode=dentries[0].inode;}
+ invoke();CHECK(request.err==0);CHECK(balanced());CHECK(nr_published==(missing||same?1:2));CHECK(live_count()==nr_published);
+ for(int i=0;i<nr_published;i++) {
+  struct st_susfs_sus_kstat_hlist *e=published[i];
+  CHECK(e->target_ino==200+i);CHECK(e->info.target_ino==200+i);CHECK(e->target_dev==40+i);CHECK(e->is_fuse==fuse);
+  CHECK(e->spoofed_mnt_id==(missing?71:72));CHECK(e->spoofed_kstatfs.f_blocks==(missing?900:901));
+  CHECK(e->info.spoofed_ino==501 && e->info.spoofed_dev==1055 && e->info.spoofed_nlink==3 && e->info.spoofed_size==12345);
+  CHECK(e->info.spoofed_atime_tv_sec==11 && e->info.spoofed_atime_tv_nsec==12 && e->info.spoofed_mtime_tv_sec==13 && e->info.spoofed_mtime_tv_nsec==14);
+  CHECK(e->info.spoofed_ctime_tv_sec==15 && e->info.spoofed_ctime_tv_nsec==16 && e->info.spoofed_blocks==99 && e->info.spoofed_blksize==4096);
+  CHECK(e->info.flags==0xfff); /* All twelve fields, including independent ctime bit 8. */
+  struct kstatfs result={0};bool is_fuse=fuse;
+  CHECK(!susfs_sus_kstat_spoof_vfs_statfs(&inodes[i].inode,&result,&is_fuse));CHECK(result.f_blocks==(missing?900:901));
+  int id=0;unsigned long ino=200+i;susfs_sus_kstat_spoof_proc_fd_seq_show(&id,&ino,40+i);CHECK(id==(missing?71:72));
+ }
+ CHECK(mapping[0].flags & (1UL<<AS_FLAGS_SUS_KSTAT));
+ return 0;
+}
+int test_main(void) {
+ checks=0;
+ for(int fuse=0;fuse<2;fuse++)for(int mode=0;mode<3;mode++){int line=success(fuse,mode==1,mode==2);if(line)return line;}
+ for(int fault=0;fault<11;fault++) {
+  reset();int expected;
+  switch(fault){
+   case 0:fail_alloc=1;expected=-ENOMEM;break;
+   case 1:fail_alloc=2;expected=-ENOMEM;break;
+   case 2:real_error=-ENOENT;expected=-ENOENT;break;
+   case 3:virtual_error=-EIO;expected=-EIO;break;
+   case 4:fail_statfs=1;expected=-EIO;break;
+   case 5:fail_statfs=2;expected=-EIO;break;
+   case 6:inodes[0].inode.i_mapping=NULL;expected=-EINVAL;break;
+   case 7:inodes[1].inode.i_mapping=NULL;expected=-EINVAL;break;
+   case 8:copy_fault=1;expected=-EFAULT;break;
+   case 9:request.real_pathname[0]=0;expected=-EINVAL;break;
+   default:memset(request.virtual_pathname,'x',sizeof(request.virtual_pathname));expected=-EINVAL;
+  }
+  invoke();CHECK(request.err==expected);CHECK(!nr_published);CHECK(!live_count());CHECK(balanced());CHECK(!mapping[0].flags && !mapping[1].flags);
+ }
+ return 0;
+}
+int test_count(void) { return checks; }
+#ifndef WASM_TEST
+int printf(const char *,...);
+int main(void) { int line=test_main();printf("KSTAT exact-C checks: %d; failure line: %d\n",checks,line);return line?1:0; }
+#endif

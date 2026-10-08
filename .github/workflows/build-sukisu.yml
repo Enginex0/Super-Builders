@@ -25,6 +25,9 @@ on:
       add_zeromount:
         type: boolean
         default: true
+      add_droidspaces:
+        type: boolean
+        default: true
       add_zram:
         type: boolean
         default: true
@@ -35,6 +38,9 @@ on:
         type: boolean
         default: true
       add_kpm:
+        type: boolean
+        default: false
+      susfs_open_redirect:
         type: boolean
         default: false
       add_ptrace_fix:
@@ -58,6 +64,18 @@ jobs:
     env:
       KSU_VARIANT: SukiSU
       KSU_DIR: KernelSU
+      # SukiSU communicates its manager version as an integer.  Keep the
+      # artifact label concise, but give the kernel a semantic full version:
+      # the manager uses it for its minimum-version compatibility check.
+      SUKISU_VERSION_CODE: "40856"
+      SUKISU_VERSION_LABEL: "40856"
+      SUKISU_VERSION_FULL: "v4.1.3-40856"
+      SUSFS_REPOSITORY: https://gitlab.com/simonpunk/susfs4ksu.git
+      SUSFS_COMMIT: 8199bb6534174117ad907f726231484872ac345a
+      # Pinned SukiSU-specific reconciliation for the upstream v2.2.0 patch.
+      # The checksum prevents executing a changed remote script.
+      SUKISU_SUSFS_PORT_COMMIT: c849c753ea801269c3243a441beef9e6b4f89e20
+      SUKISU_SUSFS_PORT_SHA256: d5052739443be6367b86ced7f0b7baad2b16fc76e46fb33c6565a00b50b60278
 
     steps:
     - name: Checkout Repository
@@ -156,6 +174,7 @@ jobs:
     - name: Extract Sublevel
       env:
         INPUT_SUB_LEVEL: ${{ inputs.sub_level }}
+        SUSFS_OPEN_REDIRECT_TEST: ${{ inputs.susfs_open_redirect }}
       run: |
         SUBLEVEL="$INPUT_SUB_LEVEL"
         if [[ -f "$KERNEL_ROOT/common/Makefile" ]]; then
@@ -163,7 +182,8 @@ jobs:
           [[ -n "$EXTRACTED" ]] && SUBLEVEL="$EXTRACTED"
         fi
 
-        ARTIFACT_BASE="${KERNEL_VER}.${SUBLEVEL}-${ANDROID_VER}-${OS_PATCH}-SukiSU"
+        ARTIFACT_BASE="${KERNEL_VER}.${SUBLEVEL}-${ANDROID_VER}-${OS_PATCH}-SukiSU-${SUKISU_VERSION_LABEL}"
+        [[ "$SUSFS_OPEN_REDIRECT_TEST" == "true" ]] && ARTIFACT_BASE+="-OpenRedirect-Test"
         {
           echo "SUBLEVEL=$SUBLEVEL"
           echo "ARTIFACT_BASE=$ARTIFACT_BASE"
@@ -186,6 +206,37 @@ jobs:
           echo "Pinned SukiSU to $(git rev-parse --short=7 HEAD)"
         fi
 
+        # The upstream build derives its numeric manager protocol version from
+        # the current remote main-branch commit count.  Pin the numeric
+        # manager protocol value and a semantic full version independently.
+        python3 - "$KERNEL_ROOT/$KSU_DIR/kernel/Kbuild" "$SUKISU_VERSION_CODE" "$SUKISU_VERSION_FULL" <<'PY'
+        from pathlib import Path
+        import re
+        import sys
+
+        path = Path(sys.argv[1])
+        version_code, version_label = sys.argv[2:]
+        text = path.read_text()
+        text, code_count = re.subn(
+            r'^KSU_VERSION\s*:=.*$',
+            f'KSU_VERSION := {version_code}',
+            text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        text, label_count = re.subn(
+            r'^KSU_VERSION_FULL\s*:=.*$',
+            f'KSU_VERSION_FULL := {version_label}',
+            text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if code_count != 1 or label_count != 1:
+            raise SystemExit(f'Could not pin SukiSU version in {path}')
+        path.write_text(text)
+        PY
+        echo "Pinned SukiSU version: ${SUKISU_VERSION_LABEL}"
+
         cd "$KERNEL_ROOT/common"
 
         SUPERCALLS="drivers/kernelsu/supercalls.c"
@@ -202,37 +253,84 @@ jobs:
         FIX_SCRIPT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-old-kernel-compat.sh"
         [ -f "$FIX_SCRIPT" ] && bash "$FIX_SCRIPT" "$KERNEL_ROOT/common" "$SUBLEVEL" || true
 
-    - name: Apply Upstream SUSFS Patch
+    - name: Apply SUSFS v2.2.0 to SukiSU
       if: inputs.add_susfs
+      run: |
+        set -euo pipefail
+        SUSFS_DIR="$RUNNER_TEMP/susfs4ksu"
+        PORT_SCRIPT="$RUNNER_TEMP/apply-sukisu-susfs-v2.2.sh"
+        ARTIFACTS_DIR="$RUNNER_TEMP/sukisu-susfs-artifacts"
+
+        git init "$SUSFS_DIR"
+        git -C "$SUSFS_DIR" remote add origin "$SUSFS_REPOSITORY"
+        git -C "$SUSFS_DIR" fetch --depth=1 origin "$SUSFS_COMMIT"
+        git -C "$SUSFS_DIR" checkout --detach FETCH_HEAD
+        test "$(git -C "$SUSFS_DIR" rev-parse HEAD)" = "$SUSFS_COMMIT"
+        grep -qx '#define SUSFS_VERSION "v2.2.0"' "$SUSFS_DIR/kernel_patches/include/linux/susfs.h"
+
+        curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-all-errors \
+          "https://raw.githubusercontent.com/Bouteillepleine/SukiSu_Ultra_Oneplus-/${SUKISU_SUSFS_PORT_COMMIT}/configs/apply_susfs_patches.sh" \
+          -o "$PORT_SCRIPT"
+        echo "${SUKISU_SUSFS_PORT_SHA256}  ${PORT_SCRIPT}" | sha256sum --check --status
+        chmod +x "$PORT_SCRIPT"
+        mkdir -p "$ARTIFACTS_DIR"
+
+        KSU_ENABLE_PATCH="$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+        python3 "$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/filter-sukisu-susfs-init-hunks.py" \
+          "$KSU_ENABLE_PATCH"
+
+        export KERNEL_PLATFORM_FOLDER="$KERNEL_ROOT"
+        export COMMON_KERNEL_FOLDER="$KERNEL_ROOT/common"
+        export SUSFS_FOLDER="$SUSFS_DIR"
+        export ARTIFACTS_FOLDER="$ARTIFACTS_DIR"
+        export OP_MODEL="SukiSU"
+        export OP_OS_VERSION="$SUKISU_VERSION_LABEL"
+        export KSU_FOLDER="$KERNEL_ROOT/$KSU_DIR"
+        export ANDROID_VER_LOCAL="$ANDROID_VER"
+        export KERNEL_VER_LOCAL="$KERNEL_VER"
+        export KSUVER="$SUKISU_VERSION_CODE"
+        bash "$PORT_SCRIPT"
+
+        grep -qx '#define SUSFS_VERSION "v2.2.0"' "$KERNEL_ROOT/common/include/linux/susfs.h"
+        grep -qx 'config KSU_SUSFS' "$KERNEL_ROOT/$KSU_DIR/kernel/Kconfig"
+        test -f "$KERNEL_ROOT/common/fs/susfs.c"
+
+    - name: Apply Enhanced SUSFS v2.2 features
+      if: inputs.add_susfs
+      run: |
+        set -euo pipefail
+        HELPER="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/apply-enhanced-susfs-v2.2.sh"
+        PATCH="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/51_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
+        chmod +x "$HELPER"
+        "$HELPER" "$KERNEL_ROOT/common" "$KERNEL_ROOT/$KSU_DIR" "$PATCH"
+
+    - name: Apply ZeroMount to SUSFS v2.2.0
+      if: inputs.add_susfs && inputs.add_zeromount
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
-        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
+        set -euo pipefail
+        PATCH="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
+        FILTERED_PATCH="$RUNNER_TEMP/zeromount-${ANDROID_VER}-${KERNEL_VER}-without-task-mmu.patch"
+        # SUSFS v2.2 already modifies show_map_vma().  The legacy ZeroMount
+        # metadata hook overlaps that code and caused an Oops while apexd read
+        # /proc/*/maps on SM-S928B.  Keep the remaining ZeroMount facilities.
+        awk '
+          /^--- a\/fs\/proc\/task_mmu\.c/ { skip = 1; next }
+          skip && /^--- a\// { skip = 0 }
+          !skip { print }
+        ' "$PATCH" > "$FILTERED_PATCH"
+        patch -p1 -F3 --no-backup-if-mismatch < "$FILTERED_PATCH"
 
-    - name: Apply Enhanced SUSFS Patch
-      if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/51_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
+    - name: Apply Droidspaces 6_7_8 patches
+      if: inputs.add_droidspaces
+      uses: ./.github/actions/droidspaces-678
+      with:
+        android_version: ${{ inputs.android_version }}
+        kernel_version: ${{ inputs.kernel_version }}
 
-    - name: Apply KSU Safety Patch
-      if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}
-      run: |
-        PATCH="$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/70_ksu_safety-sukisu-${KERNEL_VER}.patch"
-        [ -s "$PATCH" ] && patch -p1 --no-backup-if-mismatch < "$PATCH" || echo "No 70_ patch needed"
-
-    - name: Apply ZeroMount Patch
-      if: inputs.add_zeromount && inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/SukiSU-Ultra/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
-
-    - name: Fix SUSFS Compatibility
-      if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        FIX="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-susfs-compat.sh"
-        [ -f "$FIX" ] && bash "$FIX" . "$SUBLEVEL" "$ANDROID_VER" "$KERNEL_VER" "$KERNEL_PATCHES" || true
+    - name: Warn about SUSFS mount hiding
+      if: inputs.add_susfs && inputs.add_droidspaces
+      run: echo "::warning::Droidspaces requires SUSFS Hide SUS Mounts for All Processes to remain disabled at runtime."
 
     - name: Apply Kernel Patches
       if: inputs.add_ptrace_fix || inputs.add_perf_patches
@@ -280,15 +378,26 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       env:
         ADD_SUSFS: ${{ inputs.add_susfs }}
+        ADD_ZEROMOUNT: ${{ inputs.add_zeromount }}
+        ADD_DROIDSPACES: ${{ inputs.add_droidspaces }}
         ADD_OVERLAYFS: ${{ inputs.add_overlayfs_support }}
         ADD_ZRAM: ${{ inputs.add_zram }}
         ADD_KPM: ${{ inputs.add_kpm }}
+        SUSFS_OPEN_REDIRECT_TEST: ${{ inputs.susfs_open_redirect }}
       run: |
         FRAGMENT="$GITHUB_WORKSPACE/$VERSION_DIR/defconfig.fragment"
         HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
 
+        if [[ "$SUSFS_OPEN_REDIRECT_TEST" == "true" ]]; then
+          [[ "$ADD_SUSFS" == "true" ]] || { echo "::error::Open Redirect requires SUSFS"; exit 1; }
+          [[ "$ANDROID_VER" == "android14" && "$KERNEL_VER" == "6.1" ]] || { echo "::error::Open Redirect test is validated only for android14-6.1"; exit 1; }
+          sed -i 's/^CONFIG_KSU_SUSFS_OPEN_REDIRECT=.*/CONFIG_KSU_SUSFS_OPEN_REDIRECT=y/' "$FRAGMENT"
+        fi
+
         ASSEMBLE_FLAGS=""
         [[ "$ADD_SUSFS" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --susfs"
+        [[ "$ADD_ZEROMOUNT" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --zeromount"
+        [[ "$ADD_DROIDSPACES" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --droidspaces"
         [[ "$ADD_OVERLAYFS" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --overlayfs"
         [[ "$ADD_ZRAM" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --zram"
         [[ "$ADD_KPM" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --kpm"
@@ -304,6 +413,30 @@ jobs:
 
         if ! grep -q '^CONFIG_KSU_SUSFS=' "$DEFCONFIG_FRAGMENT" 2>/dev/null; then
           sed -i '/^CONFIG_KSU_SUSFS_/d' "$DEFCONFIG_FRAGMENT" "$DEFCONFIG"
+        fi
+
+        if [[ "$ADD_SUSFS" == "true" ]]; then
+          grep -qx 'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y' "$DEFCONFIG_FRAGMENT"
+
+          for symbol in \
+            CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT \
+            CONFIG_KSU_SUSFS_UNICODE_FILTER \
+            CONFIG_KSU_SUSFS_HIDDEN_NAME; do
+            kconfig_symbol="${symbol#CONFIG_}"
+            grep -Rqx "config ${kconfig_symbol}" common/ "$KSU_DIR/" --include='Kconfig*' 2>/dev/null || {
+              echo "::error::Required SUSFS Kconfig symbol is missing: ${symbol}"
+              exit 1
+            }
+            grep -qx "${symbol}=y" "$DEFCONFIG_FRAGMENT" || {
+              echo "::error::Required SUSFS option was not retained: ${symbol}=y"
+              exit 1
+            }
+          done
+        fi
+
+        if [[ "$SUSFS_OPEN_REDIRECT_TEST" == "true" ]]; then
+          grep -Rqx 'config KSU_SUSFS_OPEN_REDIRECT' common/ "$KSU_DIR/" --include='Kconfig*'
+          grep -qx 'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' "$DEFCONFIG_FRAGMENT"
         fi
 
         bash "$HELPERS/bypass-abi-check.sh" . "$ANDROID_VER" "$KERNEL_VER"
@@ -428,6 +561,73 @@ jobs:
           fi
         fi
 
+    - name: Verify Android 14 6.1 feature config
+      if: inputs.android_version == 'android14' && inputs.kernel_version == '6.1'
+      working-directory: ${{ env.KERNEL_ROOT }}
+      env:
+        ADD_DROIDSPACES: ${{ inputs.add_droidspaces }}
+        ADD_ZRAM: ${{ inputs.add_zram }}
+      run: |
+        CONFIG_FILE="$KERNEL_ROOT/out/${ANDROID_VER}-${KERNEL_VER}/common/.config"
+        if [ ! -f "$CONFIG_FILE" ]; then
+          CONFIG_FILE=""
+          for ROOT in "$KERNEL_ROOT/bazel-bin/common" "$KERNEL_ROOT/out/${ANDROID_VER}-${KERNEL_VER}"; do
+            [ -e "$ROOT" ] || continue
+            while IFS= read -r CANDIDATE; do
+              if grep -qx 'CONFIG_ARM64=y' "$CANDIDATE" 2>/dev/null; then
+                CONFIG_FILE="$CANDIDATE"
+                break 2
+              fi
+            done < <(find -L "$ROOT" -type f \
+              \( -name .config -o -name '*kernel*aarch64*config*' -o -name defconfig \) \
+              -print 2>/dev/null)
+          done
+        fi
+        [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ] || {
+          echo "::error::Final kernel .config was not found in legacy or Kleaf outputs"
+          find -L "$KERNEL_ROOT/bazel-bin/common" -maxdepth 3 -type f \
+            \( -name .config -o -name '*config*' \) -print 2>/dev/null | head -50 || true
+          exit 1
+        }
+
+        REQUIRED=(CONFIG_SECCOMP CONFIG_SECCOMP_FILTER)
+        if [ "$ADD_DROIDSPACES" = "true" ]; then
+          REQUIRED+=(
+            CONFIG_NAMESPACES CONFIG_UTS_NS CONFIG_IPC_NS CONFIG_PID_NS
+            CONFIG_NET_NS CONFIG_USER_NS CONFIG_CGROUPS CONFIG_CGROUP_BPF
+            CONFIG_CGROUP_PIDS CONFIG_ANDROID_BINDERFS CONFIG_SYSVIPC
+            CONFIG_POSIX_MQUEUE
+          )
+        fi
+        if [ "$ADD_ZRAM" = "true" ]; then
+          REQUIRED+=(
+            CONFIG_ZSMALLOC CONFIG_ZSMALLOC_STAT CONFIG_ZRAM
+            CONFIG_ZRAM_WRITEBACK CONFIG_ZRAM_MEMORY_TRACKING
+            CONFIG_LRU_GEN CONFIG_LRU_GEN_STATS
+          )
+        fi
+
+        MISSING=()
+        for SYMBOL in "${REQUIRED[@]}"; do
+          grep -qx "${SYMBOL}=y" "$CONFIG_FILE" || MISSING+=("$SYMBOL")
+        done
+        if (("${#MISSING[@]}" > 0)); then
+          printf '::error::Required final config options missing: %s\n' "${MISSING[*]}"
+          exit 1
+        fi
+
+        if grep -qx 'CONFIG_LOCALVERSION_AUTO=y' "$CONFIG_FILE"; then
+          echo "::error::CONFIG_LOCALVERSION_AUTO must stay disabled for stable kernelrelease metadata"
+          exit 1
+        fi
+
+        {
+          echo "## Android 14 / 6.1 config verification"
+          echo ""
+          echo "Verified ${#REQUIRED[@]} required options in \`${CONFIG_FILE#"$KERNEL_ROOT/"}\`."
+          echo "CONFIG_LOCALVERSION_AUTO is disabled."
+        } >> "$GITHUB_STEP_SUMMARY"
+
     - name: Dump Build Errors
       if: failure()
       run: |
@@ -490,10 +690,12 @@ jobs:
       env:
         ADD_SUSFS: ${{ inputs.add_susfs }}
         ADD_ZEROMOUNT: ${{ inputs.add_zeromount }}
+        ADD_DROIDSPACES: ${{ inputs.add_droidspaces }}
         ADD_ZRAM: ${{ inputs.add_zram }}
         ADD_BBG: ${{ inputs.add_bbg }}
         ADD_OVERLAYFS: ${{ inputs.add_overlayfs_support }}
         ADD_KPM: ${{ inputs.add_kpm }}
+        SUSFS_OPEN_REDIRECT_TEST: ${{ inputs.susfs_open_redirect }}
       run: |
         S() { [[ "$1" == "true" ]] && echo "Enabled" || echo "Disabled"; }
         {
@@ -505,7 +707,9 @@ jobs:
           echo "| **Android** | ${ANDROID_VER} |"
           echo "| **OS Patch Level** | ${OS_PATCH} |"
           echo "| **Enhanced SUSFS** | $(S "$ADD_SUSFS") |"
+          echo "| **SUSFS Open Redirect (Test)** | $(S "$SUSFS_OPEN_REDIRECT_TEST") |"
           echo "| **ZeroMount** | $(S "$ADD_ZEROMOUNT") |"
+          echo "| **Droidspaces 6_7_8** | $(S "$ADD_DROIDSPACES") |"
           echo "| **ZRAM (LZ4K/LZ4KD)** | $(S "$ADD_ZRAM") |"
           echo "| **LZ4 v1.10.0** | $(S "$ADD_ZRAM") |"
           echo "| **Overlayfs Support** | $(S "$ADD_OVERLAYFS") |"
