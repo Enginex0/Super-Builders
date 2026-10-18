@@ -1,0 +1,290 @@
+name: Colonel Tier - VFS Environment Shaping for SM6450
+
+# Tier 3 in the Super-Builders tiered build system:
+#   Tier 0: static amd64+arm64 toolchain (built once, cached, reused here)
+#   Tier 1: KSU-Next base kernel
+#   Tier 2: SUSFS + ZeroMount + KPM integration
+#   Tier 3: Colonel SProf - VFS environment shaping
+#
+# Compiler roles (do not invert these):
+#   clang 12 - the MAIN compiling toolchain (inner). Always on.
+#   clang 17 - the OUTER wrapper. Obfuscation over a SELECTED source set only.
+#              NOT part of the main chain. Pass-through when unused.
+#
+# This workflow:
+# 1. Builds/fetches the STATIC toolchain (tier 0) - self-contained, cache-backed
+# 2. Clones the kernel-msm-1 with the colonel/sprof source
+# 3. Asserts the inner compiler really is clang 12
+# 4. Builds the kernel with the static toolchain (inner)
+# 5. Recompiles the SELECTED source set through the clang 17 wrapper (outer)
+# 6. PROVES the obfuscation actually ran (DEBUG=1 leaves the .ll artifacts)
+# 7. Uploads the colonel kernel image
+
+on:
+  push:
+    branches: [ main, 015stray91, colonel ]
+  workflow_dispatch:
+    inputs:
+      kernel_branch:
+        description: "kernel-msm-1 branch (needs the full tree for fs/koto)"
+        default: "android-14-release-u1tgns34.42-86-2-32"
+        type: string
+      koto_branch:
+        description: "Kotoamatsukami branch (LLVM 17 plugin)"
+        default: "llvm-17-plugins"
+        type: string
+      obf_passes:
+        description: "Kotoamatsukami obfuscation passes"
+        default: "flatten,bogus-control-flow,substitution,indirect-call"
+        type: string
+      force_toolchain_rebuild:
+        description: "Ignore the toolchain cache and rebuild it from source"
+        type: boolean
+        default: false
+  # Callable from main.yml - all inputs are read via inputs.*, never
+  # github.event.inputs.* (which is empty when a workflow is called).
+  workflow_call:
+    inputs:
+      kernel_branch:
+        type: string
+        required: false
+        default: "android-14-release-u1tgns34.42-86-2-32"
+      koto_branch:
+        type: string
+        required: false
+        default: "llvm-17-plugins"
+      obf_passes:
+        type: string
+        required: false
+        default: "flatten,bogus-control-flow,substitution,indirect-call"
+      force_toolchain_rebuild:
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  # The selected source set the OUTER wrapper runs over. Never the whole kernel:
+  # applied globally it is both unmanageably slow and pointless.
+  OBF_SOURCES: "fs/susfs.c fs/zeromount.c fs/koto/koto_core.c fs/koto/hidden-objects.c fs/koto/Virtualspace.c"
+
+jobs:
+  toolchain:
+    name: "Static Toolchain (amd64 + arm64)"
+    uses: ./.github/workflows/nuki-toolchain-static.yml
+    with:
+      clang_rev: "r416183b"
+      force_rebuild: ${{ inputs.force_toolchain_rebuild }}
+
+  colonel:
+    name: "Colonel - VFS Environment Shaping"
+    needs: [toolchain]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Super-Builders (for colonel tier + patches)
+        uses: actions/checkout@v4
+        with:
+          path: super-builders
+          fetch-depth: 1
+
+      - name: Download the static toolchain
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.toolchain.outputs.amd64_toolchain }}
+
+      - name: Unpack and verify the toolchain
+        run: |
+          set -euo pipefail
+          tar --use-compress-program='zstd -d -T0' -xf nuki-toolchain-amd64.tar.zst
+          sha256sum -c nuki-toolchain-amd64.tar.zst.sha256
+          cat toolchain/MANIFEST.txt
+          for d in toolchain/clang/bin toolchain/host/bin toolchain/musl/bin; do
+            [ -d "$d" ] && echo "$PWD/$d" >> "$GITHUB_PATH"
+          done
+          echo "TOOLCHAIN_ROOT=$PWD/toolchain" >> "$GITHUB_ENV"
+
+      # FAULT 1 GUARD - the inner compiler must really be clang 12.
+      # CLANG_REV=r416183b is only a label; nothing pinned the fetched binary.
+      - name: Assert the inner compiler is clang 12 (main toolchain)
+        run: |
+          set -euo pipefail
+          CC="$TOOLCHAIN_ROOT/clang/bin/clang"
+          [ -x "$CC" ] || { echo "FAIL: toolchain clang missing"; exit 1; }
+          VER="$("$CC" --version | head -1)"
+          echo "inner compiler: $VER"
+          echo "$VER" | grep -qE '\b12\.' \
+            || { echo "FAIL: inner compiler is NOT clang 12 - this is the main toolchain"; exit 1; }
+          CROSS="$TOOLCHAIN_ROOT/musl/bin/aarch64-linux-musl-gcc"
+          ldd "$CROSS" 2>&1 | grep -q "not a dynamic executable" \
+            || { echo "FAIL: cross gcc is not static"; ldd "$CROSS"; exit 1; }
+          echo "OK: inner clang is 12 and the cross gcc is static"
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev cpio kmod python3 \
+            lz4 liblz4-tool libncurses-dev rsync zip curl wget make device-tree-compiler \
+            llvm-17 clang-17 lld-17 cmake ninja-build git-lfs
+
+      - name: Pull pre-built Kotoamatsukami LLVM 17 plugin
+        run: |
+          BRANCH="${{ inputs.koto_branch }}"
+          [ -z "$BRANCH" ] && BRANCH="llvm-17-plugins"
+          echo "Cloning Kotoamatsukami @ $BRANCH (pre-built pull)"
+          git clone --depth=1 -b "$BRANCH" https://github.com/015stray91/Kotoamatsukami.git kotoamatsukami || \
+            git clone --depth=1 https://github.com/015stray91/Kotoamatsukami.git kotoamatsukami
+          SO=""
+          for c in kotoamatsukami/bin/build/Kotoamatsukami.so kotoamatsukami/build/Kotoamatsukami.so; do
+            [ -f "$c" ] && SO="$c" && break
+          done
+          if [ -n "$SO" ]; then
+            sudo install -m 0755 "$SO" /usr/local/lib/Kotoamatsukami.so
+            echo "plugin installed to /usr/local/lib/Kotoamatsukami.so"
+            file /usr/local/lib/Kotoamatsukami.so
+          else
+            echo "WARNING: pre-built .so missing, falling back to local build"
+            cd kotoamatsukami
+            mkdir -p build && cd build
+            LLVM_DIR=/usr/lib/llvm-17/lib/cmake/llvm
+            [ -d "$LLVM_DIR" ] || LLVM_DIR=/usr/lib/cmake/llvm-17
+            cmake -G Ninja -DLLVM_DIR="$LLVM_DIR" -DCMAKE_BUILD_TYPE=Release .. 2>&1 | tail -5
+            ninja -j"$(nproc)" 2>&1 | tail -5
+            find . -name 'Kotoamatsukami.so' -exec sudo install -m 0755 {} /usr/local/lib/ \;
+          fi
+          test -f /usr/local/lib/Kotoamatsukami.so || { echo "FAIL: plugin unavailable"; exit 1; }
+
+      - name: Clone kernel-msm-1
+        run: |
+          BRANCH="${{ inputs.kernel_branch }}"
+          [ -z "$BRANCH" ] && BRANCH="android-14-release-u1tgns34.42-86-2-32"
+          echo "Cloning kernel-msm-1 @ $BRANCH"
+          git clone --depth=1 -b "$BRANCH" https://github.com/015stray91/kernel-msm-1.git kernel-source
+
+      # The fs/koto tree must be present for the colonel tier to exist at all.
+      # If the branch was reset and the full tree not yet re-pointed, this catches it.
+      - name: Verify Colonel Source Present
+        run: |
+          set -euo pipefail
+          echo "=== Colonel (SProf) source files ==="
+          ls -la kernel-source/fs/koto/colonel/ 2>/dev/null || true
+          MISSING=0
+          for f in sprof_types.h sprof_core.h sprof_eud.c sprof_proc.c sprof_env.c \
+                   sprof_profile.c sprof_vfs.c sprof_main.c Makefile; do
+            if [ -f "kernel-source/fs/koto/colonel/$f" ]; then
+              echo "  PASS $f"
+            else
+              echo "  FAIL $f MISSING"; MISSING=$((MISSING+1))
+            fi
+          done
+          if [ "$MISSING" -gt 0 ]; then
+            echo ""
+            echo "Kernel branch does not carry fs/koto/colonel/."
+            echo "Re-point the kernel branch at the full tree (commit 094a4446e73c)."
+            exit 1
+          fi
+
+      - name: Install Static-Link Clang 17 Wrapper
+        run: |
+          set -euo pipefail
+          cp super-builders/colonel/toolchain/build_static.sh /usr/local/bin/colonel-cc
+          chmod +x /usr/local/bin/colonel-cc
+          cp super-builders/colonel/toolchain/clang_wrapper_static.sh /usr/local/bin/colonel-wrapper
+          chmod +x /usr/local/bin/colonel-wrapper
+          export CLANG17=/usr/bin/clang-17
+          export KOTO_SO=/usr/local/lib/Kotoamatsukami.so
+          echo "wrapper test (pass-through build via clang 17):"
+          echo 'int main(){return 0;}' > /tmp/test.c
+          /usr/local/bin/colonel-wrapper /tmp/test.c -c -o /tmp/test.o 2>&1 | tail -3
+          ls -la /tmp/test.o
+
+      # INNER: the whole kernel, compiled by the main toolchain (clang 12).
+      - name: Build Colonel Kernel (inner - clang 12 static toolchain)
+        run: |
+          set -euo pipefail
+          cd kernel-source
+          export ARCH=arm64 SUBARCH=arm64
+          export CC="$TOOLCHAIN_ROOT/clang/bin/clang"
+          export LD="$TOOLCHAIN_ROOT/clang/bin/ld.lld"
+          export AR="$TOOLCHAIN_ROOT/clang/bin/llvm-ar"
+          export NM="$TOOLCHAIN_ROOT/clang/bin/llvm-nm"
+          export OBJCOPY="$TOOLCHAIN_ROOT/clang/bin/llvm-objcopy"
+          export OBJDUMP="$TOOLCHAIN_ROOT/clang/bin/llvm-objdump"
+          export STRIP="$TOOLCHAIN_ROOT/clang/bin/llvm-strip"
+          export CROSS_COMPILE="$TOOLCHAIN_ROOT/host/bin/aarch64-linux-gnu-"
+          export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu-
+          echo "inner: $("$CC" --version | head -1)"
+          if [ -f nuki-colonel.config ]; then
+            cp nuki-colonel.config out/.config
+            make O=out olddefconfig
+          fi
+          make O=out Image.lz4 modules -j"$(nproc)" 2>&1 | tail -20
+
+      # OUTER: the selected source set only, recompiled through the clang 17 wrapper.
+      # DEBUG=1 makes the wrapper KEEP the .ll artifacts - that is our proof it ran.
+      - name: Obfuscate the selected source set (outer - clang 17 wrapper)
+        run: |
+          set -euo pipefail
+          cd kernel-source
+          export ARCH=arm64 SUBARCH=arm64
+          export CROSS_COMPILE="$TOOLCHAIN_ROOT/host/bin/aarch64-linux-gnu-"
+          export LLVM=1 LLVM_IAS=1 CLANG_TRIPLE=aarch64-linux-gnu-
+          export CLANG17=/usr/bin/clang-17
+          export KOTO_SO=/usr/local/lib/Kotoamatsukami.so
+          export DEBUG=1                      # keep the .ll artifacts as proof
+          export OBF_PASSES="${{ inputs.obf_passes }}"
+
+          TOUCHED=0
+          for f in $OBF_SOURCES; do
+            [ -f "$f" ] || { echo "  skip (absent): $f"; continue; }
+            obj="${f%.c}.o"
+            out_obj="out/${obj}"
+            echo "  -> obfuscating $f"
+            rm -f "$out_obj"
+            # route THIS file through the colonel wrapper
+            make O=out CC=/usr/local/bin/colonel-cc "$obj" 2>&1 | tail -3
+            TOUCHED=$((TOUCHED+1))
+          done
+          if [ "$TOUCHED" -eq 0 ]; then
+            echo "FAIL: no selected source files were present to obfuscate -"
+            echo "      the kernel branch is missing fs/koto. Re-point the branch."
+            exit 1
+          fi
+          echo "obfuscated $TOUCHED source file(s)"
+
+      # FAULT 2 GUARD - prove the wrapper actually executed.
+      - name: Prove obfuscation ran
+        run: |
+          set -euo pipefail
+          cd kernel-source
+          # DEBUG=1 should have left <file>.ll and <file>.obfuscated.ll behind
+          N=$(find . -name '*.obfuscated.ll' | wc -l)
+          echo "obfuscated IR artifacts found: $N"
+          find . -name '*.obfuscated.ll' | head -10
+          if [ "$N" -eq 0 ]; then
+            echo "FAIL: the clang 17 wrapper never ran - no obfuscated IR produced."
+            echo "      OBFUSCATE=1 was set but nothing was routed through colonel-cc."
+            exit 1
+          fi
+          echo "OK: the outer wrapper demonstrably executed"
+
+      - name: Verify KMI Preservation
+        run: |
+          echo "=== KMI Symbol Table (post-obfuscation) ==="
+          nm kernel-source/out/vmlinux 2>/dev/null | grep -E "sprof_|colonel" | head -10 || echo "no colonel symbols (expected if not enabled)"
+          echo ""
+          echo "=== Module sizes ==="
+          ls -la kernel-source/out/*.ko 2>/dev/null | head -10
+
+      - name: Upload Colonel Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: colonel-kernel-image
+          path: |
+            kernel-source/out/arch/arm64/boot/Image.lz4
+            kernel-source/out/arch/arm64/boot/Image
+            kernel-source/out/*.ko
+          if-no-files-found: warn

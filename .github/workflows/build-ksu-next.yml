@@ -1,523 +1,295 @@
-name: Build KernelSU-Next
-
-permissions:
-  contents: write
-  actions: write
+name: KSU-Next + NetHunter Compile
 
 on:
   workflow_call:
     inputs:
-      android_version:
-        type: string
-        required: true
-      kernel_version:
-        type: string
-        required: true
-      sub_level:
-        type: string
-        required: true
-      os_patch_level:
-        type: string
-        required: true
-      add_susfs:
-        type: boolean
-        default: true
-      add_zeromount:
-        type: boolean
-        default: true
-      add_zram:
-        type: boolean
-        default: true
-      add_bbg:
-        type: boolean
-        default: false
-      add_overlayfs_support:
-        type: boolean
-        default: true
-      add_kpm:
-        type: boolean
-        default: false
-      add_ptrace_fix:
-        type: boolean
-        default: true
-      add_perf_patches:
-        type: boolean
-        default: true
-      sukisu_commit:
-        type: string
-        default: ""
       device_codename:
+        required: true
         type: string
-        default: ""
+      kernel_branch:
+        required: true
+        type: string
+
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
 
 jobs:
   build:
-    name: "KernelSU-Next ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      KSU_VARIANT: KernelSU-Next
-      KSU_DIR: KernelSU-Next
+    name: "KSU-Next + NH - ${{ inputs.device_codename }}"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v6
+      - name: Checkout Super-Builders (for device-profiles.json)
+        uses: actions/checkout@v4
+        with:
+          path: super-builders
+          fetch-depth: 1
 
-    - name: Free Disk Space
-      uses: endersonmenezes/free-disk-space@v3
-      with:
-        remove_android: true
-        remove_dotnet: true
-        remove_haskell: true
-        remove_tool_cache: true
-        remove_swap: true
-        remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
-        remove_packages_one_command: true
-        remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
-        rm_cmd: "rmz"
-        rmz_version: "3.1.1"
-        testing: false
-
-    - name: Install LLD
-      run: sudo apt-get install -y -qq lld binutils
-
-    - name: Download AnyKernel3 Artifact
-      uses: actions/download-artifact@v8
-      with:
-        name: anykernel3
-        path: AnyKernel3
-
-    - name: Download Git Repo Tool Artifact
-      uses: actions/download-artifact@v8
-      with:
-        name: git-repo-tool
-        path: git-repo
-
-    - name: Download Kernel Patches Artifact
-      uses: actions/download-artifact@v8
-      with:
-        name: kernel-patches
-        path: kernel_patches
-
-    - name: Download SukiSU Patch
-      if: inputs.add_zram
-      uses: actions/download-artifact@v8
-      with:
-        name: sukisu-patch
-        path: SukiSU_patch
-
-    - name: Setup Build Environment
-      env:
-        ANDROID_VER: ${{ inputs.android_version }}
-        KERNEL_VER: ${{ inputs.kernel_version }}
-        SUB_LEVEL: ${{ inputs.sub_level }}
-        OS_PATCH: ${{ inputs.os_patch_level }}
-      run: |
-        CONFIG="${ANDROID_VER}-${KERNEL_VER}-${SUB_LEVEL}"
-        KERNEL_ROOT="$GITHUB_WORKSPACE/$CONFIG"
-        VERSION_DIR="${ANDROID_VER}-${KERNEL_VER}"
-        mkdir -p "$KERNEL_ROOT"
-
-        chmod +x "$GITHUB_WORKSPACE/git-repo/repo"
-        echo "$GITHUB_WORKSPACE/git-repo" >> "$GITHUB_PATH"
-
-        {
-          echo "ANDROID_VER=$ANDROID_VER"
-          echo "KERNEL_VER=$KERNEL_VER"
-          echo "OS_PATCH=$OS_PATCH"
-          echo "CONFIG=$CONFIG"
-          echo "KERNEL_ROOT=$KERNEL_ROOT"
-          echo "VERSION_DIR=$VERSION_DIR"
-          echo "DEFCONFIG=$KERNEL_ROOT/common/arch/arm64/configs/gki_defconfig"
-          echo "DEFCONFIG_FRAGMENT=$KERNEL_ROOT/common/arch/arm64/configs/sukisu_gki.fragment"
-          echo "KERNEL_PATCHES=$GITHUB_WORKSPACE/kernel_patches"
-          echo "ANYKERNEL3=$GITHUB_WORKSPACE/AnyKernel3"
-        } >> "$GITHUB_ENV"
-
-    - name: Sync Kernel Source
-      working-directory: ${{ env.KERNEL_ROOT }}
-      env:
-        ANDROID_VER: ${{ inputs.android_version }}
-        KERNEL_VER: ${{ inputs.kernel_version }}
-        OS_PATCH: ${{ inputs.os_patch_level }}
-      run: |
-        FORMATTED_BRANCH="${ANDROID_VER}-${KERNEL_VER}-${OS_PATCH}"
-
-        repo init -u https://android.googlesource.com/kernel/manifest \
-          -b "common-${FORMATTED_BRANCH}" --depth=1
-
-        REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common "${FORMATTED_BRANCH}")
-        if grep -q deprecated <<< "$REMOTE_BRANCH"; then
-          sed -i "s/\"${FORMATTED_BRANCH}\"/\"deprecated\/${FORMATTED_BRANCH}\"/g" .repo/manifests/default.xml
-        fi
-
-        repo --trace sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
-
-    - name: Extract Sublevel
-      env:
-        INPUT_SUB_LEVEL: ${{ inputs.sub_level }}
-      run: |
-        SUBLEVEL="$INPUT_SUB_LEVEL"
-        if [[ -f "$KERNEL_ROOT/common/Makefile" ]]; then
-          EXTRACTED=$(grep '^SUBLEVEL = ' "$KERNEL_ROOT/common/Makefile" | awk '{print $3}')
-          [[ -n "$EXTRACTED" ]] && SUBLEVEL="$EXTRACTED"
-        fi
-
-        ARTIFACT_BASE="${KERNEL_VER}.${SUBLEVEL}-${ANDROID_VER}-${OS_PATCH}-KernelSU-Next"
-        {
-          echo "SUBLEVEL=$SUBLEVEL"
-          echo "ARTIFACT_BASE=$ARTIFACT_BASE"
-          echo "FILE_NAME=$ARTIFACT_BASE"
-        } >> "$GITHUB_ENV"
-
-    - name: Setup KernelSU-Next
-      working-directory: ${{ env.KERNEL_ROOT }}
-      env:
-        SUKISU_COMMIT: ${{ inputs.sukisu_commit }}
-      run: |
-        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/stable/kernel/setup.sh" | bash -s stable
-        [ -d "$KERNEL_ROOT/$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
-
-        PIN="${SUKISU_COMMIT:-$(cat "$GITHUB_WORKSPACE/$VERSION_DIR/kernelsu-next-pin.txt" 2>/dev/null || true)}"
-        if [ -n "$PIN" ]; then
-          cd "$KERNEL_ROOT/$KSU_DIR"
-          git fetch origin
-          git checkout "$PIN"
-          echo "Pinned KernelSU-Next to $(git rev-parse --short=7 HEAD)"
-        fi
-
-        cd "$KERNEL_ROOT/common"
-
-        SUPERCALLS="drivers/kernelsu/supercalls.c"
-        if [ -f "$SUPERCALLS" ]; then
-          if grep -q "vzalloc" "$SUPERCALLS" && ! head -5 "$SUPERCALLS" | grep -q "vmalloc.h"; then
-            sed -i '1a #include <linux/vmalloc.h>' "$SUPERCALLS"
+      - name: Read Device Profile
+        id: profile
+        run: |
+          PROFILE_FILE="super-builders/device-profiles.json"
+          CODENAME="${{ inputs.device_codename }}"
+          PROFILE=$(jq -r ".devices.\"${CODENAME}\" // empty" "$PROFILE_FILE")
+          if [ -z "$PROFILE" ] || [ "$PROFILE" = "null" ]; then
+            echo "ERROR: device '$CODENAME' not in device-profiles.json"
+            cat "$PROFILE_FILE"
+            exit 1
           fi
-        fi
+          echo "=== Profile for $CODENAME ==="
+          echo "$PROFILE" | jq .
 
-    - name: Fix Old Kernel Compatibility
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        FIX_SCRIPT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-old-kernel-compat.sh"
-        [ -f "$FIX_SCRIPT" ] && bash "$FIX_SCRIPT" "$KERNEL_ROOT/common" "$SUBLEVEL" || true
+          echo "kernel_source=$(echo "$PROFILE" | jq -r .kernel_source)" >> $GITHUB_OUTPUT
+          echo "kernel_branch=$(echo "$PROFILE" | jq -r .kernel_branch)" >> $GITHUB_OUTPUT
+          echo "toolchain=$(echo "$PROFILE" | jq -r .toolchain)" >> $GITHUB_OUTPUT
+          echo "defconfig=$(echo "$PROFILE" | jq -r .defconfig)" >> $GITHUB_OUTPUT
+          echo "vendor_config=$(echo "$PROFILE" | jq -r .vendor_config)" >> $GITHUB_OUTPUT
+          echo "debug_config=$(echo "$PROFILE" | jq -r .debug_config)" >> $GITHUB_OUTPUT
+          echo "nurfs_fragment=$(echo "$PROFILE" | jq -r .nurfs_fragment)" >> $GITHUB_OUTPUT
+          echo "nethunter_patches=$(echo "$PROFILE" | jq -r .nethunter_patches)" >> $GITHUB_OUTPUT
+          echo "anykernel=$(echo "$PROFILE" | jq -r .anykernel)" >> $GITHUB_OUTPUT
+          echo "add_susfs=$(echo "$PROFILE" | jq -r .add_susfs)" >> $GITHUB_OUTPUT
+          echo "add_zeromount=$(echo "$PROFILE" | jq -r .add_zeromount)" >> $GITHUB_OUTPUT
+          echo "add_zram=$(echo "$PROFILE" | jq -r .add_zram)" >> $GITHUB_OUTPUT
+          echo "add_overlayfs=$(echo "$PROFILE" | jq -r .add_overlayfs)" >> $GITHUB_OUTPUT
+          echo "add_kpm=$(echo "$PROFILE" | jq -r .add_kpm)" >> $GITHUB_OUTPUT
+          echo "add_nethunter=$(echo "$PROFILE" | jq -r .add_nethunter)" >> $GITHUB_OUTPUT
 
-    - name: Apply Upstream SUSFS Patch
-      if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches/50_add_susfs_in_gki-${ANDROID_VER}-${KERNEL_VER}.patch"
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 1024
+          swap-size-mb: 4096
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
 
-    - name: Apply Enhanced SUSFS Patch
-      if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches/51_enhanced_susfs-${ANDROID_VER}-${KERNEL_VER}.patch"
+      - name: Install System Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev cpio kmod python3 \
+            lz4 liblz4-tool libncurses-dev rsync zip curl wget make device-tree-compiler \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu lld-12 llvm-12 git-lfs patch jq
+          sudo ln -sf /usr/bin/ld.lld-12 /usr/local/bin/ld.lld
+          sudo ln -sf /usr/bin/ld.lld-12 /usr/local/bin/ld64.lld
 
-    - name: Apply KSU Safety Patch
-      if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/${{ env.KSU_DIR }}
-      run: |
-        PATCH="$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches/70_ksu_safety-kernelsu-next-${KERNEL_VER}.patch"
-        if [ -s "$PATCH" ]; then
-          patch -p1 --no-backup-if-mismatch < "$PATCH"
-        else
-          echo "No 70_ patch needed"
-        fi
+      - name: Clone Toolchain
+        run: |
+          TOOLCHAIN_URL="${{ steps.profile.outputs.toolchain }}"
+          git clone --depth=1 "$TOOLCHAIN_URL" compiler-node
+          echo "=== Clang ==="; ls compiler-node/clang/host/linux-x86/
+          echo "=== GCC ==="; ls compiler-node/gcc/linux-x86/aarch64/
 
-    - name: Apply ZeroMount Patch
-      if: inputs.add_zeromount && inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        patch -p1 -F3 --no-backup-if-mismatch < "$GITHUB_WORKSPACE/$VERSION_DIR/KernelSU-Next/patches/60_zeromount-${ANDROID_VER}-${KERNEL_VER}.patch"
-
-    - name: Fix SUSFS Compatibility
-      if: inputs.add_susfs
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        FIX="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/fix-susfs-compat.sh"
-        [ -f "$FIX" ] && bash "$FIX" . "$SUBLEVEL" "$ANDROID_VER" "$KERNEL_VER" "$KERNEL_PATCHES" || true
-
-    - name: Apply Kernel Patches
-      if: inputs.add_ptrace_fix || inputs.add_perf_patches
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      env:
-        ADD_PTRACE: ${{ inputs.add_ptrace_fix }}
-        ADD_PERF: ${{ inputs.add_perf_patches }}
-      run: |
-        bash "$GITHUB_WORKSPACE/android12-5.10/build-helpers/apply-kernel-patches.sh" . "$KERNEL_VER" "$KERNEL_PATCHES"
-
-    - name: Setup Baseband Guard
-      if: inputs.add_bbg
-      working-directory: ${{ env.KERNEL_ROOT }}
-      run: |
-        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
-        bash "$HELPERS/setup-bbg.sh" . "$DEFCONFIG" "$DEFCONFIG_FRAGMENT"
-
-    - name: Upgrade LZ4 to v1.10.0
-      if: inputs.add_zram
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      env:
-        KERNEL_VER: ${{ inputs.kernel_version }}
-      run: |
-        ZRAM_DIR="$GITHUB_WORKSPACE/zram"
-        if [ -d "$ZRAM_DIR" ]; then
-          rm -f lib/lz4/lz4_compress.c lib/lz4/lz4_decompress.c lib/lz4/lz4defs.h lib/lz4/lz4hc_compress.c
-          cp -r "$ZRAM_DIR/lz4/"* ./lib/lz4/ 2>/dev/null || true
-          cp -r "$ZRAM_DIR/include/linux/"* ./include/linux/ 2>/dev/null || true
-          [ -f "$ZRAM_DIR/$KERNEL_VER/lz4_1.10.0.patch" ] && patch -p1 -F3 < "$ZRAM_DIR/$KERNEL_VER/lz4_1.10.0.patch" || true
-        fi
-
-    - name: Add LZ4K/LZ4KD Compression
-      if: inputs.add_zram
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        SUKISU="$GITHUB_WORKSPACE/SukiSU_patch"
-        cp -r "$SUKISU/other/zram/lz4k/include/linux/"* ./include/linux/
-        cp -r "$SUKISU/other/zram/lz4k/lib/"* ./lib/
-        cp -r "$SUKISU/other/zram/lz4k/crypto/"* ./crypto/
-        cp -r "$SUKISU/other/zram/lz4k_oplus" ./lib/
-        [ -f "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch" ] && patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch" || true
-        [ -f "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch" ] && patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch" || true
-
-    - name: Configure Kernel
-      working-directory: ${{ env.KERNEL_ROOT }}
-      env:
-        ADD_SUSFS: ${{ inputs.add_susfs }}
-        ADD_OVERLAYFS: ${{ inputs.add_overlayfs_support }}
-        ADD_ZRAM: ${{ inputs.add_zram }}
-        ADD_KPM: ${{ inputs.add_kpm }}
-      run: |
-        FRAGMENT="$GITHUB_WORKSPACE/$VERSION_DIR/defconfig.fragment"
-        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
-
-        ASSEMBLE_FLAGS=""
-        [[ "$ADD_SUSFS" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --susfs"
-        [[ "$ADD_OVERLAYFS" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --overlayfs"
-        [[ "$ADD_ZRAM" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --zram"
-        [[ "$ADD_KPM" == "true" ]] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --kpm"
-        [ ! -f "$KERNEL_ROOT/build/build.sh" ] && ASSEMBLE_FLAGS="$ASSEMBLE_FLAGS --kleaf"
-
-        bash "$HELPERS/assemble-defconfig.sh" "$FRAGMENT" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG" $ASSEMBLE_FLAGS
-
-        while IFS='=' read -r cfg _; do
-          symbol="${cfg#CONFIG_}"
-          grep -Rqx "config ${symbol}" common/ ${KSU_DIR:+$KSU_DIR/} --include='Kconfig*' 2>/dev/null && continue
-          sed -i "/^${cfg}=/d" "$DEFCONFIG_FRAGMENT" "$DEFCONFIG"
-        done < <(grep '^CONFIG_KSU_' "$DEFCONFIG_FRAGMENT" 2>/dev/null || true)
-
-        if ! grep -q '^CONFIG_KSU_SUSFS=' "$DEFCONFIG_FRAGMENT" 2>/dev/null; then
-          sed -i '/^CONFIG_KSU_SUSFS_/d' "$DEFCONFIG_FRAGMENT" "$DEFCONFIG"
-        fi
-
-        bash "$HELPERS/bypass-abi-check.sh" . "$ANDROID_VER" "$KERNEL_VER"
-
-    - name: Clean Module Lists
-      if: inputs.add_zram
-      working-directory: ${{ env.KERNEL_ROOT }}
-      run: |
-        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
-        bash "$HELPERS/clean-module-list.sh" .
-
-    - name: Apply Module Check Bypass
-      working-directory: ${{ env.KERNEL_ROOT }}
-      env:
-        KERNEL_VER: ${{ inputs.kernel_version }}
-      run: |
-        if [[ "$KERNEL_VER" == "6.1" || "$KERNEL_VER" == "6.6" || "$KERNEL_VER" == "6.12" ]]; then
-          TARGET_FILE="$KERNEL_ROOT/common/kernel/module/version.c"
-        else
-          TARGET_FILE="$KERNEL_ROOT/common/kernel/module.c"
-        fi
-        sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' "$TARGET_FILE"
-
-    - name: Clean Build Flags
-      working-directory: ${{ env.KERNEL_ROOT }}
-      run: |
-        HELPERS="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers"
-        bash "$HELPERS/clean-build-flags.sh" . "$KERNEL_VER" "KernelSU-Next"
-
-    - name: Set Stock Build Identity
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      env:
-        INPUT_CODENAME: ${{ inputs.device_codename }}
-        KERNEL_VER: ${{ inputs.kernel_version }}
-      run: |
-        PROFILE_FILE="$GITHUB_WORKSPACE/device-profiles.json"
-
-        if [ ! -f "$PROFILE_FILE" ] || ! command -v jq &>/dev/null; then
-          echo "IDENTITY_STATUS=Generic" >> "$GITHUB_ENV"
-          exit 0
-        fi
-
-        if [ -n "$INPUT_CODENAME" ] && [ "$INPUT_CODENAME" != "generic" ]; then
-          PROFILE_SL=$(jq -r ".devices.${INPUT_CODENAME}.sub_level // empty" "$PROFILE_FILE")
-          if [ "$PROFILE_SL" = "$SUBLEVEL" ]; then
-            DEVICE_CODENAME="$INPUT_CODENAME"
+      - name: Clone Kernel Source
+        run: |
+          BRANCH="${{ steps.profile.outputs.kernel_branch }}"
+          if [ -z "$BRANCH" ] || [ "$BRANCH" = "null" ]; then
+            BRANCH="${{ inputs.kernel_branch }}"
           fi
-        fi
+          git clone --depth=1 -b "$BRANCH" "${{ steps.profile.outputs.kernel_source }}" kernel-source
+          # DO NOT nuke snapdragon-toolchain - it's the NUKI Colonel in-tree Clang 12
+          # (inner compiler). Only the GKI 2.0 build path needs the compiler-node
+          # replacement; NUKI Colonel uses the in-tree toolchain.
 
-        if [ -z "$DEVICE_CODENAME" ]; then
-          DEVICE_CODENAME=$(jq -r --arg kv "$KERNEL_VER" --arg sl "$SUBLEVEL" \
-            '[.devices | to_entries[] | select(.key | startswith("_") | not) | select(.value.kernel_version == $kv and .value.sub_level == $sl) | .key] | first // empty' \
-            "$PROFILE_FILE")
-        fi
+      - name: Setup Toolchain (only if NUKI Colonel flag NOT set)
+        run: |
+          cd kernel-source
+          mkdir -p tools/toolchains/snapdragon-toolchain
+          mkdir -p tools/toolchains/snapdragon-toolchain/gcc/linux-x86/aarch64
+          cp -r ../compiler-node/clang/host/linux-x86/clang-r416183b tools/toolchains/snapdragon-toolchain/
+          cp -r ../compiler-node/gcc/linux-x86/aarch64/gcc-linaro-7.5.0 tools/toolchains/snapdragon-toolchain/gcc/linux-x86/aarch64/
+          rm -rf ../compiler-node
+          echo "=== llvm-ar ==="; ls tools/toolchains/snapdragon-toolchain/clang-r416183b/bin/llvm-ar
+          echo "=== aarch64-gcc ==="; ls tools/toolchains/snapdragon-toolchain/gcc/linux-x86/aarch64/gcc-linaro-7.5.0/bin/aarch64-linux-gnu-gcc
 
-        if [ -z "$DEVICE_CODENAME" ]; then
-          echo "IDENTITY_STATUS=Generic" >> "$GITHUB_ENV"
-          exit 0
-        fi
-
-        STOCK_RELEASE=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.release" "$PROFILE_FILE")
-        STOCK_VERSION=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.version_string" "$PROFILE_FILE")
-        STOCK_BUILD_USER=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.build_user" "$PROFILE_FILE")
-        STOCK_BUILD_HOST=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.build_host" "$PROFILE_FILE")
-        STOCK_COMPILER=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.compiler_info // empty" "$PROFILE_FILE")
-
-        # 5.10–6.1: Makefile prepends KERNELVERSION, setlocalversion outputs suffix only
-        # 6.6+: Makefile delegates entirely to setlocalversion, must output full version
-        MAJOR=${KERNEL_VER%%.*}
-        MINOR=${KERNEL_VER#*.}
-        if [ "$MAJOR" -gt 6 ] || { [ "$MAJOR" -eq 6 ] && [ "$MINOR" -ge 6 ]; }; then
-          RELEASE_OUTPUT="${KERNEL_VER}.${SUBLEVEL}${STOCK_RELEASE}"
-        else
-          RELEASE_OUTPUT="$STOCK_RELEASE"
-        fi
-
-        cat > scripts/setlocalversion << 'SETLOCAL_EOF'
-        #!/bin/sh
-        printf '%s' "RELEASE_OUTPUT_PLACEHOLDER"
-        SETLOCAL_EOF
-        sed -i "s|RELEASE_OUTPUT_PLACEHOLDER|${RELEASE_OUTPUT}|g" scripts/setlocalversion
-        chmod +x scripts/setlocalversion
-
-        if [ -f "scripts/mkcompile_h" ]; then
-          sed -i "s|UTS_VERSION=.*|UTS_VERSION=\"${STOCK_VERSION}\"|" scripts/mkcompile_h
-          if grep -q "LINUX_COMPILE_BY=" scripts/mkcompile_h; then
-            sed -i "s|LINUX_COMPILE_BY=.*|LINUX_COMPILE_BY=\"${STOCK_BUILD_USER}\"|" scripts/mkcompile_h
-            sed -i "s|LINUX_COMPILE_HOST=.*|LINUX_COMPILE_HOST=\"${STOCK_BUILD_HOST}\"|" scripts/mkcompile_h
-          fi
-          if [ -n "$STOCK_COMPILER" ] && grep -q "LINUX_COMPILER=" scripts/mkcompile_h; then
-            sed -i "s|LINUX_COMPILER=.*|LINUX_COMPILER=\"${STOCK_COMPILER}\"|" scripts/mkcompile_h
-          fi
-        fi
-
-        {
-          echo "KBUILD_BUILD_USER=$STOCK_BUILD_USER"
-          echo "KBUILD_BUILD_HOST=$STOCK_BUILD_HOST"
-          echo "IDENTITY_STATUS=Applied ($DEVICE_CODENAME)"
-        } >> "$GITHUB_ENV"
-
-    - name: Build Kernel
-      working-directory: ${{ env.KERNEL_ROOT }}
-      run: |
-        BUILD_RC=0
-        LTO_MODE=thin
-        [[ "$ANDROID_VER" == android16* || "$KERNEL_VER" == "6.12" ]] && LTO_MODE=none
-        if [ -f "build/build.sh" ]; then
-          KMI_SYMBOL_LIST_STRICT_MODE=0 HOSTLD=/usr/bin/ld.lld GKI_DEFCONFIG_FRAGMENT="$DEFCONFIG_FRAGMENT" LTO=$LTO_MODE BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || BUILD_RC=$?
-        else
-          # Prebuilt clang sysroot lacks glibc 2.39 C23 symbols — link against system libc
-          if [ -f common/tools/bpf/resolve_btfids/Makefile ]; then
-            echo 'override KBUILD_HOSTLDFLAGS += --sysroot=/' >> common/tools/bpf/resolve_btfids/Makefile
-            echo 'override LDFLAGS += --sysroot=/' >> common/tools/bpf/resolve_btfids/Makefile
-          fi
-          tools/bazel build --config=fast --lto=$LTO_MODE --defconfig_fragment=//common:arch/arm64/configs/sukisu_gki.fragment //common:kernel_aarch64_dist || BUILD_RC=$?
-        fi
-        if [ "$BUILD_RC" -ne 0 ]; then
-          if find . -name "Image" -type f 2>/dev/null | grep -q .; then
-            echo "::warning::Build exited $BUILD_RC but Image exists (likely depmod failure)"
+      - name: Apply NetHunter Patches (real source patches, not config-only)
+        # NOTE: NH patches here = real .patch diffs from android12-5.10/KernelSU-Next/patches/
+        #       They modify kernel-source/ source (e.g. 50_add_susfs_in_gki-android12-5.10.patch
+        #       adds fs/susfs.c, 60_zeromount patches fs/ for ZeroMount).
+        #       Ksu-patches/*.patch inside kernel-msm-1 (the seal layer) are
+        #       DIFFERENT — those are config-only flag verifications.
+        if: ${{ steps.profile.outputs.add_nethunter == 'true' }}
+        run: |
+          cd kernel-source
+          NH_DIR="${{ steps.profile.outputs.nethunter_patches }}"
+          if [ -d "$NH_DIR" ] && [ "$(ls -A "$NH_DIR"/*.patch 2>/dev/null)" ]; then
+            echo "=== Applying NetHunter source patches from $NH_DIR ==="
+            for patch in "$NH_DIR"/*.patch; do
+              if [ -f "$patch" ]; then
+                echo "  -> $(basename $patch)"
+                patch -p1 -N --dry-run < "$patch" 2>/dev/null && \
+                  patch -p1 -N < "$patch" || \
+                  echo "  ! $(basename $patch) failed to apply cleanly, continuing"
+              fi
+            done
+            echo "=== Source patches applied. Verifying CONFIG_* flags survived ==="
+            for f in CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_ZEROMOUNT CONFIG_OVERLAY_FS \
+                     CONFIG_FUSE_FS CONFIG_ZRAM CONFIG_KALLSYMS CONFIG_MODULES; do
+              grep -q "^${f}=y" out/.config && echo " PASS $f" || echo " FAIL $f"
+            done
           else
-            exit "$BUILD_RC"
+            echo "NH source patches dir empty/missing — relying on in-tree ksu-nh.defconfig flags"
+            echo "(KernelSU-Next is in tree natively, SUSFS/ZeroMount sources already in fs/)"
           fi
-        fi
 
-    - name: Dump Build Errors
-      if: failure()
-      run: |
-        for LOG in $(find "$KERNEL_ROOT" -name '*.log' -newer "$KERNEL_ROOT/common" -type f 2>/dev/null | head -5); do
-          echo "::group::$(basename "$LOG")"
-          tail -80 "$LOG"
-          echo "::endgroup::"
-        done
+      - name: Validate Curated Configs
+        run: |
+          cd kernel-source
+          DEFCONFIG="${{ steps.profile.outputs.defconfig }}"
+          VENDOR="${{ steps.profile.outputs.vendor_config }}"
+          DEBUG_C="${{ steps.profile.outputs.debug_config }}"
+          NURFS="${{ steps.profile.outputs.nurfs_fragment }}"
+          echo "=== 4 curated configs ==="
+          wc -l "arch/arm64/configs/${DEFCONFIG}" \
+                 "${VENDOR}" \
+                 "${DEBUG_C}" \
+                 "${NURFS}"
 
-    - name: Prepare AnyKernel3
-      run: |
-        if [ -f "$KERNEL_ROOT/out/${ANDROID_VER}-${KERNEL_VER}/dist/Image" ]; then
-          cp "$KERNEL_ROOT/out/${ANDROID_VER}-${KERNEL_VER}/dist/Image" "$ANYKERNEL3/Image"
-        elif [ -f "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" ]; then
-          cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" "$ANYKERNEL3/Image"
-        else
-          echo "FATAL: Image not found"
-          find "$KERNEL_ROOT" -name "Image" -type f 2>/dev/null
-          exit 1
-        fi
+      - name: Patch Kernel Source
+        run: |
+          cd kernel-source
 
-    - name: Scan Patch Rejects
-      if: always()
-      run: |
-        REJECTS_DIR="$GITHUB_WORKSPACE/patch-rejects"
-        mkdir -p "$REJECTS_DIR"
-        mapfile -t REJS < <(find "$KERNEL_ROOT" -type f -name '*.rej')
-        REJ_COUNT=${#REJS[@]}
-        echo "REJ_COUNT=$REJ_COUNT" >> "$GITHUB_ENV"
-        if [ "$REJ_COUNT" -gt 0 ]; then
-          for REJ in "${REJS[@]}"; do
-            REL="${REJ#"$KERNEL_ROOT"/}"
-            DEST="$REJECTS_DIR/$REL"
-            mkdir -p "$(dirname "$DEST")"
-            cp "$REJ" "$DEST"
-            ORIG="${REJ%.rej}"
-            [ -f "$ORIG" ] && cp "$ORIG" "$REJECTS_DIR/${REL%.rej}"
+          cat > include/linux/lz4_arm64_decompress.h << 'LZ4EOF'
+          #ifndef _KOTO_LZ4_ARM64_DECOMPRESS_H
+          #define _KOTO_LZ4_ARM64_DECOMPRESS_H
+          #include <linux/types.h>
+          ssize_t LZ4_arm64_decompress_safe(const void *source, void *dest,
+                                            size_t inputSize, size_t outputSize,
+                                            bool dip);
+          #endif
+          LZ4EOF
+
+          for f in $(grep -rl "LZ4_arm64_decompress_safe" --include="*.c" . 2>/dev/null); do
+            if ! grep -q 'lz4_arm64_decompress.h' "$f"; then
+              echo "Patching: $f"
+              sed -i '/^#include <linux\/lz4.h>/a #include <linux/lz4_arm64_decompress.h>' "$f"
+            fi
           done
-        fi
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v7
-      with:
-        name: ${{ env.FILE_NAME }}-AnyKernel3
-        path: ./AnyKernel3/**
-        if-no-files-found: error
-        compression-level: 9
+          if ! grep -q 'DEFAULT_UNSHARE_KSU_MNT_ID' fs/namespace.c; then
+            sed -i '/^#include <uapi\/linux\/mount.h>/a #ifndef DEFAULT_UNSHARE_KSU_MNT_ID\n#define DEFAULT_UNSHARE_KSU_MNT_ID 100000\n#endif' fs/namespace.c
+          fi
 
-    - name: Upload Rejects
-      if: always() && env.REJ_COUNT > 0
-      uses: actions/upload-artifact@v7
-      with:
-        name: ${{ env.FILE_NAME }}-Rejects
-        path: patch-rejects/
-        if-no-files-found: ignore
-        compression-level: 9
+      - name: Configure Kernel (NUKI Colonel - no olddefconfig, no Kconfig prompts)
+        run: |
+          cd kernel-source
+          mkdir -p out
 
-    - name: Job Summary
-      if: always()
-      env:
-        ADD_SUSFS: ${{ inputs.add_susfs }}
-        ADD_ZEROMOUNT: ${{ inputs.add_zeromount }}
-        ADD_ZRAM: ${{ inputs.add_zram }}
-        ADD_BBG: ${{ inputs.add_bbg }}
-        ADD_OVERLAYFS: ${{ inputs.add_overlayfs_support }}
-        ADD_KPM: ${{ inputs.add_kpm }}
-      run: |
-        S() { [[ "$1" == "true" ]] && echo "Enabled" || echo "Disabled"; }
-        {
-          echo "## KernelSU-Next | ${KERNEL_VER}.${SUBLEVEL}"
-          echo ""
-          echo "| Feature | Status |"
-          echo "|---------|--------|"
-          echo "| **Kernel** | ${KERNEL_VER}.${SUBLEVEL} |"
-          echo "| **Android** | ${ANDROID_VER} |"
-          echo "| **OS Patch Level** | ${OS_PATCH} |"
-          echo "| **Enhanced SUSFS** | $(S "$ADD_SUSFS") |"
-          echo "| **ZeroMount** | $(S "$ADD_ZEROMOUNT") |"
-          echo "| **ZRAM (LZ4K/LZ4KD)** | $(S "$ADD_ZRAM") |"
-          echo "| **LZ4 v1.10.0** | $(S "$ADD_ZRAM") |"
-          echo "| **Overlayfs Support** | $(S "$ADD_OVERLAYFS") |"
-          echo "| **Unicode Filter** | Enabled |"
-          echo "| **Baseband Guard** | $(S "$ADD_BBG") |"
-          echo "| **KPM** | $(S "$ADD_KPM") |"
-          echo "| **Device Profile** | ${IDENTITY_STATUS:-Generic} |"
-          echo "| **Rejects** | ${REJ_COUNT:-0} |"
-          echo "| **Artifact** | ${FILE_NAME} |"
-        } >> "$GITHUB_STEP_SUMMARY"
-        REPORT="$GITHUB_WORKSPACE/$VERSION_DIR/build-helpers/report-config.sh"
-        [ -f "$REPORT" ] && bash "$REPORT" "$KERNEL_ROOT" "$ANDROID_VER" "$KERNEL_VER" || true
+          DEFCONFIG="${{ steps.profile.outputs.defconfig }}"
+          VENDOR="${{ steps.profile.outputs.vendor_config }}"
+          DEBUG_C="${{ steps.profile.outputs.debug_config }}"
+          NURFS="${{ steps.profile.outputs.nurfs_fragment }}"
+
+          echo "=== Checking configs exist ==="
+          for f in "arch/arm64/configs/${DEFCONFIG}" "${VENDOR}" "${DEBUG_C}" "${NURFS}"; do
+            if [ -f "$f" ]; then
+              echo "  OK: $f"
+            else
+              echo "  MISSING: $f"
+            fi
+          done
+
+          echo "=== Toolchain check (in-tree Clang 12) ==="
+          if [ -f "tools/toolchains/snapdragon-toolchain/clang-r416183b/bin/clang" ]; then
+            echo "  OK: in-tree Clang 12 found"
+          else
+            echo "  ERROR: in-tree Clang 12 NOT found"
+            ls -la tools/toolchains/snapdragon-toolchain/ 2>/dev/null || echo "  dir missing"
+            exit 1
+          fi
+
+          # merge_nuki.py uses argparse nargs='+': --base consumes all remaining
+          # args. Use positional-only mode: first=base, middle bulk, last 2=ending
+          python3 scripts/kconfig/merge_nuki.py \
+            "arch/arm64/configs/${DEFCONFIG}" \
+            "${VENDOR}" \
+            "${DEBUG_C}" \
+            "${NURFS}" \
+            -o out/.config
+
+          echo "=== .config: $(grep -c '^CONFIG_' out/.config) CONFIGs ==="
+          for f in CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_SUS_MOUNT CONFIG_KSU_SUSFS_HARDENED \
+                   CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS CONFIG_ZEROMOUNT CONFIG_OVERLAY_FS \
+                   CONFIG_FUSE_FS CONFIG_ZRAM CONFIG_ZSMALLOC CONFIG_ZCOMP_LZ4K \
+                   CONFIG_KALLSYMS CONFIG_MODULES CONFIG_MODVERSIONS CONFIG_MODULE_UNLOAD \
+                   CONFIG_ARM64 CONFIG_QCOM_EUD CONFIG_KPM CONFIG_HIDELKM \
+                   CONFIG_BINFMT_MISC CONFIG_FUTEX2 CONFIG_FTRACE CONFIG_FUNCTION_TRACER \
+                   CONFIG_KERNEL_LZ4; do
+            grep -q "^${f}=y" out/.config && echo " PASS $f" || echo " FAIL $f"
+          done
+
+      - name: Compile NUKI Colonel (Image.lz4 + modules)
+        run: |
+          cd kernel-source
+          echo "=== Starting NUKI Colonel build ==="
+          echo "Compiler: $(tools/toolchains/snapdragon-toolchain/clang-r416183b/bin/clang --version | head -1)"
+
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export LLVM=1
+          export LLVM_IAS=1
+          export CC=clang
+          export LD=ld.lld
+          export AR=llvm-ar
+          export NM=llvm-nm
+          export OBJCOPY=llvm-objcopy
+          export OBJDUMP=llvm-objdump
+          export STRIP=llvm-strip
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+
+          BUILD_RC=0
+          make O=out ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CC=clang LD=ld.lld CLANG_TRIPLE=aarch64-linux-gnu- \
+            LLVM=-12 LLVM_IAS=-12 \
+            -j$(nproc --all) Image.lz4 modules 2>&1 | tee ../build.log || BUILD_RC=$?
+
+          if [ $BUILD_RC -ne 0 ]; then
+            echo "=== BUILD FAILED (exit $BUILD_RC) ==="
+            tail -100 ../build.log
+            exit $BUILD_RC
+          fi
+
+          echo "=== Build succeeded ==="
+          ls -lh out/arch/arm64/boot/Image.lz4
+          mkdir -p ../modules
+          find out -name "*.ko" -exec cp {} ../modules/ \;
+          echo "=== Modules: $(ls ../modules/*.ko 2>/dev/null | wc -l) .ko files ==="
+
+      - name: Package Flashable ZIP
+        run: |
+          AK_URL="${{ steps.profile.outputs.anykernel }}"
+          if [ -n "$AK_URL" ] && [ "$AK_URL" != "null" ]; then
+            echo "=== Cloning custom AnyKernel: $AK_URL ==="
+            git clone --depth=1 "$AK_URL" anykernel
+            echo "=== Copying Image.lz4 into AnyKernel ==="
+            cp kernel-source/out/arch/arm64/boot/Image.lz4 anykernel/
+            if [ -f kernel-source/out/arch/arm64/boot/dts/qcom/*.dtb ]; then
+              mkdir -p anykernel/dtb
+              cp kernel-source/out/arch/arm64/boot/dts/qcom/*.dtb anykernel/dtb/
+            fi
+            echo "=== Building flashable zip ==="
+            cd anykernel
+            zip -r9 ../AnyRealm-NUKI-${{ inputs.device_codename }}.zip * -x "*.git*"
+            cd ..
+            ls -lh AnyRealm-NUKI-${{ inputs.device_codename }}.zip
+          else
+            echo "No custom AnyKernel URL in profile, skipping zip packaging"
+          fi
+
+      - name: Upload NUKI
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AnyRealm-NUKI-${{ inputs.device_codename }}-${{ github.run_number }}
+          path: |
+            kernel-source/out/arch/arm64/boot/Image.lz4
+            kernel-source/out/arch/arm64/boot/Image
+            build.log
+            kernel-source/out/.config
+            modules/
+            AnyRealm-NUKI-${{ inputs.device_codename }}.zip
+          compression-level: 9
+          overwrite: true

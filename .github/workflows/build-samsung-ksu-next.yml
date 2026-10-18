@@ -101,7 +101,7 @@ jobs:
   build:
     needs: [download-dependencies]
     name: "Samsung KernelSU-Next — ${{ inputs.device }}"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
     env:
       KSU_VARIANT: KernelSU-Next

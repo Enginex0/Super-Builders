@@ -1,0 +1,48 @@
+name: NUKI KSU + NetHunter
+
+on:
+  workflow_call:
+    inputs:
+      device_codename:
+        type: string
+        required: true
+      kernel_branch:
+        type: string
+        required: true
+
+jobs:
+  kernel-source:
+    name: Prepare Kernel Source
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+
+    steps:
+      - name: Checkout Device Profile
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            device-profiles.json
+          sparse-checkout-cone-mode: false
+
+      - name: Clone Kernel Source
+        run: |
+          git clone --depth=1 -b "${{ inputs.kernel_branch }}" \
+            https://github.com/015stray91/kernel-msm-1.git kernel-source
+
+      - name: Validate 4 Curated Configs
+        run: |
+          cd kernel-source
+          echo "=== 4 curated configs ==="
+          wc -l arch/arm64/configs/ksu-nh.defconfig \
+                 arch/arm64/configs/vendor/moto-parrot-sm6450.config \
+                 arch/arm64/configs/vendor/ext_config/debug_moto_parrot_genevn.config \
+                 arch/arm64/configs/nurfs-linux.fragment
+
+      - name: Upload Kernel Source Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuki-kernel-source
+          path: kernel-source/
+          retention-days: 1

@@ -1,0 +1,27 @@
+name: NUKI QCOM + Moto
+
+on:
+  workflow_call:
+    inputs:
+      device_codename:
+        type: string
+        required: true
+
+jobs:
+  prepare-device:
+    name: Prepare Device Config
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Device Profile
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            device-profiles.json
+          sparse-checkout-cone-mode: false
+
+      - name: Extract Device Config
+        run: |
+          CODENAME="${{ inputs.device_codename }}"
+          cat device-profiles.json | jq -r ".devices.\"${CODENAME}\" // empty"

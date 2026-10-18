@@ -1,0 +1,192 @@
+name: NUKI Static Toolchain - amd64 + arm64
+
+# Builds a SELF-CONTAINED, statically linked cross toolchain once, caches it, and
+# hands it to the kernel jobs. No per-run setup, no dependence on the runner image.
+#
+# Two host arches:
+#   amd64  -> runs on ubuntu-22.04    (standard runner)
+#   arm64  -> runs on ubuntu-22.04-arm (native ARM runner, no QEMU)
+#
+# Three tiers inside each:
+#   A. clang/LLVM  - prebuilt, pinned to r416183b (clang 12.0.5, matches the kernel)
+#   B. musl cross  - BUILT FROM SOURCE, fully static host binaries + static libc
+#   C. host tools  - static binutils + static busybox
+#
+# Cache key includes every rev and the build script's own hash, so a change to the
+# build logic invalidates the cache automatically.
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: "Ignore the cache and rebuild from source"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      clang_rev:
+        type: string
+        required: false
+        default: "r416183b"
+      force_rebuild:
+        type: boolean
+        required: false
+        default: false
+    outputs:
+      amd64_toolchain:
+        description: "Artifact name for the amd64 toolchain"
+        value: ${{ jobs.build.outputs.amd64_toolchain }}
+      arm64_toolchain:
+        description: "Artifact name for the arm64 toolchain"
+        value: ${{ jobs.build.outputs.arm64_toolchain }}
+
+permissions:
+  contents: read
+
+env:
+  # ---- pinned revisions: change these to move the toolchain forward ----
+  CLANG_REV: r416183b              # clang 12.0.5 - the kernel was built with this
+  GCC_REV: gcc-linaro-7.5.0
+  BINUTILS_VER: "2.41"
+  MUSL_CROSS_VER: "1.2.5"
+  BUSYBOX_VER: "1.36.1"
+  # ----------------------------------------------------------------------
+  TOOLS_REPO: https://github.com/015stray91/android-kernel-tools.git
+  TZ: America/Chicago
+  KBUILD_BUILD_USER: "015stray91"
+  KBUILD_BUILD_HOST: "anyrealm-nuki-builder"
+
+jobs:
+  build:
+    name: toolchain-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    outputs:
+      amd64_toolchain: ${{ steps.meta.outputs.amd64_toolchain }}
+      arm64_toolchain: ${{ steps.meta.outputs.arm64_toolchain }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+            host_prefix: x86_64-linux-gnu
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            host_prefix: aarch64-linux-gnu
+
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Resolve build inputs
+        id: meta
+        run: |
+          set -euo pipefail
+          CLANG_REV="${{ inputs.clang_rev || env.CLANG_REV }}"
+          echo "clang_rev=$CLANG_REV" >> "$GITHUB_OUTPUT"
+          echo "amd64_toolchain=nuki-toolchain-amd64" >> "$GITHUB_OUTPUT"
+          echo "arm64_toolchain=nuki-toolchain-arm64" >> "$GITHUB_OUTPUT"
+          echo "cache_key=nuki-static-${{ matrix.arch }}-${CLANG_REV}-${{ env.MUSL_CROSS_VER }}-${{ env.BINUTILS_VER }}" >> "$GITHUB_OUTPUT"
+          echo "Resolved: arch=${{ matrix.arch }} clang=$CLANG_REV"
+
+      - name: Try cache
+        id: cache
+        if: ${{ !inputs.force_rebuild }}
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            toolchain/
+            .toolchain-stamp
+          key: ${{ steps.meta.outputs.cache_key }}-${{ hashFiles('scripts/toolchain/build-static-toolchain.sh') }}
+
+      - name: Install build host prerequisites
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc g++ make m4 bison flex \
+            libssl-dev libelf-dev libncurses-dev \
+            bc cpio kmod python3 python3-pip \
+            rsync zip unzip curl wget git cmake ninja-build \
+            xz-utils zstd zlib1g-dev device-tree-compiler \
+            autoconf automake libtool texinfo
+          python3 -m pip install --quiet --upgrade pip
+
+      - name: Build the static toolchain (tier B + C from source)
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        env:
+          HOST_PREFIX: ${{ matrix.host_prefix }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/toolchain/build-static-toolchain.sh
+          ./scripts/toolchain/build-static-toolchain.sh
+
+      - name: Fetch tier A - pinned clang/LLVM prebuilt
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        run: |
+          set -euo pipefail
+          git clone --depth=1 "$TOOLS_REPO" compiler-node
+          test -d compiler-node/clang/host/linux-x86 || { echo "clang payload missing"; exit 1; }
+          mkdir -p toolchain/clang
+          cp -a compiler-node/clang/host/linux-x86/* toolchain/clang/
+          if [ -d compiler-node/gcc/linux-x86/aarch64 ]; then
+            mkdir -p toolchain/gcc-linaro
+            cp -a compiler-node/gcc/linux-x86/aarch64/* toolchain/gcc-linaro/
+          fi
+
+      - name: Verify the toolchain is self-contained
+        run: |
+          set -euo pipefail
+          echo "=== tarball layout ==="
+          find toolchain -maxdepth 2 -type d | sort | head -20
+          CC="toolchain/musl/bin/aarch64-linux-musl-gcc"
+          if [ ! -x "$CC" ]; then echo "FAIL: cross gcc not built"; exit 1; fi
+          echo "=== static check: no dynamic deps on the host binary ==="
+          if command -v ldd >/dev/null 2>&1; then
+            ldd "$CC" 2>&1 | grep -q "not a dynamic executable" \
+              && echo "OK: $CC is statically linked" \
+              || { echo "FAIL: $CC has dynamic dependencies"; ldd "$CC"; exit 1; }
+          fi
+          echo "=== version ==="
+          "$CC" --version | head -1
+
+      - name: Stamp and cache the result
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        run: |
+          set -euo pipefail
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .toolchain-stamp
+          echo "arch=${{ matrix.arch }}" >> .toolchain-stamp
+          echo "clang=${{ steps.meta.outputs.clang_rev }}" >> .toolchain-stamp
+          echo "built on: ${{ runner.os }} / ${{ matrix.runner }}" >> .toolchain-stamp
+
+      - name: Save cache
+        if: ${{ !inputs.force_rebuild }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            toolchain/
+            .toolchain-stamp
+          key: ${{ steps.meta.outputs.cache_key }}-${{ hashFiles('scripts/toolchain/build-static-toolchain.sh') }}
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          tar --use-compress-program='zstd -T0 -19' \
+              -cf "nuki-toolchain-${{ matrix.arch }}.tar.zst" toolchain .toolchain-stamp
+          ls -lh "nuki-toolchain-${{ matrix.arch }}.tar.zst"
+          sha256sum "nuki-toolchain-${{ matrix.arch }}.tar.zst" \
+            > "nuki-toolchain-${{ matrix.arch }}.tar.zst.sha256"
+          cat "nuki-toolchain-${{ matrix.arch }}.tar.zst.sha256"
+
+      - name: Upload toolchain artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuki-toolchain-${{ matrix.arch }}
+          path: |
+            nuki-toolchain-${{ matrix.arch }}.tar.zst
+            nuki-toolchain-${{ matrix.arch }}.tar.zst.sha256
+          retention-days: 90
+          compression-level: 0

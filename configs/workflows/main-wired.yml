@@ -1,0 +1,82 @@
+name: Build Kernels
+
+# ENTRY POINT. Dispatch this workflow and it sets off the whole build.
+# Super-Builders does ALL the cloning - toolchain, kernel source, plugins -
+# so nothing has to be pre-staged on the runner.
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_build_version:
+        description: "Kernel version to build"
+        type: choice
+        options:
+          - a12-5-10
+          - genevn
+          - colonel
+          - all
+        default: "a12-5-10"
+      ksu_variant:
+        description: "KernelSU variant"
+        type: choice
+        options:
+          - KernelSU-Next
+        default: "KernelSU-Next"
+      device_codename:
+        description: "Device profile (codename from device-profiles.json)"
+        type: choice
+        options:
+          - genevn-g
+          - lake
+        default: "genevn-g"
+      kernel_branch:
+        description: "kernel-msm-1 branch (genevn/colonel only)"
+        type: string
+        default: "android-14-release-u1tgns34.42-86-2-32"
+      obf_passes:
+        description: "Kotoamatsukami obfuscation passes (colonel only)"
+        type: string
+        default: "flatten,bogus-control-flow,substitution,indirect-call"
+      force_toolchain_rebuild:
+        description: "Rebuild the static toolchain from source, ignoring the cache"
+        type: boolean
+        default: false
+
+jobs:
+  build-a12-5-10:
+    if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a12-5-10' }}
+    uses: ./.github/workflows/kernel-a12-5.10.yml
+    secrets: inherit
+    with:
+      ksu_variant: ${{ inputs.ksu_variant }}
+      add_susfs: true
+      add_zeromount: true
+      add_zram: true
+      add_bbg: true
+      add_overlayfs_support: true
+      add_kpm: false
+      sukisu_commit: ""
+      device_codename: ${{ inputs.device_codename }}
+
+  build-genevn:
+    if: ${{ inputs.kernel_build_version == 'genevn' || inputs.kernel_build_version == 'all' }}
+    uses: ./.github/workflows/genevn-nuki.yml
+    secrets: inherit
+    with:
+      device_codename: ${{ inputs.device_codename }}
+      kernel_branch: ${{ inputs.kernel_branch }}
+
+  # TIER 3 - Colonel. Its own toolchain job (tier 0) runs inside, and the
+  # build-colonel workflow clones the kernel source itself.
+  build-colonel:
+    if: ${{ inputs.kernel_build_version == 'colonel' || inputs.kernel_build_version == 'all' }}
+    uses: ./.github/workflows/build-colonel.yml
+    secrets: inherit
+    with:
+      kernel_branch: ${{ inputs.kernel_branch }}
+      obf_passes: ${{ inputs.obf_passes }}
+      force_toolchain_rebuild: ${{ inputs.force_toolchain_rebuild }}

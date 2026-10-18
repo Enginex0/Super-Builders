@@ -61,7 +61,7 @@ on:
 
 jobs:
   setup:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
       matrix: ${{ steps.resolve.outputs.result }}
     steps:
@@ -116,7 +116,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.setup.outputs.matrix) }}
     name: "Dry Test ${{ inputs.kernel_version }}.${{ matrix.sub_level }}"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
       KSU_VARIANT: ${{ inputs.ksu_variant }}

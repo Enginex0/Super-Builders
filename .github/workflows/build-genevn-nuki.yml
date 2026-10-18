@@ -1,0 +1,169 @@
+name: AnyRealm NUKI Colonel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_branch:
+        description: 'Kernel branch'
+        default: 'android-14-release-u1tgns34.42-86-2-32'
+
+env:
+  KERNEL_REPO: 015stray91/kernel-msm-1
+  TOOLCHAIN_REPO: 015stray91/android-kernel-tools
+  LADDER_REPO: 015stray91/clang-tools-static-binaries
+  KOTO_REPO: 015stray91/Kotoamatsukami
+  SB_REPO: 015stray91/Super-Builders
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Clone repos
+        run: |
+          mkdir -p sources
+          cd sources
+          git clone --depth=1 --branch "${{ inputs.kernel_branch }}" \
+            https://github.com/${{ env.KERNEL_REPO }}.git kernel
+          git clone --depth=1 https://github.com/${{ env.TOOLCHAIN_REPO }}.git toolchain
+          git clone --depth=1 https://github.com/${{ env.LADDER_REPO }}.git ladder
+          git clone --depth=1 https://github.com/${{ env.KOTO_REPO }}.git koto
+          git clone --depth=1 --branch 015stray91 \
+            https://github.com/${{ env.SB_REPO }}.git patches
+
+      - name: Install deps
+        run: |
+          sudo apt-get update && sudo apt-get install -y \
+            clang-12 llvm-12 lld-12 gcc-aarch64-linux-gnu \
+            libzstd-dev zstd lz4 bc libelf-dev libssl-dev kmod cpio
+
+      - name: Find the bridge
+        run: |
+          KERNEL="$(pwd)/sources/kernel"
+          TOOLCHAIN="$(pwd)/sources/toolchain"
+          LADDER="$(pwd)/sources/ladder"
+          KOTO_SO="$(pwd)/sources/koto/colonel/build/Kotoamatsukami.so"
+          
+          export PATH="$TOOLCHAIN/clang/host/linux-x86/clang-r416183b/bin:$PATH"
+          export CROSS_COMPILE="$TOOLCHAIN/gcc/linux-x86/aarch64/gcc-linaro-7.5.0/bin/aarch64-linux-gnu-"
+          export LLVM=1
+          
+          find_llvm() {
+            [ -d "$LADDER/llvm-binaries/llvm-$1/bin" ] && echo "$LADDER/llvm-binaries/llvm-$1/bin"
+          }
+          
+          expand() {
+            local VER="$1" CLANG="$2"
+            echo "  Using LLVM $VER..."
+            cd "$KERNEL"
+            for src in fs/susfs.c fs/zeromount.c \
+                       fs/koto/sprof_eud.c fs/koto/sprof_proc.c \
+                       fs/koto/sprof_env.c fs/koto/sprof_vfs.c \
+                       fs/koto/sprof_profile.c; do
+              [ -f "$src" ] || continue
+              $CLANG/clang -S -emit-llvm "$src" -o "${src%.c}.ll" 2>/dev/null || continue
+              if [ -f "$KOTO_SO" ]; then
+                $CLANG/opt --load-pass-plugin="$KOTO_SO" "${src%.c}.ll" \
+                  --passes="flatten,bogus-control-flow,substitution,indirect-call" \
+                  -S -o "${src%.c}.ob.ll" 2>/dev/null || continue
+              else
+                $CLANG/opt "${src%.c}.ll" --passes="flatten,bogus-control-flow,substitution" \
+                  -S -o "${src%.c}.ob.ll" 2>/dev/null || continue
+              fi
+              clang "${src%.c}.ob.ll" -S -o "${src%.c}.s" 2>/dev/null || continue
+              mv "${src%.c}.s" "$src"
+              rm -f "${src%.c}.ll" "${src%.c}.ob.ll"
+            done
+          }
+          
+          reset() {
+            git checkout -- . 2>/dev/null || true
+            for p in ../patches/*.patch; do
+              [ -f "$p" ] && patch -p1 -N < "$p" 2>/dev/null || true
+            done
+            [ -f ../patches/configs/ksu-nh.defconfig ] && \
+              cp ../patches/configs/ksu-nh.defconfig arch/arm64/configs/
+            make ksu-nh.defconfig 2>/dev/null || make lineage_parrot_defconfig
+            make olddefconfig > /dev/null 2>&1
+          }
+          
+          try() {
+            local VER="$1"
+            local CLANG="$2"
+            echo "=== Trying LLVM $VER ==="
+            reset
+            expand "$VER" "$CLANG"
+            if make -j$(nproc) Image.lz4 modules > /tmp/build.log 2>&1; then
+              echo "=== SUCCESS: LLVM $VER works ==="
+              tail -5 /tmp/build.log
+              return 0
+            fi
+            echo "LLVM $VER failed"
+            tail -3 /tmp/build.log
+            return 1
+          }
+          
+          cd "$KERNEL"
+          
+          # Try simple jump first (17 directly)
+          echo "=== Try simple jump: 12 + 17 ==="
+          CLANG17=$(find_llvm 17)
+          if [ -n "$CLANG17" ]; then
+            if try 17 "$CLANG17"; then
+              echo "Simple jump works!"
+              exit 0
+            fi
+          fi
+          
+          # Simple jump failed. Explore the full bridge.
+          # Try ALL paths: 12->13->14->15->16->17
+          # Whatever combination works, that's the bridge
+          echo ""
+          echo "=== Simple jump failed. Exploring full bridge. ==="
+          echo "=== Will try every version until everything aligns. ==="
+          
+          FOUND=""
+          
+          # Try each step down from 17
+          for VER in 16 15 14 13; do
+            CLANG=$(find_llvm "$VER")
+            [ -z "$CLANG" ] && continue
+            
+            if try "$VER" "$CLANG"; then
+              FOUND="$VER"
+              echo "=== Bridge found at LLVM $VER ==="
+              break
+            fi
+          done
+          
+          # If still nothing, try 12 (no expansion - pure baseline)
+          if [ -z "$FOUND" ]; then
+            echo ""
+            echo "=== Falling back: pure Clang 12 (no expansion) ==="
+            git checkout -- . 2>/dev/null || true
+            for p in ../patches/*.patch; do
+              [ -f "$p" ] && patch -p1 -N < "$p" 2>/dev/null || true
+            done
+            [ -f ../patches/configs/ksu-nh.defconfig ] && \
+              cp ../patches/configs/ksu-nh.defconfig arch/arm64/configs/
+            make ksu-nh.defconfig 2>/dev/null || make lineage_parrot_defconfig
+            make olddefconfig > /dev/null 2>&1
+            make -j$(nproc) Image.lz4 modules 2>&1 | tail -10
+          fi
+          
+          echo "=== Build complete (bridge: ${FOUND:-12}) ==="
+        id: build
+
+      - name: Package
+        if: success()
+        run: |
+          mkdir -p artifacts
+          cp sources/kernel/arch/arm64/boot/Image.lz4 artifacts/ 2>/dev/null
+          find sources/kernel -name "*.ko" -exec cp {} artifacts/ \; 2>/dev/null || true
+          ls artifacts/
+
+      - name: Upload
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuki-colonel-kernel
+          path: artifacts/

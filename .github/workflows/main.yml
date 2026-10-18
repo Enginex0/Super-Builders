@@ -11,62 +11,27 @@ on:
         description: "Kernel version to build"
         type: choice
         options:
-          - custom
           - a12-5-10
-          - a13-5-10
-          - a13-5-15
-          - a14-5-15
-          - a14-6-1
-          - a15-6-6
-          - a16-6-12
+          - genevn
           - all
-        default: "custom"
+        default: "a12-5-10"
       ksu_variant:
         description: "KernelSU variant"
         type: choice
         options:
           - KernelSU-Next
-          - SukiSU
-          # - MKSU  # no SUSFS branch exists — deferred
-          - ReSukiSU
-          - WKSU
-          # - RKSU  # no SUSFS integration — deferred
         default: "KernelSU-Next"
-      add_susfs:
-        description: "Add Enhanced SUSFS"
-        type: boolean
-        default: true
-      add_zeromount:
-        description: "Add ZeroMount"
-        type: boolean
-        default: true
-      add_zram:
-        description: "Add ZRAM with LZ4K/LZ4KD"
-        type: boolean
-        default: true
-      add_bbg:
-        description: "Add Baseband Guard"
-        type: boolean
-        default: true
-      add_overlayfs_support:
-        description: "Add overlayfs support (CONFIG_TMPFS_XATTR + POSIX ACL)"
-        type: boolean
-        default: true
-      add_kpm:
-        description: "Add KPM (SukiSU/ReSukiSU)"
-        type: boolean
-        default: false
-      sukisu_commit:
-        description: "SukiSU commit (empty = pinned default)"
-        type: string
-        default: ""
       device_codename:
-        description: "Device profile (generic = no identity spoofing)"
+        description: "Device profile (codename from device-profiles.json)"
         type: choice
         options:
-          - generic
+          - genevn-g
           - lake
-        default: "lake"
+        default: "genevn-g"
+      kernel_branch:
+        description: "kernel-msm-1 branch (genevn only)"
+        type: string
+        default: "android-14-release-u1tgns34.42-86-2-32"
 
 jobs:
   build-a12-5-10:
@@ -75,116 +40,19 @@ jobs:
     secrets: inherit
     with:
       ksu_variant: ${{ inputs.ksu_variant }}
-      add_susfs: ${{ inputs.add_susfs }}
-      add_zeromount: ${{ inputs.add_zeromount }}
-      add_zram: ${{ inputs.add_zram }}
-      add_bbg: ${{ inputs.add_bbg }}
-      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
-      add_kpm: ${{ inputs.add_kpm }}
-      sukisu_commit: ${{ inputs.sukisu_commit }}
+      add_susfs: true
+      add_zeromount: true
+      add_zram: true
+      add_bbg: true
+      add_overlayfs_support: true
+      add_kpm: false
+      sukisu_commit: ""
       device_codename: ${{ inputs.device_codename }}
 
-  build-a13-5-10:
-    if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a13-5-10' }}
-    uses: ./.github/workflows/kernel-a13-5.10.yml
+  build-genevn:
+    if: ${{ inputs.kernel_build_version == 'genevn' }}
+    uses: ./.github/workflows/genevn-nuki.yml
     secrets: inherit
     with:
-      ksu_variant: ${{ inputs.ksu_variant }}
-      add_susfs: ${{ inputs.add_susfs }}
-      add_zeromount: ${{ inputs.add_zeromount }}
-      add_zram: ${{ inputs.add_zram }}
-      add_bbg: ${{ inputs.add_bbg }}
-      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
-      add_kpm: ${{ inputs.add_kpm }}
-      sukisu_commit: ${{ inputs.sukisu_commit }}
       device_codename: ${{ inputs.device_codename }}
-
-  build-a13-5-15:
-    if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a13-5-15' }}
-    uses: ./.github/workflows/kernel-a13-5.15.yml
-    secrets: inherit
-    with:
-      ksu_variant: ${{ inputs.ksu_variant }}
-      add_susfs: ${{ inputs.add_susfs }}
-      add_zeromount: ${{ inputs.add_zeromount }}
-      add_zram: ${{ inputs.add_zram }}
-      add_bbg: ${{ inputs.add_bbg }}
-      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
-      add_kpm: ${{ inputs.add_kpm }}
-      sukisu_commit: ${{ inputs.sukisu_commit }}
-      device_codename: ${{ inputs.device_codename }}
-
-  build-a14-5-15:
-    if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a14-5-15' }}
-    uses: ./.github/workflows/kernel-a14-5.15.yml
-    secrets: inherit
-    with:
-      ksu_variant: ${{ inputs.ksu_variant }}
-      add_susfs: ${{ inputs.add_susfs }}
-      add_zeromount: ${{ inputs.add_zeromount }}
-      add_zram: ${{ inputs.add_zram }}
-      add_bbg: ${{ inputs.add_bbg }}
-      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
-      add_kpm: ${{ inputs.add_kpm }}
-      sukisu_commit: ${{ inputs.sukisu_commit }}
-      device_codename: ${{ inputs.device_codename }}
-
-  build-a14-6-1:
-    if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a14-6-1' }}
-    uses: ./.github/workflows/kernel-a14-6.1.yml
-    secrets: inherit
-    with:
-      ksu_variant: ${{ inputs.ksu_variant }}
-      add_susfs: ${{ inputs.add_susfs }}
-      add_zeromount: ${{ inputs.add_zeromount }}
-      add_zram: ${{ inputs.add_zram }}
-      add_bbg: ${{ inputs.add_bbg }}
-      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
-      add_kpm: ${{ inputs.add_kpm }}
-      sukisu_commit: ${{ inputs.sukisu_commit }}
-      device_codename: ${{ inputs.device_codename }}
-
-  build-a15-6-6:
-    if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a15-6-6' }}
-    uses: ./.github/workflows/kernel-a15-6.6.yml
-    secrets: inherit
-    with:
-      ksu_variant: ${{ inputs.ksu_variant }}
-      add_susfs: ${{ inputs.add_susfs }}
-      add_zeromount: ${{ inputs.add_zeromount }}
-      add_zram: ${{ inputs.add_zram }}
-      add_bbg: ${{ inputs.add_bbg }}
-      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
-      add_kpm: ${{ inputs.add_kpm }}
-      sukisu_commit: ${{ inputs.sukisu_commit }}
-      device_codename: ${{ inputs.device_codename }}
-
-  build-a16-6-12:
-    if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'a16-6-12' }}
-    uses: ./.github/workflows/kernel-a16-6.12.yml
-    secrets: inherit
-    with:
-      ksu_variant: ${{ inputs.ksu_variant }}
-      add_susfs: ${{ inputs.add_susfs }}
-      add_zeromount: ${{ inputs.add_zeromount }}
-      add_zram: ${{ inputs.add_zram }}
-      add_bbg: ${{ inputs.add_bbg }}
-      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
-      add_kpm: ${{ inputs.add_kpm }}
-      sukisu_commit: ${{ inputs.sukisu_commit }}
-      device_codename: ${{ inputs.device_codename }}
-
-  build-custom:
-    if: ${{ inputs.kernel_build_version == 'all' || inputs.kernel_build_version == 'custom' }}
-    uses: ./.github/workflows/kernel-custom.yml
-    secrets: inherit
-    with:
-      ksu_variant: ${{ inputs.ksu_variant }}
-      add_susfs: ${{ inputs.add_susfs }}
-      add_zeromount: ${{ inputs.add_zeromount }}
-      add_zram: ${{ inputs.add_zram }}
-      add_bbg: ${{ inputs.add_bbg }}
-      add_overlayfs_support: ${{ inputs.add_overlayfs_support }}
-      add_kpm: ${{ inputs.add_kpm }}
-      sukisu_commit: ${{ inputs.sukisu_commit }}
-      device_codename: ${{ inputs.device_codename }}
+      kernel_branch: ${{ inputs.kernel_branch }}

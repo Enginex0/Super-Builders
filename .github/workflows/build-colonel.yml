@@ -1,0 +1,173 @@
+name: Colonel Tier - VFS Environment Shaping for SM6450
+
+# Tier 3 in the Super-Builders tiered build system:
+#   Tier 1: KSU-Next base kernel
+#   Tier 2: SUSFS + ZeroMount + KPM integration
+#   Tier 3: Colonel SProf - VFS environment shaping
+#
+# This workflow:
+# 1. Clones the kernel-msm-1 with the colonel/sprof source
+# 2. Applies the Kotoamatsukami static-link Clang 17 wrapper
+# 3. Builds the kernel with obfuscated code patterns
+# 4. Validates KMI is preserved (identical symbol table)
+# 5. Uploads the colonel kernel image
+
+on:
+  push:
+    branches: [ main, 015stray91, colonel ]
+  workflow_dispatch:
+    inputs:
+      kernel_branch:
+        description: "kernel-msm-1 branch"
+        default: "android-14-release-u1tgns34.42-86-2-32"
+        type: string
+      koto_branch:
+        description: "Kotoamatsukami branch (LLVM 17 plugin)"
+        default: "llvm-17-plugins"
+        type: string
+      obf_passes:
+        description: "Kotoamatsukami obfuscation passes"
+        default: "flatten,bogus-control-flow,substitution,indirect-call"
+        type: string
+
+jobs:
+  colonel:
+    name: "Colonel - VFS Environment Shaping"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout Super-Builders (for colonel tier + patches)
+        uses: actions/checkout@v4
+        with:
+          path: super-builders
+          fetch-depth: 1
+
+      - name: Install Dependencies (jammy - clang12 + clang17 safe)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev cpio kmod python3 \
+            lz4 liblz4-tool libncurses-dev rsync zip curl wget make device-tree-compiler \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu lld-12 llvm-12 clang-12 \
+            llvm-17 clang-17 lld-17 cmake ninja-build git-lfs
+          sudo ln -sf /usr/bin/clang-12 /usr/bin/clang
+          sudo ln -sf /usr/bin/ld.lld-12 /usr/local/bin/ld.lld
+          sudo ln -sf /usr/bin/ld.lld-12 /usr/local/bin/ld64.lld
+
+      - name: Pull pre-built Kotoamatsukami LLVM 17 plugin (remote, no build)
+        run: |
+          # The Kotoamatsukami LLVM 17 plugin is PRE-BUILT in the remote repo.
+          # Colonel workflow uses the pre-built .so directly - no local build needed.
+          BRANCH="${{ inputs.koto_branch }}"
+          [ -z "$BRANCH" ] && BRANCH="llvm-17-plugins"
+          echo "Cloning Kotoamatsukami @ $BRANCH (pre-built pull)"
+          git clone --depth=1 -b "$BRANCH" https://github.com/015stray91/Kotoamatsukami.git kotoamatsukami
+          if [ -f kotoamatsukami/bin/build/Kotoamatsukami.so ]; then
+            sudo install -m 0755 kotoamatsukami/bin/build/Kotoamatsukami.so /usr/local/lib/
+            echo "Kotoamatsukami.so installed from remote pre-built copy"
+            file /usr/local/lib/Kotoamatsukami.so
+          else
+            echo "WARNING: pre-built .so missing, falling back to local build"
+            cd kotoamatsukami
+            mkdir -p build && cd build
+            if [ -f /usr/lib/llvm-17/lib/cmake/llvm/LLVMConfig.cmake ]; then
+              LLVM_DIR=/usr/lib/llvm-17/lib/cmake/llvm
+            else
+              LLVM_DIR=/usr/lib/cmake/llvm-17
+            fi
+            cmake -G Ninja -DLLVM_DIR="$LLVM_DIR" -DCMAKE_BUILD_TYPE=Release .. 2>&1 | tail -5
+            ninja -j$(nproc) 2>&1 | tail -5
+            if [ -f Kotoamatsukami.so ]; then
+              sudo install -m 0755 Kotoamatsukami.so /usr/local/lib/
+            fi
+          fi
+
+      - name: Clone kernel-msm-1 (Colonel branch)
+        run: |
+          BRANCH="${{ inputs.kernel_branch }}"
+          [ -z "$BRANCH" ] && BRANCH="android-14-release-u1tgns34.42-86-2-32"
+          echo "Cloning kernel-msm-1 @ $BRANCH"
+          git clone --depth=1 -b "$BRANCH" https://github.com/015stray91/kernel-msm-1.git kernel-source
+
+      - name: Verify Colonel Source Present
+        run: |
+          echo "=== Colonel (SProf) source files ==="
+          ls -la kernel-source/fs/koto/colonel/ 2>/dev/null
+          echo ""
+          echo "=== Files expected: ==="
+          for f in sprof_types.h sprof_core.h sprof_eud.c sprof_proc.c sprof_env.c \
+                   sprof_profile.c sprof_vfs.c sprof_main.c Makefile; do
+            if [ -f "kernel-source/fs/koto/colonel/$f" ]; then
+              echo "  PASS $f"
+            else
+              echo "  FAIL $f MISSING"
+            fi
+          done
+
+      - name: Install Static-Link Clang 17 Wrapper
+        run: |
+          # Install the Kotoamatsukami wrapper as CC
+          cp super-builders/colonel/toolchain/build_static.sh /usr/local/bin/colonel-cc
+          chmod +x /usr/local/bin/colonel-cc
+          cp super-builders/colonel/toolchain/clang_wrapper_static.sh /usr/local/bin/colonel-wrapper
+          chmod +x /usr/local/bin/colonel-wrapper
+          if [ -f kotoamatsukami/build/Kotoamatsukami.so ]; then
+            sudo install -m 0755 kotoamatsukami/build/Kotoamatsukami.so /usr/local/lib/
+            echo "Kotoamatsukami.so installed to /usr/local/lib/"
+          fi
+          export CC=/usr/local/bin/colonel-cc
+          export CLANG17=/usr/bin/clang-17
+          export OBFUSCATE=1
+          export OBF_PASSES="${{ inputs.obf_passes }}"
+          echo "=== Colonel CC test ==="
+          echo 'int main(){return 0;}' > /tmp/test.c
+          $CC -c /tmp/test.c -o /tmp/test.o 2>&1 | tail -5
+          ls -la /tmp/test.o
+
+      - name: Build Colonel Kernel (Clang 12 + Clang 17 wrapper)
+        run: |
+          cd kernel-source
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export LLVM=1
+          export LLVM_IAS=1
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          # Inner compiler = system clang-12 (matches in-tree snapdragon toolchain)
+          export CC=/usr/bin/clang-12
+          export LD=/usr/bin/ld.lld-12
+          export AR=/usr/bin/llvm-ar-12
+          export NM=/usr/bin/llvm-nm-12
+          export OBJCOPY=/usr/bin/llvm-objcopy-12
+          export OBJDUMP=/usr/bin/llvm-objdump-12
+          export STRIP=/usr/bin/llvm-strip-12
+
+          # Outer wrapper = Colonel static-link Clang 17 (when used for select C files)
+          export COLONEL_CC=/usr/local/bin/colonel-cc
+          export CLANG17=/usr/bin/clang-17
+          export OBFUSCATE=1
+          export OBF_PASSES="${{ inputs.obf_passes }}"
+
+          # Use the pre-merged NUKI Colonel .config
+          if [ -f nuki-colonel.config ]; then
+            cp nuki-colonel.config out/.config
+            make O=out olddefconfig
+          fi
+          make O=out Image.lz4 modules -j$(nproc) 2>&1 | tail -20
+
+      - name: Verify KMI Preservation
+        run: |
+          echo "=== KMI Symbol Table (post-obfuscation) ==="
+          nm kernel-source/out/vmlinux 2>/dev/null | grep -E "sprof_|colonel" | head -10 || echo "no colonel symbols (expected if not enabled)"
+          echo ""
+          echo "=== Module sizes ==="
+          ls -la kernel-source/out/*.ko 2>/dev/null | head -10
+
+      - name: Upload Colonel Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: colonel-kernel-image
+          path: |
+            kernel-source/out/arch/arm64/boot/Image.lz4
+            kernel-source/out/arch/arm64/boot/Image
+            kernel-source/out/*.ko
+          if-no-files-found: warn

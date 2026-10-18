@@ -1,0 +1,369 @@
+diff --git a/crypto/lz4.c b/crypto/lz4.c
+index 5dbe4f793b020..d273088f61e38 100755
+--- a/crypto/lz4.c
++++ b/crypto/lz4.c
+@@ -83,7 +83,7 @@ static int __lz4_decompress_crypto(const u8 *src, unsigned int slen,
+ {
+ 	int out_len;
+ 
+-	#if defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)
++	#if 0
+ 		out_len = LZ4_arm64_decompress_safe(src, dst, slen, *dlen, false);
+ 	#else
+ 		out_len = LZ4_decompress_safe(src, dst, slen, *dlen);
+diff --git a/crypto/lz4hc.c b/crypto/lz4hc.c
+index 2ab813d8e8c07..db909261fc3be 100755
+--- a/crypto/lz4hc.c
++++ b/crypto/lz4hc.c
+@@ -84,7 +84,7 @@ static int __lz4hc_decompress_crypto(const u8 *src, unsigned int slen,
+ {
+ 	int out_len;
+ 
+-	#if defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)
++	#if 0
+ 		out_len = LZ4_arm64_decompress_safe(src, dst, slen, *dlen, false);
+ 	#else
+ 		out_len = LZ4_decompress_safe(src, dst, slen, *dlen);
+diff --git a/drivers/bus/mhi/host/Makefile b/drivers/bus/mhi/host/Makefile
+index daa7f93e98690..6e954c86bfe12 100755
+--- a/drivers/bus/mhi/host/Makefile
++++ b/drivers/bus/mhi/host/Makefile
+@@ -1,7 +1,7 @@
+ obj-$(CONFIG_MHI_BUS) += mhi.o
+ mhi-y := init.o main.o pm.o boot.o
+-mhi-$(CONFIG_MHI_BUS_MISC) += misc.o
+-mhi-$(CONFIG_MHI_BUS_DEBUG) += debugfs.o
++mhi-$(CONFIG_MHI_BUS_MISC) := misc.o
++mhi-$(CONFIG_MHI_BUS_DEBUG) := debugfs.o
+ 
+ obj-$(CONFIG_MHI_BUS_PCI_GENERIC) += mhi_pci_generic.o
+ mhi_pci_generic-y += pci_generic.o
+diff --git a/drivers/bus/mhi/host/misc.h b/drivers/bus/mhi/host/misc.h
+index 647b5da0e32bb..55cf843d7fb11 100755
+--- a/drivers/bus/mhi/host/misc.h
++++ b/drivers/bus/mhi/host/misc.h
+@@ -330,11 +330,11 @@ static inline void mhi_write_offload_wakedb(struct mhi_controller *mhi_cntrl,
+ {
+ }
+ 
+-void mhi_reset_reg_write_q(struct mhi_controller *mhi_cntrl)
++static inline void mhi_reset_reg_write_q(struct mhi_controller *mhi_cntrl)
+ {
+ }
+ 
+-void mhi_force_reg_write(struct mhi_controller *mhi_cntrl)
++static inline void mhi_force_reg_write(struct mhi_controller *mhi_cntrl)
+ {
+ }
+ #endif
+diff --git a/drivers/bus/mhi/host/pm.c b/drivers/bus/mhi/host/pm.c
+index 0d27358efb335..81b1761d0ce3e 100755
+--- a/drivers/bus/mhi/host/pm.c
++++ b/drivers/bus/mhi/host/pm.c
+@@ -296,7 +296,9 @@ int mhi_pm_m0_transition(struct mhi_controller *mhi_cntrl)
+ 		spin_unlock_irq(&mhi_cmd->lock);
+ 
+ 		/* ring misc doorbells for certain controllers */
++#ifdef CONFIG_MHI_BUS_MISC
+ 		mhi_misc_dbs_pending(mhi_cntrl);
++#endif
+ 	}
+ 
+ 	/* Ring channel DB registers */
+diff --git a/drivers/usb/typec/ucsi/ucsi_ccg.c b/drivers/usb/typec/ucsi/ucsi_ccg.c
+index 7213152e2cbc8..d567ed5d138b5 100755
+--- a/drivers/usb/typec/ucsi/ucsi_ccg.c
++++ b/drivers/usb/typec/ucsi/ucsi_ccg.c
+@@ -593,46 +593,6 @@ static int ucsi_ccg_sync_write(struct ucsi *ucsi, unsigned int offset,
+ 	return ret;
+ }
+ 
+-static int ucsi_ccg_read(struct ucsi *ucsi, unsigned int offset,
+-			 void *val, size_t val_len)
+-{
+-	u16 reg = CCGX_RAB_UCSI_DATA_BLOCK(offset);
+-
+-	return ccg_read(ucsi_get_drvdata(ucsi), reg, val, val_len);
+-}
+-
+-static int ucsi_ccg_async_write(struct ucsi *ucsi, unsigned int offset,
+-				const void *val, size_t val_len)
+-{
+-	u16 reg = CCGX_RAB_UCSI_DATA_BLOCK(offset);
+-
+-	return ccg_write(ucsi_get_drvdata(ucsi), reg, val, val_len);
+-}
+-
+-static int ucsi_ccg_sync_write(struct ucsi *ucsi, unsigned int offset,
+-			       const void *val, size_t val_len)
+-{
+-	struct ucsi_ccg *uc = ucsi_get_drvdata(ucsi);
+-	int ret;
+-
+-	mutex_lock(&uc->lock);
+-	pm_runtime_get_sync(uc->dev);
+-	set_bit(DEV_CMD_PENDING, &uc->flags);
+-
+-	ret = ucsi_ccg_async_write(ucsi, offset, val, val_len);
+-	if (ret)
+-		goto err_clear_bit;
+-
+-	if (!wait_for_completion_timeout(&uc->complete, msecs_to_jiffies(5000)))
+-		ret = -ETIMEDOUT;
+-
+-err_clear_bit:
+-	clear_bit(DEV_CMD_PENDING, &uc->flags);
+-	pm_runtime_put_sync(uc->dev);
+-	mutex_unlock(&uc->lock);
+-
+-	return ret;
+-}
+ 
+ static const struct ucsi_operations ucsi_ccg_ops = {
+ 	.read = ucsi_ccg_read,
+diff --git a/fs/f2fs/compress.c b/fs/f2fs/compress.c
+index 19ac1ecd9049e..e7918f474a9c6 100755
+--- a/fs/f2fs/compress.c
++++ b/fs/f2fs/compress.c
+@@ -301,13 +301,8 @@ static int lz4_compress_pages(struct compress_ctx *cc)
+ static int lz4_decompress_pages(struct decompress_io_ctx *dic)
+ {
+ 	int ret;
+-#if defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)
+-	ret = LZ4_arm64_decompress_safe(dic->cbuf->cdata, dic->rbuf,
+-						dic->clen, dic->rlen, false);
+-#else
+ 	ret = LZ4_decompress_safe(dic->cbuf->cdata, dic->rbuf,
+ 						dic->clen, dic->rlen);
+-#endif
+ 	if (ret < 0) {
+ 		printk_ratelimited("%sF2FS-fs (%s): lz4 decompress failed, ret:%d\n",
+ 				KERN_ERR, F2FS_I_SB(dic->inode)->sb->s_id, ret);
+diff --git a/fs/incfs/data_mgmt.c b/fs/incfs/data_mgmt.c
+index 40297c33dcc2b..54dd8f0654976 100755
+--- a/fs/incfs/data_mgmt.c
++++ b/fs/incfs/data_mgmt.c
+@@ -472,11 +472,9 @@ static ssize_t decompress(struct mount_info *mi,
+ 
+ 	switch (alg) {
+ 	case INCFS_BLOCK_COMPRESSED_LZ4:
+-#if defined(CONFIG_ARM64) && defined(CONFIG_KERNEL_MODE_NEON)
+-		result = LZ4_arm64_decompress_safe(src.data, dst.data, src.len, dst.len, false);
+-#else
++
+ 		result = LZ4_decompress_safe(src.data, dst.data, src.len, dst.len);
+-#endif
++
+ 		if (result < 0)
+ 			return -EBADMSG;
+ 		return result;
+diff --git a/fs/notify/fdinfo.c b/fs/notify/fdinfo.c
+index 5a55b860ca673..88273cbb1e5ff 100755
+--- a/fs/notify/fdinfo.c
++++ b/fs/notify/fdinfo.c
+@@ -154,7 +158,7 @@ void inotify_show_fdinfo(struct seq_file *m, struct file *f)
+
+ #ifdef CONFIG_FANOTIFY
+
+-static void fanotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
++static void fanotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark, struct file *file)
+ {
+ 	unsigned int mflags = 0;
+ 	struct inode *inode;
+diff --git a/include/linux/mhi_misc.h b/include/linux/mhi_misc.h
+index 73d434117f7a3..9149bad0ec963 100755
+--- a/include/linux/mhi_misc.h
++++ b/include/linux/mhi_misc.h
+@@ -288,7 +288,7 @@ static inline int mhi_report_error(struct mhi_controller *mhi_cntrl)
+  * @mhi_cntrl: MHI controller
+  * @priv: pointer to data
+  */
+-void mhi_controller_set_privdata(struct mhi_controller *mhi_cntrl, void *priv)
++static inline void mhi_controller_set_privdata(struct mhi_controller *mhi_cntrl, void *priv)
+ {
+ }
+ 
+@@ -323,7 +323,7 @@ struct mhi_controller *mhi_bdf_to_controller(u32 domain, u32 bus, u32 slot, u32
+  * @mhi_cntrl: MHI controller
+  * @timeout: timeout in ms
+  */
+-void mhi_set_m2_timeout_ms(struct mhi_controller *mhi_cntrl, u32 timeout)
++static inline void mhi_set_m2_timeout_ms(struct mhi_controller *mhi_cntrl, u32 timeout)
+ {
+ }
+ 
+@@ -332,7 +332,7 @@ void mhi_set_m2_timeout_ms(struct mhi_controller *mhi_cntrl, u32 timeout)
+  * @mhi_cntrl: MHI controller
+  * @notify_clients: if true, clients will be notified of the resume transition
+  */
+-int mhi_pm_fast_resume(struct mhi_controller *mhi_cntrl, bool notify_clients)
++static inline int mhi_pm_fast_resume(struct mhi_controller *mhi_cntrl, bool notify_clients)
+ {
+ 	return -EPERM;
+ }
+@@ -342,7 +342,7 @@ int mhi_pm_fast_resume(struct mhi_controller *mhi_cntrl, bool notify_clients)
+  * @mhi_cntrl: MHI controller
+  * @notify_clients: if true, clients will be notified of the suspend transition
+  */
+-int mhi_pm_fast_suspend(struct mhi_controller *mhi_cntrl, bool notify_clients)
++static inline int mhi_pm_fast_suspend(struct mhi_controller *mhi_cntrl, bool notify_clients)
+ {
+ 	return -EPERM;
+ }
+@@ -351,7 +351,7 @@ int mhi_pm_fast_suspend(struct mhi_controller *mhi_cntrl, bool notify_clients)
+  * mhi_debug_reg_dump - dump MHI registers for debug purpose
+  * @mhi_cntrl: MHI controller
+  */
+-void mhi_debug_reg_dump(struct mhi_controller *mhi_cntrl)
++static inline void mhi_debug_reg_dump(struct mhi_controller *mhi_cntrl)
+ {
+ }
+ 
+@@ -359,7 +359,7 @@ void mhi_debug_reg_dump(struct mhi_controller *mhi_cntrl)
+  * mhi_dump_sfr - Print SFR string from RDDM table.
+  * @mhi_cntrl: MHI controller
+  */
+-void mhi_dump_sfr(struct mhi_controller *mhi_cntrl)
++static inline void mhi_dump_sfr(struct mhi_controller *mhi_cntrl)
+ {
+ }
+ 
+@@ -371,7 +371,7 @@ void mhi_dump_sfr(struct mhi_controller *mhi_cntrl)
+  * @cfg_tbl: Buffer with ECA/CCA information and data needed to setup context
+  * @elements: Number of items to iterate over from the configuration table
+  */
+-int mhi_device_configure(struct mhi_device *mhi_dev,
++static inline int mhi_device_configure(struct mhi_device *mhi_dev,
+ 			 enum dma_data_direction dir,
+ 			 struct mhi_buf *cfg_tbl,
+ 			 int elements)
+@@ -389,7 +389,7 @@ int mhi_device_configure(struct mhi_device *mhi_dev,
+  * true if cookie is found
+  * false if cookie is not found
+  */
+-bool mhi_scan_rddm_cookie(struct mhi_controller *mhi_cntrl, u32 cookie)
++static inline bool mhi_scan_rddm_cookie(struct mhi_controller *mhi_cntrl, u32 cookie)
+ {
+ 	return false;
+ }
+@@ -419,7 +419,7 @@ bool mhi_scan_rddm_cookie(struct mhi_controller *mhi_cntrl, u32 cookie)
+  * -ETIMEDOUT is device faled to move to M0 before @timeout_us elapsed
+  * -EIO if the MHI state is one of the ERROR states.
+  */
+-int mhi_device_get_sync_atomic(struct mhi_device *mhi_dev, int timeout_us,
++static inline int mhi_device_get_sync_atomic(struct mhi_device *mhi_dev, int timeout_us,
+ 			       bool in_panic)
+ {
+ 	return -EPERM;
+@@ -430,7 +430,7 @@ int mhi_device_get_sync_atomic(struct mhi_device *mhi_dev, int timeout_us,
+  * @mhi_cntrl: MHI controller
+  * @cb_func: Callback to set for the MHI controller to receive BW scale requests
+  */
+-void mhi_controller_set_bw_scale_cb(struct mhi_controller *mhi_cntrl,
++static inline void mhi_controller_set_bw_scale_cb(struct mhi_controller *mhi_cntrl,
+ 				int (*cb_func)(struct mhi_controller *mhi_cntrl,
+ 					      struct mhi_link_info *link_info))
+ {
+@@ -441,7 +441,7 @@ void mhi_controller_set_bw_scale_cb(struct mhi_controller *mhi_cntrl,
+  * @mhi_cntrl: MHI controller
+  * @base: Physical address to be set for future reference
+  */
+-void mhi_controller_set_base(struct mhi_controller *mhi_cntrl,
++static inline void mhi_controller_set_base(struct mhi_controller *mhi_cntrl,
+ 			     phys_addr_t base)
+ {
+ }
+@@ -451,7 +451,7 @@ void mhi_controller_set_base(struct mhi_controller *mhi_cntrl,
+  * @mhi_dev: Device associated with the channels
+  * @value: Pointer to an address value which will be populated
+  */
+-int mhi_get_channel_db_base(struct mhi_device *mhi_dev, phys_addr_t *value)
++static inline int mhi_get_channel_db_base(struct mhi_device *mhi_dev, phys_addr_t *value)
+ {
+ 	return -EPERM;
+ }
+@@ -461,7 +461,7 @@ int mhi_get_channel_db_base(struct mhi_device *mhi_dev, phys_addr_t *value)
+  * @mhi_dev: Device associated with the channels
+  * @value: Pointer to an address value which will be populated
+  */
+-int mhi_get_event_ring_db_base(struct mhi_device *mhi_dev, phys_addr_t *value)
++static inline int mhi_get_event_ring_db_base(struct mhi_device *mhi_dev, phys_addr_t *value)
+ {
+ 	return -EPERM;
+ }
+@@ -487,7 +487,7 @@ struct mhi_device *mhi_get_device_for_channel(struct mhi_controller *mhi_cntrl,
+  * @cmd: IOCTL cmd
+  * @arg: Optional parameter, iotcl cmd specific
+  */
+-long mhi_device_ioctl(struct mhi_device *mhi_dev, unsigned int cmd,
++static inline long mhi_device_ioctl(struct mhi_device *mhi_dev, unsigned int cmd,
+ 		      unsigned long arg)
+ {
+ 	return -EPERM;
+@@ -500,7 +500,7 @@ long mhi_device_ioctl(struct mhi_device *mhi_dev, unsigned int cmd,
+  * Returns:
+  * 0 for success, error code for failure
+  */
+-int mhi_controller_set_sfr_support(struct mhi_controller *mhi_cntrl,
++static inline int mhi_controller_set_sfr_support(struct mhi_controller *mhi_cntrl,
+ 				   size_t len)
+ {
+ 	return -EPERM;
+@@ -516,7 +516,7 @@ int mhi_controller_set_sfr_support(struct mhi_controller *mhi_cntrl,
+  * Returns:
+  * 0 for success, error code for failure
+  */
+-int mhi_controller_setup_timesync(struct mhi_controller *mhi_cntrl,
++static inline int mhi_controller_setup_timesync(struct mhi_controller *mhi_cntrl,
+ 				  u64 (*time_get)(struct mhi_controller *c),
+ 				  int (*lpm_disable)(struct mhi_controller *c),
+ 				  int (*lpm_enable)(struct mhi_controller *c))
+@@ -534,7 +534,7 @@ int mhi_controller_setup_timesync(struct mhi_controller *mhi_cntrl,
+  * Returns:
+  * 0 for success, error code for failure
+  */
+-int mhi_get_remote_time_sync(struct mhi_device *mhi_dev,
++static inline int mhi_get_remote_time_sync(struct mhi_device *mhi_dev,
+ 			     u64 *t_host,
+ 			     u64 *t_dev)
+ {
+@@ -554,7 +554,7 @@ int mhi_get_remote_time_sync(struct mhi_device *mhi_dev,
+  * Returns:
+  * 0 for success, error code for failure
+  */
+-int mhi_get_remote_time(struct mhi_device *mhi_dev,
++static inline int mhi_get_remote_time(struct mhi_device *mhi_dev,
+ 			u32 sequence,
+ 			void (*cb_func)(struct mhi_device *mhi_dev,
+ 					u32 sequence,
+@@ -569,7 +569,7 @@ int mhi_get_remote_time(struct mhi_device *mhi_dev,
+  * for debugging purpose
+  * @mhi_cntrl: MHI controller
+  */
+-int mhi_force_reset(struct mhi_controller *mhi_cntrl)
++static inline int mhi_force_reset(struct mhi_controller *mhi_cntrl)
+ {
+ 	return -EINVAL;
+ }
+diff --git a/net/qrtr/tun.c b/net/qrtr/tun.c
+index 2a2eeeb5ef2a5..36b7bdbfe4f2e 100755
+--- a/net/qrtr/tun.c
++++ b/net/qrtr/tun.c
+@@ -44,7 +44,7 @@ static int qrtr_tun_open(struct inode *inode, struct file *filp)
+ 
+ 	filp->private_data = tun;
+ 
+-	ret = qrtr_endpoint_register(&tun->ep, QRTR_EP_NET_ID_AUTO, 0);
++	ret = qrtr_endpoint_register(&tun->ep, QRTR_EP_NET_ID_AUTO, false, NULL);
+ 	if (ret)
+ 		goto out;
+ 
+
+diff --git a/arch/arm64/configs/ksu-nh.defconfig b/arch/arm64/configs/ksu-nh.defconfig
+--- a/arch/arm64/configs/ksu-nh.defconfig
++++ b/arch/arm64/configs/ksu-nh.defconfig
+@@ -93,3 +93,4 @@ CONFIG_ANDROID_VENDOR_HOOKS=y
+ # Disabled in sacred base so it overrides the =y from defconfig / debug-parrot-genevn.
+ # CONFIG_TRIM_UNUSED_KSYMS is not set
+ # CONFIG_UNUSED_KSYMS_WHITELIST is not set
++# CONFIG_SYSTEM_TRUSTED_KEYRING is not set
