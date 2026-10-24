@@ -119,6 +119,13 @@ jobs:
 
         repo --trace sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
 
+        if [[ "$SUB_LEVEL" == "30" ]]; then
+          echo "Pinning kernel common directory to exact tag android16-6.12.30_r00..."
+          cd common
+          git fetch https://android.googlesource.com/kernel/common refs/tags/android16-6.12.30_r00:refs/tags/android16-6.12.30_r00
+          git checkout android16-6.12.30_r00
+        fi
+
     - name: Extract Sublevel
       run: |
         SUBLEVEL="$SUB_LEVEL"

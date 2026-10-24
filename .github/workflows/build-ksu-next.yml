@@ -139,6 +139,7 @@ jobs:
       env:
         ANDROID_VER: ${{ inputs.android_version }}
         KERNEL_VER: ${{ inputs.kernel_version }}
+        SUB_LEVEL: ${{ inputs.sub_level }}
         OS_PATCH: ${{ inputs.os_patch_level }}
       run: |
         FORMATTED_BRANCH="${ANDROID_VER}-${KERNEL_VER}-${OS_PATCH}"
@@ -152,6 +153,13 @@ jobs:
         fi
 
         repo --trace sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
+
+        if [[ "$ANDROID_VER" == "android16" && "$KERNEL_VER" == "6.12" && "$SUB_LEVEL" == "30" ]]; then
+          echo "Pinning kernel common directory to exact tag android16-6.12.30_r00..."
+          cd common
+          git fetch https://android.googlesource.com/kernel/common refs/tags/android16-6.12.30_r00:refs/tags/android16-6.12.30_r00
+          git checkout android16-6.12.30_r00
+        fi
 
     - name: Extract Sublevel
       env:
