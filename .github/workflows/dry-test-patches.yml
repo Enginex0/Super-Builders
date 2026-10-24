@@ -206,7 +206,7 @@ jobs:
             PIN_FILE="resukisu-pin.txt"
             ;;
           KernelSU-Next)
-            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/stable/kernel/setup.sh" | bash -s stable
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh" | bash
             KSU_DIR="KernelSU-Next"
             echo "KSU_DIR=$KSU_DIR" >> "$GITHUB_ENV"
             PIN_FILE="kernelsu-next-pin.txt"

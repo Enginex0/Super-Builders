@@ -281,7 +281,7 @@ jobs:
         SUSFS_BRANCH: ${{ inputs.susfs_branch }}
       run: |
         BRANCH="${SUSFS_BRANCH:-stable}"
-        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/stable/kernel/setup.sh" | bash -s "$BRANCH"
+        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh" | bash -s "$BRANCH"
         [ -d "$KSU_DIR" ] || { echo "FATAL: $KSU_DIR not created by setup.sh"; exit 1; }
 
         PIN="${KSUNEXT_COMMIT:-$(cat "$GITHUB_WORKSPACE/$VERSION_DIR/kernelsu-next-pin.txt" 2>/dev/null || true)}"
