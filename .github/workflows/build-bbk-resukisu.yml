@@ -98,7 +98,7 @@ jobs:
   build:
     needs: [download-dependencies]
     name: "BBK ReSukiSU — ${{ inputs.device }}"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
     env:
       KSU_VARIANT: ReSukiSU

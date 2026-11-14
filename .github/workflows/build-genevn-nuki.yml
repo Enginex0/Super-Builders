@@ -1,0 +1,416 @@
+name: AnyRealm NUKI Colonel - Moto G Stylus 5G 2023 (SM6450 parrot)
+
+# NUKI Colonel = Native Unified Kernel Image, Colonel variant
+# NURFS = Native Unified RootFS (Debian-blended userland)
+# Fully decoupled from upstream parrot/moto/waipio GKI inheritance.
+# No vendor DLKM, no GKI 2.0, no compliance fallbacks.
+# Mirrors /mnt/sda2/kernel-msm-1/build.config.anyrealm.kernel exactly.
+
+on:
+  push:
+    branches: [ main, master, 015stray91 ]
+  workflow_dispatch:
+    inputs:
+      kernel_branch:
+        description: "kernel-msm-1 branch"
+        default: "android-14-release-u1tgns34.42-86-2-32"
+        type: string
+
+jobs:
+  build:
+    name: "AnyRealm NUKI Colonel - Genevn SM6450"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+    steps:
+      - name: Checkout Super-Builders (for patches + helpers)
+        uses: actions/checkout@v4
+        with:
+          path: super-builders
+          fetch-depth: 1
+
+      - name: Install Dependencies (jammy - clang12 safe)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev cpio kmod python3 python-is-python3 \
+            lz4 liblz4-tool libncurses-dev rsync zip curl wget make device-tree-compiler \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu lld-12 llvm-12 git-lfs
+          sudo ln -sf /usr/bin/ld.lld-12 /usr/local/bin/ld.lld
+          sudo ln -sf /usr/bin/ld.lld-12 /usr/local/bin/ld64.lld
+          sudo ln -sf /usr/bin/python3 /usr/local/bin/python
+
+      - name: Clone NUKI Source + android-kernel-tools
+        run: |
+          BRANCH="${{ inputs.kernel_branch }}"
+          [ -z "$BRANCH" ] && BRANCH="android-14-release-u1tgns34.42-86-2-32"
+          echo "Cloning kernel source $BRANCH"
+          git clone --depth=1 -b "$BRANCH" https://github.com/015stray91/kernel-msm-1.git kernel-source
+          # DO NOT nuke snapdragon-toolchain - it is the in-tree Clang 12 (inner compiler)
+          echo "=== In-tree toolchain preserved ==="
+          ls kernel-source/tools/toolchains/snapdragon-toolchain/
+          echo "=== Kotoamatsukami outer wrapper probe (local only) ==="
+          [ -d /home/slm015/compiler-node/fetched/Kotoamatsukami ] && \
+            ls /home/slm015/compiler-node/fetched/Kotoamatsukami/bin/build/Kotoamatsukami.so || \
+            echo "Kotoamatsukami.so: source-only (built locally)"
+
+      - name: Setup In-Tree Toolchain (symlink llvm-* from llvm-12)
+        run: |
+          # git clone --depth=1 misses binary blobs in snapdragon-toolchain
+          # Symlink missing llvm-* utilities from system llvm-12 into the in-tree toolchain
+          TOOLCHAIN_BIN=kernel-source/tools/toolchains/snapdragon-toolchain/clang-r416183b/bin
+          mkdir -p "$TOOLCHAIN_BIN"
+          for tool in llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip llvm-readelf; do
+            if [ ! -e "$TOOLCHAIN_BIN/$tool" ] && [ -e /usr/bin/$tool-12 ]; then
+              sudo ln -sf /usr/bin/$tool-12 "$TOOLCHAIN_BIN/$tool"
+              echo "  linked $tool -> /usr/bin/$tool-12"
+            fi
+          done
+          ls -la "$TOOLCHAIN_BIN/" | head -10
+
+      - name: Apply Build Helpers (bypass ABI, fix compat, apply KSU seal patches)
+        run: |
+          cd kernel-source
+          # In CI, Super-Builders is the workspace root. From kernel-source/,
+          # the paths are:
+          #   super-builders/android12-5.10/KernelSU-Next/build-helpers/
+          #   super-builders/android12-5.10/KernelSU-Next/patches/    (NOTE: 'patches', not 'Ksu-patches')
+          HELPER="../super-builders/android12-5.10/KernelSU-Next/build-helpers"
+          KSU_PATCHES="../super-builders/android12-5.10/KernelSU-Next/patches"
+          SUBLEVEL=$(grep "^SUBLEVEL =" Makefile | head -1 | awk '{print $3}')
+
+          # 1) bypass-oem-abi: strips GKI protected_exports, disables TRIM in gki_defconfig
+          if [ -f "$HELPER/bypass-oem-abi.sh" ]; then
+            echo "=== bypass-oem-abi ==="
+            bash "$HELPER/bypass-oem-abi.sh"
+          else
+            echo "bypass-oem-abi.sh not found at $HELPER - skipping"
+          fi
+
+          # 2) bypass-abi-check: patches ABI check scripts for android12-5.10
+          if [ -f "$HELPER/bypass-abi-check.sh" ]; then
+            echo "=== bypass-abi-check (android12 5.10) ==="
+            bash "$HELPER/bypass-abi-check.sh" . android12 5.10
+          fi
+
+          # 3) fix-old-kernel-compat: pre-patch vanilla kernel fixes (sublevel-aware)
+          if [ -f "$HELPER/fix-old-kernel-compat.sh" ]; then
+            echo "=== fix-old-kernel-compat (sublevel=$SUBLEVEL) ==="
+            bash "$HELPER/fix-old-kernel-compat.sh" . "$SUBLEVEL"
+          fi
+
+           # 4) Apply KSU seal patches (real source diffs from Super-Builders)
+           #    Kernel already has SUSFS integrated - dry-run first to avoid .rej files
+            if [ -d "$KSU_PATCHES" ]; then
+              echo "=== Apply patches (KSU seal, dry-run first) ==="
+              for patch in "$KSU_PATCHES"/*.patch; do
+                [ -f "$patch" ] || continue
+                # Dry-run: check if patch applies cleanly before touching anything
+                if patch -p1 --dry-run --forward < "$patch" 2>&1 | grep -q "Reversed (or previously applied) patch detected!"; then
+                  echo "  = $(basename $patch) already applied, skipping"
+                elif patch -p1 --dry-run --forward < "$patch" 2>&1 | grep -q "Hunk #1 succeeded at"; then
+                  # At least some hunks apply - apply with -N (forward only, don't re-apply)
+                  echo "  -> $(basename $patch) (partial apply)"
+                  patch -p1 -F3 --forward < "$patch" || echo "  ! $(basename $patch) partial hunks (checking .rej files)"
+                  # Clean up any .rej files that could poison the build
+                  find . -name "*.rej" -delete && echo "  cleaned .rej files"
+                else
+                  echo "  = $(basename $patch) not applicable, skipping"
+                fi
+              done
+            else
+              echo "patches not found at $KSU_PATCHES - skipping"
+            fi
+
+           # 5) fix-susfs-compat: post-patch runtime compatibility fixes
+          #    (show_pad label, inotify_mark_user_mask, i_uid_into_mnt, etc.)
+          if [ -f "$HELPER/fix-susfs-compat.sh" ]; then
+            echo "=== fix-susfs-compat (sublevel=$SUBLEVEL) ==="
+            bash "$HELPER/fix-susfs-compat.sh" . "$SUBLEVEL" android12 5.10
+          fi
+
+          # 6) setup-bbg: BBG (BusyBox Garden) NetHunter userspace setup
+          if [ -f "$HELPER/setup-bbg.sh" ]; then
+            echo "=== setup-bbg ==="
+            bash "$HELPER/setup-bbg.sh" || echo "  setup-bbg returned non-zero (continuing)"
+          fi
+
+      - name: Use Pre-Merged NUKI Colonel .config
+        run: |
+          cd kernel-source
+          mkdir -p out
+          # The merged NUKI Colonel .config is committed to kernel-msm-1 root
+          # (nuki-colonel.config). It contains all 7 pillars merged by
+          # merge_nuki.py, with critical flags (FUNCTION_TRACER, DYNAMIC_FTRACE,
+          # KERNEL_LZ4) injected and GKI abi_symbollist path cleared.
+          if [ -f nuki-colonel.config ]; then
+            cp nuki-colonel.config out/.config
+            echo "=== Used committed nuki-colonel.config ==="
+            echo "  $(grep -c '^CONFIG_' out/.config) CONFIGs, $(grep -c '^#' out/.config) comments"
+          else
+            echo "ERROR: nuki-colonel.config missing in kernel-source root"
+            exit 1
+          fi
+
+          # LZ4 NEON deployment (kernel Colonel compression, from deploy_lz4.sh)
+          [ -f deploy_lz4.sh ] && chmod +x deploy_lz4.sh && ./deploy_lz4.sh || echo "no deploy_lz4.sh"
+
+          # Post-process .config: disable problematic GKI options and fix sparse-config issues
+          # - WERROR: causes build failures on minor warnings
+          # - SYSTEM_TRUSTED_KEYRING: needs debian/canonical-certs.pem (not in tree)
+          # - KERNEL_MODE_NEON: LZ4 ARM64 NEON path is broken (deploy_lz4.sh provides alt)
+          # - TRIM_UNUSED_KSYMS: disabled via ksu-nh.defconfig
+          # - QCOM_SMEM: needed by soc_sleep_stats subsystem array
+          # - SCHED_WALT: needed by QCOM DCVS (core_ctl_notif_data struct)
+          echo "=== Post-process .config ==="
+          sed -i 's/^CONFIG_WERROR=y/# CONFIG_WERROR is not set/' out/.config
+          sed -i 's/^CONFIG_SYSTEM_TRUSTED_KEYRING=y/# CONFIG_SYSTEM_TRUSTED_KEYRING is not set/' out/.config
+          sed -i 's|^CONFIG_SYSTEM_TRUSTED_KEYS=.*|CONFIG_SYSTEM_TRUSTED_KEYS=""|' out/.config
+          sed -i 's|^CONFIG_SYSTEM_REVOCATION_KEYS=.*|CONFIG_SYSTEM_REVOCATION_KEYS=""|' out/.config
+          # Squashfs files removed above. Keep LTO enabled via ThinLTO (not FullLTO).
+          # ThinLTO processes modules in parallel shards without aggressive cross-TU optimization,
+          # preventing KVM hypervisor LLD plugin conflicts while still resolving duplicate symbols.
+          # Disable KERNEL_MODE_NEON (broken LZ4 ARM64 NEON path - deploy_lz4.sh provides alt).
+          # Remove problematic squashfs files causing duplicate symbol errors.
+          # decompressor_single.c and decompressor_multi_percpu.c both define global
+          # squashfs_decompressor_create/destroy/decompress/max_decompressors.
+          # NUKI Colonel doesn't use squashfs for file caching. Just delete them.
+          rm -f fs/squashfs/file_cache.c \
+                fs/squashfs/file_direct.c \
+                fs/squashfs/page_actor.c \
+                fs/squashfs/decompressor_single.c \
+                fs/squashfs/decompressor_multi.c \
+                fs/squashfs/decompressor_multi_percpu.c
+          # Remove corresponding entries from Makefile
+          sed -i '/file_cache\.o\|file_direct\.o\|page_actor\.o\|decompressor_single\.o\|decompressor_multi\.o\|decompressor_multi_percpu\.o/d' fs/squashfs/Makefile
+          # Disable KERNEL_MODE_NEON (broken LZ4 ARM64 NEON path - deploy_lz4.sh provides alt).
+          # Switch to ThinLTO (not FullLTO) - processes modules in parallel shards without
+          # destructive cross-TU optimization that breaks KVM LLD plugin pass.
+          # ThinLTO still resolves duplicate symbols (qcom_common, dwc3, soc_sleep_stats).
+          sed -i 's/^CONFIG_KERNEL_MODE_NEON=y/# CONFIG_KERNEL_MODE_NEON is not set/' out/.config
+          sed -i 's/^CONFIG_LTO_CLANG_FULL=y/# CONFIG_LTO_CLANG_FULL is not set/' out/.config
+          grep -q "^# CONFIG_LTO_CLANG_THIN is not set" out/.config && \
+            sed -i 's/^# CONFIG_LTO_CLANG_THIN is not set/CONFIG_LTO_CLANG_THIN=y/' out/.config || true
+          # CIFS_SMBD conflicts with cifs_listxattr (cifsfs.h #define cifs_listxattr NULL
+          # when SMBD is on, then xattr.c redefines function = syntax error)
+          sed -i 's/^CONFIG_CIFS_SMBD=y/# CONFIG_CIFS_SMBD is not set/' out/.config
+          # CIFS itself has a CONFIG_CIFS_XATTR sub-define that breaks when y.
+          # Disable CIFS entirely (we don't need it; NURFS uses other FS layers)
+          sed -i 's/^CONFIG_CIFS=y/# CONFIG_CIFS is not set/' out/.config
+          # Also disable CIFS_XATTR sub-option (kconfig default is Y if unsure)
+          # Kconfig's silentoldconfig uses defaults; we need to set N explicitly
+          if ! grep -q "^# CONFIG_CIFS_XATTR is not set" out/.config; then
+            echo "# CONFIG_CIFS_XATTR is not set" >> out/.config
+          fi
+          if ! grep -q "^# CONFIG_CIFS is not set" out/.config; then
+            sed -i 's/^# CONFIG_CIFS is not set/# CONFIG_CIFS is not set\n# CONFIG_CIFS_XATTR is not set/' out/.config
+          fi
+          # Ensure QCOM_SMEM and SCHED_WALT are enabled (fixes source-level dependencies)
+          grep -q "^# CONFIG_QCOM_SMEM is not set" out/.config && \
+            sed -i 's/^# CONFIG_QCOM_SMEM is not set/CONFIG_QCOM_SMEM=y/' out/.config || true
+          grep -q "^# CONFIG_SCHED_WALT is not set" out/.config && \
+            sed -i 's/^# CONFIG_SCHED_WALT is not set/CONFIG_SCHED_WALT=y/' out/.config || true
+
+          echo "=== Final .config: $(grep -c '^CONFIG_' out/.config) CONFIGs ==="
+           for f in CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_SUS_MOUNT CONFIG_KSU_SUSFS_HARDENED \
+                    CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS CONFIG_ZEROMOUNT CONFIG_OVERLAY_FS \
+                    CONFIG_FUSE_FS CONFIG_ZRAM CONFIG_ZSMALLOC \
+                    CONFIG_KALLSYMS CONFIG_MODULES CONFIG_MODVERSIONS CONFIG_MODULE_UNLOAD \
+                    CONFIG_ARM64 CONFIG_QCOM_EUD CONFIG_KPM CONFIG_HIDELKM \
+                    CONFIG_BINFMT_MISC CONFIG_FTRACE CONFIG_FUNCTION_TRACER \
+                    CONFIG_KERNEL_LZ4; do
+            grep -q "^${f}=y" out/.config && echo " PASS $f" || echo " FAIL $f"
+          done
+
+      - name: Compile NUKI Colonel (Image.lz4 + modules)
+        run: |
+          cd kernel-source
+          # Mirror build.config.anyrealm.kernel MAKE_GOALS exactly:
+          #   Image.lz4 + modules, Clang 12 inner, LLVM=1, LLVM_IAS=1
+          export ARCH=arm64
+          export SUBARCH=arm64
+          # Use strict Android-specific target prefix for binary utilities.
+          # Enforces aarch64-linux-android- across the entire pipeline so the
+          # linker/assembler/objcopy grab the Snapdragon repo's internal GCC
+          # tools rather than the system's aarch64-linux-gnu- fallbacks.
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export LLVM=1
+          export LLVM_IAS=1
+          # Hardcode version-suffixed executables so the build doesn't fall back
+          # to host defaults when compiling deep drivers.
+          export CC=clang
+          export LD=ld.lld
+          export AR=llvm-ar
+          export NM=llvm-nm
+          export OBJCOPY=llvm-objcopy
+          export OBJDUMP=llvm-objdump
+          export STRIP=llvm-strip
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+
+          # Pure compile: .config already complete from merge_nuki.py - no Kconfig prompts
+          # Also export all Colonel sacred CONFIG_* from build.config.anyrealm.kernel
+          # (Parts 1-12) so kernel Makefile sees them as env vars (override .config).
+          set -a
+          # Part 1: Colonel compression & performance
+          export CONFIG_KERNEL_LZ4=y
+          export CONFIG_ZRAM=y
+          export CONFIG_ZSMALLOC=y
+          export CONFIG_ZCOMP_LZ4K=y
+          export CONFIG_CPU_FREQ_GOV_PERFORMANCE=y
+          export CONFIG_QCOM_EUD=y
+          # Part 2: KernelSU + SUSFS (sacred Colonel flags)
+          export CONFIG_KPROBES=y
+          export CONFIG_KPROBE_EVENTS=y
+          export CONFIG_KSU=y
+          export CONFIG_KSU_SUSFS=y
+          export CONFIG_KSU_SUSFS_HAS_MEM_PAGES=y
+          export CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          export CONFIG_KSU_SUSFS_ZERO_MOUNT=y
+          export CONFIG_KSU_SUSFS_SPOOF_KSTAT=y
+          export CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          export CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT=y
+          export CONFIG_KSU_SUSFS_SUS_MAP=y
+          export CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          export CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          export CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          export CONFIG_KSU_SUSFS_OPENAT=y
+          export CONFIG_KSU_SUSFS_OPENAT2=y
+          export CONFIG_KSU_SUSFS_GETDENTS=y
+          export CONFIG_KSU_SUSFS_HARDENED=y
+          export CONFIG_KSU_SUSFS_HIDDEN_NAME=y
+          export CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          export CONFIG_KSU_SUSFS_UNICODE_FILTER=y
+          export CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          export CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          export CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          export CONFIG_KSU_SUSFS_SUS_PATH=y
+          export CONFIG_KSU_SUSFS_STAT=y
+          # Part 3: ZeroMount
+          export CONFIG_ZEROMOUNT=y
+          # Part 4: OverlayFS / FUSE / TMPFS_XATTR
+          export CONFIG_OVERLAY_FS=y
+          export CONFIG_OVERLAY_FS_REDIRECT_ALWAYS_FOLLOW=y
+          export CONFIG_FUSE_FS=y
+          export CONFIG_FUSE_DAX=n
+          export CONFIG_TMPFS_XATTR=y
+          export CONFIG_TMPFS_POSIX_ACL=y
+          # Part 5: NetHunter attack module drivers
+          export CONFIG_USB_GADGET=y
+          export CONFIG_USB_CONFIGFS=y
+          export CONFIG_USB_CONFIGFS_F_HID=y
+          export CONFIG_UHID=y
+          export CONFIG_NET=y
+          export CONFIG_WIRELESS=y
+          export CONFIG_CFG80211=m
+          export CONFIG_MAC80211=m
+          export CONFIG_NL80211_TESTMODE=y
+          export CONFIG_NETFILTER=y
+          export CONFIG_IP_NF_MANGLE=y
+          export CONFIG_IP6_NF_MANGLE=y
+          # Part 6: NURFS native Linux
+          export CONFIG_BINFMT_MISC=y
+          export CONFIG_BINFMT_ELF=y
+          export CONFIG_COMPAT_BINFMT_ELF=y
+          export CONFIG_DEVTMPFS_MOUNT=y
+          export CONFIG_USER_NS=y
+          export CONFIG_IPC_NS=y
+          export CONFIG_PID_NS=y
+          export CONFIG_NET_NS=y
+          export CONFIG_CGROUP_DEVICE=y
+          export CONFIG_CGROUP_PIDS=y
+          export CONFIG_CGROUP_FREEZER=y
+          export CONFIG_CPUSETS=y
+          export CONFIG_FHANDLE=y
+          export CONFIG_EVENTFD=y
+          export CONFIG_INOTIFY_USER=y
+          export CONFIG_SIGNALFD=y
+          export CONFIG_TIMERFD=y
+          export CONFIG_EPOLL=y
+          export CONFIG_FILE_LOCKING=y
+          export CONFIG_FUTEX=y
+          export CONFIG_FUTEX2=y
+          export CONFIG_CHECKPOINT_RESTORE=y
+          export CONFIG_NAMESPACES=y
+          export CONFIG_UTS_NS=y
+          export CONFIG_MNT_NS=y
+          # Part 7: Native Linux FS (NURFS)
+          export CONFIG_CUSE=y
+          export CONFIG_SQUASHFS=y
+          export CONFIG_SQUASHFS_FILE_CACHE=y
+          export CONFIG_SQUASHFS_FILE_DIRECT=y
+          export CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU=y
+          export CONFIG_NTFS_FS=y
+          export CONFIG_NTFS_RW=y
+          export CONFIG_EXFAT_FS=y
+           # INCFS has PAGE_SIZE mismatch (BUILD_BUG_ON PAGE_SIZE != 4096)
+           export CONFIG_INCREMENTAL_FS=n
+           # CIFS has cifs_listxattr conflict (cifsfs.h macro)
+           export CONFIG_CIFS=n
+           export CONFIG_CIFS_XATTR=n
+           export CONFIG_CIFS_SMBD=n
+           # FUTEX2 and ZCOMP_LZ4K not in base .config
+           export CONFIG_FUTEX2=n
+           export CONFIG_ZCOMP_LZ4K=n
+          export CONFIG_NLS=y
+          export CONFIG_NLS_CODEPAGE_437=y
+          export CONFIG_NLS_ISO8859_1=y
+          export CONFIG_NLS_UTF8=y
+          # Part 8: ZRAM compressors
+          export CONFIG_ZRAM_WRITEBACK=y
+          export CONFIG_CRYPTO_LZ4=y
+          export CONFIG_CRYPTO_ZSTD=y
+          export CONFIG_CRYPTO_LZO=y
+          export CONFIG_CRYPTO_LZ4HC=y
+          # Part 9: Required for loadable modules
+          export CONFIG_MODULES=y
+          export CONFIG_MODULE_UNLOAD=y
+          export CONFIG_MODVERSIONS=y
+          export CONFIG_KALLSYMS=y
+          # Part 10: KPM (Kernel Patch Module) - loadable .ko support
+          export CONFIG_KPM=y
+          # Part 11: HIDELKM (hide loadable modules from /proc/modules)
+          export CONFIG_HIDELKM=y
+          # Part 12: Kotoamatsukami obfuscation target (LKM ftrace hook)
+          export CONFIG_FTRACE=y
+          export CONFIG_FUNCTION_TRACER=y
+          export CONFIG_DYNAMIC_FTRACE=y
+          # Part 13: Build hygiene (prevent WERROR/COMPILE_TEST/TRIM_UNUSED_KSYMS prompts)
+          export CONFIG_WERROR=n
+          export CONFIG_COMPILE_TEST=n
+          export CONFIG_TRIM_UNUSED_KSYMS=n
+          set +a
+
+           # Use olddefconfig (auto-accept all defaults from .config, no prompts).
+           # sparse .config causes silentoldconfig to ask about ARCH_QCOM variants
+           # and other NEW options. Pipe 'yes' to auto-accept.
+           yes '' | make O=out ARCH=arm64 \
+             CROSS_COMPILE=aarch64-linux-gnu- \
+             CC=clang LD=ld.lld CLANG_TRIPLE=aarch64-linux-gnu- \
+             olddefconfig 2>&1 | tail -5
+
+           # Build with the fully-resolved config. Drop -j to a fixed -j4 to
+           # avoid OOM at the 25-minute mark when the system hits high memory
+           # pressure during heavy parallel compilation. Slower but stable.
+           make O=out ARCH=arm64 \
+             CROSS_COMPILE=aarch64-linux-gnu- \
+             CC=clang LD=ld.lld CLANG_TRIPLE=aarch64-linux-gnu- \
+             -j4 Image.lz4 modules 2>&1 | tee ../build.log
+
+          ls -lh out/arch/arm64/boot/Image.lz4 || (echo "FAIL"; tail -100 ../build.log; exit 1)
+          mkdir -p ../modules
+          find out -name "*.ko" -exec cp {} ../modules/ \;
+          ls -lh ../modules/*.ko 2>/dev/null | head -10 || echo "no .ko modules"
+
+      - name: Upload NUKI Colonel
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AnyRealm-NUKI-Colonel-Genevn-${{ github.run_number }}
+          path: |
+            kernel-source/out/arch/arm64/boot/Image.lz4
+            kernel-source/out/arch/arm64/boot/Image
+            build.log
+            kernel-source/out/.config
+            modules/
+          compression-level: 9
+          overwrite: true

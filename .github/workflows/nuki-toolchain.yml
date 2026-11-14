@@ -1,0 +1,42 @@
+name: NUKI Toolchain + Environment
+
+on:
+  workflow_call:
+    inputs:
+      device_codename:
+        type: string
+        required: true
+      kernel_branch:
+        type: string
+        required: true
+
+jobs:
+  toolchain:
+    name: Setup Toolchain
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+
+    steps:
+      - name: Install System Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev cpio kmod python3 \
+            lz4 liblz4-tool libncurses-dev rsync zip curl wget make device-tree-compiler \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu lld-12 llvm-12 git-lfs
+          sudo ln -sf /usr/bin/ld.lld-12 /usr/local/bin/ld.lld
+          sudo ln -sf /usr/bin/ld.lld-12 /usr/local/bin/ld64.lld
+
+      - name: Clone android-kernel-tools (compiler node)
+        run: |
+          git clone --depth=1 https://github.com/015stray91/android-kernel-tools.git compiler-node
+          ls compiler-node/clang/host/linux-x86/
+          ls compiler-node/gcc/linux-x86/aarch64/
+
+      - name: Upload Toolchain Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuki-toolchain
+          path: compiler-node/
+          retention-days: 1

@@ -26,7 +26,7 @@ on:
 
 jobs:
   setup:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
       matrix: ${{ steps.resolve.outputs.result }}
     steps:
@@ -71,7 +71,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.setup.outputs.matrix) }}
     name: "Dry Test — ${{ matrix.device }}"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
       DEVICE_KEY: ${{ matrix.device }}

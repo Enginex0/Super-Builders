@@ -53,7 +53,7 @@ on:
 jobs:
   build:
     name: "SukiSU ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
       KSU_VARIANT: SukiSU

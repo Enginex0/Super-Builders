@@ -1,0 +1,47 @@
+name: Build Custom Kernel - Genevn
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        sparse-checkout: "device-profiles.json"
+      - name: Initialize Full Build Environment
+        run: |
+          # Install the complete suite of build tools and libraries
+          sudo apt-get update
+          sudo apt-get install build-essential libncurses5-dev libncursesw5-dev \
+            libqt5core5a libqt5gui5 libqt5widgets5 qtbase5-dev \
+            clang lld llvm gcc-aarch64-linux-gnu binutils bc bison flex \
+            libssl-dev libelf-dev cpio kmod python3 -y \
+          
+          # Clone the repository
+          git clone --depth=1 https://github.com/015stray91/kernel-msm-1.git kernel-source
+          
+          # Navigate into the kernel directory
+          cd kernel-source
+          
+          # Force a clean state to prevent 'make' from looking at parent directories
+          make mrproper
+          
+          # Ensure output directory exists locally
+          mkdir -p out
+          
+          # Merge NUKI configurations - NO GKI (GKI reverts to stock)
+          python3 scripts/kconfig/merge_nuki.py \
+            --base arch/arm64/configs/ksu-nh.defconfig \
+            --middle arch/arm64/configs/consolidate.fragment arch/arm64/configs/defconfig.fragment arch/arm64/configs/vendor/moto-parrot-sm6450.config arch/arm64/configs/vendor/ext_config/debug-parrot-genevn.config \
+            --ending arch/arm64/configs/vendor/ext_config/debug_moto_parrot_genevn.config arch/arm64/configs/nurfs-linux.fragment \
+            -o out/.config
+          make ARCH=arm64 O=out olddefconfig
+
+      - name: Build Kernel
+        run: |
+          cd kernel-source
+          # Use all available CPU cores for the build
+          make -j$(nproc) ARCH=arm64 O=out

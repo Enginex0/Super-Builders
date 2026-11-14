@@ -1,0 +1,36 @@
+name: AnyRealm NUKI - Genevn SM6450
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_codename:
+        description: "Device codename"
+        type: string
+        default: "genevn-g"
+      kernel_branch:
+        description: "kernel-msm-1 branch (overrides profile)"
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      device_codename:
+        type: string
+        required: true
+      kernel_branch:
+        type: string
+        required: true
+
+jobs:
+  download-dependencies:
+    uses: ./.github/workflows/cache-dependencies.yml
+    permissions:
+      contents: read
+      actions: write
+
+  build:
+    needs: [download-dependencies]
+    uses: ./.github/workflows/build-ksu-next.yml
+    secrets: inherit
+    with:
+      device_codename: ${{ inputs.device_codename }}
+      kernel_branch: ${{ inputs.kernel_branch }}

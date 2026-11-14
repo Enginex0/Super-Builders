@@ -1,0 +1,5 @@
+# AnyRealm KPM stealth - false positives for GitHub secret scanning
+#fs/koto/kpm_eud_engine.c: EUD_TRUST_MAGIC
+#fs/koto/kpm_eud_engine.c: SHISUI
+# Allow EUD magic
+#EUD_TRUST_MAGIC=0x534849535549
